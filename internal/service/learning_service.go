@@ -1,0 +1,277 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+
+	"github.com/google/uuid"
+
+	"wordbit-advanced-app/backend/internal/domain"
+)
+
+type LearningService struct {
+	settingsRepo SettingsRepository
+	stateRepo    WordStateRepository
+	poolRepo     PoolRepository
+	eventRepo    LearningEventRepository
+	clock        Clock
+	logger       *slog.Logger
+}
+
+func NewLearningService(
+	settingsRepo SettingsRepository,
+	stateRepo WordStateRepository,
+	poolRepo PoolRepository,
+	eventRepo LearningEventRepository,
+	clock Clock,
+	logger *slog.Logger,
+) *LearningService {
+	return &LearningService{
+		settingsRepo: settingsRepo,
+		stateRepo:    stateRepo,
+		poolRepo:     poolRepo,
+		eventRepo:    eventRepo,
+		clock:        clock,
+		logger:       logger,
+	}
+}
+
+func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.User, req FirstExposureRequest) error {
+	item, err := s.poolRepo.GetPoolItem(ctx, user.ID, req.PoolItemID)
+	if err != nil {
+		return err
+	}
+	if item.Status != domain.PoolItemStatusPending || !item.FirstExposureRequired {
+		return fmt.Errorf("%w: pool item is not awaiting first exposure", domain.ErrValidation)
+	}
+
+	now := s.clock.Now()
+	state, err := s.loadOrInitState(ctx, user.ID, item.WordID)
+	if err != nil {
+		return err
+	}
+
+	switch req.Action {
+	case domain.ExposureActionKnown:
+		state = ApplyFirstExposureKnown(state, now, req.ResponseTimeMs)
+	case domain.ExposureActionUnknown:
+		state = ApplyFirstExposureUnknown(state, now, req.ResponseTimeMs)
+	default:
+		return fmt.Errorf("%w: unsupported action", domain.ErrValidation)
+	}
+
+	if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
+		return err
+	}
+	if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
+		return err
+	}
+	if err := s.recordEvent(ctx, domain.LearningEvent{
+		UserID:         user.ID,
+		WordID:         item.WordID,
+		PoolItemID:     &item.ID,
+		EventType:      domain.EventTypeFirstExposure,
+		EventTime:      now,
+		ResponseTimeMs: req.ResponseTimeMs,
+		ClientEventID:  req.ClientEventID,
+		Payload: domain.JSONMap{
+			"action": req.Action,
+		},
+	}); err != nil {
+		return err
+	}
+
+	if req.Action == domain.ExposureActionUnknown {
+		if err := s.maybeAppendSameDayFollowUp(ctx, user.ID, item, state); err != nil {
+			s.logger.Warn("append same-day follow-up", "error", err)
+		}
+	}
+	return nil
+}
+
+func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, req ReviewRequest) error {
+	item, err := s.poolRepo.GetPoolItem(ctx, user.ID, req.PoolItemID)
+	if err != nil {
+		return err
+	}
+	if item.Status != domain.PoolItemStatusPending {
+		return fmt.Errorf("%w: pool item already completed", domain.ErrValidation)
+	}
+
+	state, err := s.stateRepo.Get(ctx, user.ID, item.WordID)
+	if err != nil {
+		return err
+	}
+	now := s.clock.Now()
+	state = ApplyReviewOutcome(state, req.Rating, req.ModeUsed, now, req.ResponseTimeMs)
+	if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
+		return err
+	}
+	if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
+		return err
+	}
+	if err := s.recordEvent(ctx, domain.LearningEvent{
+		UserID:         user.ID,
+		WordID:         item.WordID,
+		PoolItemID:     &item.ID,
+		EventType:      domain.EventTypeReviewAnswer,
+		EventTime:      now,
+		ResponseTimeMs: req.ResponseTimeMs,
+		ModeUsed:       req.ModeUsed,
+		ClientEventID:  req.ClientEventID,
+		Payload: domain.JSONMap{
+			"rating": req.Rating,
+		},
+	}); err != nil {
+		return err
+	}
+	if err := s.maybeAppendSameDayFollowUp(ctx, user.ID, item, state); err != nil {
+		s.logger.Warn("append same-day review follow-up", "error", err)
+	}
+	return nil
+}
+
+func (s *LearningService) SubmitReveal(ctx context.Context, user domain.User, req RevealRequest) error {
+	item, err := s.poolRepo.GetPoolItem(ctx, user.ID, req.PoolItemID)
+	if err != nil {
+		return err
+	}
+	now := s.clock.Now()
+	state, err := s.stateRepo.Get(ctx, user.ID, item.WordID)
+	if err == nil {
+		switch req.Kind {
+		case domain.RevealKindMeaning:
+			state.RevealMeaningCount++
+		case domain.RevealKindExample:
+			state.RevealExampleCount++
+		case domain.RevealKindHint:
+			state.HintUsedCount++
+		default:
+			return fmt.Errorf("%w: unsupported reveal kind", domain.ErrValidation)
+		}
+		state.WeaknessScore = ComputeWeaknessScore(state)
+		if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return err
+	}
+	if err := s.poolRepo.UpdatePoolItemReveal(ctx, item.ID, req.Kind); err != nil {
+		return err
+	}
+	eventType := domain.EventTypeRevealMeaning
+	switch req.Kind {
+	case domain.RevealKindMeaning:
+		eventType = domain.EventTypeRevealMeaning
+	case domain.RevealKindExample:
+		eventType = domain.EventTypeRevealExample
+	case domain.RevealKindHint:
+		eventType = domain.EventTypeHintUsage
+	}
+	return s.recordEvent(ctx, domain.LearningEvent{
+		UserID:         user.ID,
+		WordID:         item.WordID,
+		PoolItemID:     &item.ID,
+		EventType:      eventType,
+		EventTime:      now,
+		ResponseTimeMs: req.ResponseTimeMs,
+		ModeUsed:       req.ModeUsed,
+		ClientEventID:  req.ClientEventID,
+	})
+}
+
+func (s *LearningService) SubmitPronunciation(ctx context.Context, user domain.User, req PronunciationRequest) error {
+	item, err := s.poolRepo.GetPoolItem(ctx, user.ID, req.PoolItemID)
+	if err != nil {
+		return err
+	}
+	return s.recordEvent(ctx, domain.LearningEvent{
+		UserID:        user.ID,
+		WordID:        item.WordID,
+		PoolItemID:    &item.ID,
+		EventType:     domain.EventTypePronunciation,
+		EventTime:     s.clock.Now(),
+		ClientEventID: req.ClientEventID,
+	})
+}
+
+func (s *LearningService) RefreshWeaknessForActiveUser(ctx context.Context, userID uuid.UUID) error {
+	return s.stateRepo.RefreshWeaknessScores(ctx, userID)
+}
+
+func (s *LearningService) recordEvent(ctx context.Context, event domain.LearningEvent) error {
+	if err := s.eventRepo.Insert(ctx, event); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *LearningService) loadOrInitState(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) (domain.UserWordState, error) {
+	state, err := s.stateRepo.Get(ctx, userID, wordID)
+	if err == nil {
+		return state, nil
+	}
+	if !isNotFound(err) {
+		return domain.UserWordState{}, err
+	}
+	return domain.UserWordState{
+		UserID:     userID,
+		WordID:     wordID,
+		Status:     domain.WordStatusLearning,
+		Difficulty: 0.5,
+		Stability:  0.5,
+		CreatedAt:  s.clock.Now(),
+		UpdatedAt:  s.clock.Now(),
+	}, nil
+}
+
+func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID uuid.UUID, item domain.DailyLearningPoolItem, state domain.UserWordState) error {
+	if state.NextReviewAt == nil {
+		return nil
+	}
+	settings, err := s.settingsRepo.Get(ctx, userID)
+	if err != nil {
+		return err
+	}
+	localDate, _, _, loc, err := domain.BoundsForLocalDate(*state.NextReviewAt, settings.Timezone)
+	if err != nil {
+		return err
+	}
+	nowDate, _, _, _, err := domain.BoundsForLocalDate(s.clock.Now(), settings.Timezone)
+	if err != nil {
+		return err
+	}
+	if localDate != nowDate {
+		return nil
+	}
+
+	pool, _, err := s.poolRepo.GetByLocalDate(ctx, userID, nowDate)
+	if err != nil {
+		return err
+	}
+	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, pool.ID)
+	if err != nil {
+		return err
+	}
+	followUp := domain.DailyLearningPoolItem{
+		PoolID:                pool.ID,
+		UserID:                userID,
+		WordID:                item.WordID,
+		Ordinal:               lastOrdinal + 1,
+		ItemType:              domain.PoolItemTypeShortTerm,
+		ReviewMode:            SelectReviewMode(state),
+		DueAt:                 state.NextReviewAt,
+		Status:                domain.PoolItemStatusPending,
+		IsReview:              true,
+		FirstExposureRequired: false,
+		Metadata: domain.JSONMap{
+			"scheduled_local_date": localDate,
+			"scheduled_timezone":   loc.String(),
+			"source_pool_item_id":  item.ID.String(),
+		},
+	}
+	_, err = s.poolRepo.AppendPoolItem(ctx, followUp)
+	return err
+}
