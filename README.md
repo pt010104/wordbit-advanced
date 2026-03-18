@@ -89,3 +89,4 @@ make test-integration
 - Add richer LLM rejection analytics and prompt versioning
 - Add pagination/filtering for admin LLM run inspection
 - Add observability hooks for metrics/tracing if required by production
+# wordbit-advanced
