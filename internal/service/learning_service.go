@@ -270,6 +270,7 @@ func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID
 			"scheduled_local_date": localDate,
 			"scheduled_timezone":   loc.String(),
 			"source_pool_item_id":  item.ID.String(),
+			"weakness_score":       state.WeaknessScore,
 		},
 	}
 	_, err = s.poolRepo.AppendPoolItem(ctx, followUp)

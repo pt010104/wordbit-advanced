@@ -321,6 +321,7 @@ func (s *PoolService) computeUnknownDailyDeficit(
 
 func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*domain.DailyLearningPoolItem, *time.Time) {
 	var nextDue *time.Time
+	var fallback *domain.DailyLearningPoolItem
 	for i := range items {
 		item := items[i]
 		if item.Status != domain.PoolItemStatusPending {
@@ -330,12 +331,101 @@ func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*
 			if nextDue == nil || item.DueAt.Before(*nextDue) {
 				nextDue = item.DueAt
 			}
+			if fallback == nil || compareFallbackCard(item, *fallback) < 0 {
+				copyItem := item
+				fallback = &copyItem
+			}
 			continue
 		}
 		copyItem := item
 		return &copyItem, nil
 	}
+	if fallback != nil {
+		return fallback, nil
+	}
 	return nil, nextDue
+}
+
+func compareFallbackCard(a domain.DailyLearningPoolItem, b domain.DailyLearningPoolItem) int {
+	aWeakness := fallbackWeaknessScore(a)
+	bWeakness := fallbackWeaknessScore(b)
+	switch {
+	case aWeakness > bWeakness:
+		return -1
+	case aWeakness < bWeakness:
+		return 1
+	}
+
+	aPriority := fallbackItemTypePriority(a.ItemType)
+	bPriority := fallbackItemTypePriority(b.ItemType)
+	switch {
+	case aPriority < bPriority:
+		return -1
+	case aPriority > bPriority:
+		return 1
+	}
+
+	switch {
+	case a.DueAt == nil && b.DueAt != nil:
+		return 1
+	case a.DueAt != nil && b.DueAt == nil:
+		return -1
+	case a.DueAt != nil && b.DueAt != nil:
+		switch {
+		case a.DueAt.Before(*b.DueAt):
+			return -1
+		case a.DueAt.After(*b.DueAt):
+			return 1
+		}
+	}
+
+	switch {
+	case a.Ordinal < b.Ordinal:
+		return -1
+	case a.Ordinal > b.Ordinal:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func fallbackWeaknessScore(item domain.DailyLearningPoolItem) float64 {
+	if item.Metadata == nil {
+		return 0
+	}
+	raw, ok := item.Metadata["weakness_score"]
+	if !ok {
+		return 0
+	}
+	switch value := raw.(type) {
+	case float64:
+		return value
+	case float32:
+		return float64(value)
+	case int:
+		return float64(value)
+	case int32:
+		return float64(value)
+	case int64:
+		return float64(value)
+	default:
+		return 0
+	}
+}
+
+func fallbackItemTypePriority(itemType domain.PoolItemType) int {
+	switch itemType {
+	case domain.PoolItemTypeWeak:
+		return 0
+	case domain.PoolItemTypeShortTerm:
+		return 1
+	case domain.PoolItemTypeReview:
+		return 2
+	case domain.PoolItemTypeNew:
+		return 3
+	default:
+		return 4
+	}
 }
 
 func (s *PoolService) ForceRebuildTodayPool(ctx context.Context, user domain.User) (DailyPoolView, error) {
@@ -509,7 +599,10 @@ func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWo
 			Status:                domain.PoolItemStatusPending,
 			IsReview:              true,
 			FirstExposureRequired: false,
-			Word:                  &wordCopy,
+			Metadata: domain.JSONMap{
+				"weakness_score": state.WeaknessScore,
+			},
+			Word: &wordCopy,
 		})
 	}
 	return items
