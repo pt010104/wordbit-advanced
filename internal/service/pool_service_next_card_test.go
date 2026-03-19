@@ -49,14 +49,12 @@ func TestFindNextCardInItemsPrefersDueCard(t *testing.T) {
 	}
 }
 
-func TestFindNextCardInItemsFallsBackToHighestWeaknessWhenNothingIsDue(t *testing.T) {
+func TestFindNextCardInItemsReturnsNextDueWhenNothingIsActionableYet(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
 	reviewWordID := uuid.New()
-	weakWordID := uuid.New()
 	reviewDue := now.Add(5 * time.Minute)
-	weakDue := now.Add(25 * time.Minute)
 
 	item, nextDue := findNextCardInItems([]domain.DailyLearningPoolItem{
 		{
@@ -68,62 +66,53 @@ func TestFindNextCardInItemsFallsBackToHighestWeaknessWhenNothingIsDue(t *testin
 			DueAt:    &reviewDue,
 			Metadata: domain.JSONMap{"weakness_score": 0.8},
 		},
-		{
-			ID:       uuid.New(),
-			WordID:   weakWordID,
-			Ordinal:  2,
-			ItemType: domain.PoolItemTypeWeak,
-			Status:   domain.PoolItemStatusPending,
-			DueAt:    &weakDue,
-			Metadata: domain.JSONMap{"weakness_score": 2.1},
-		},
 	}, now)
 
-	if item == nil {
-		t.Fatalf("expected fallback card, got nil")
+	if item != nil {
+		t.Fatalf("expected no actionable card, got %s", item.WordID)
 	}
-	if item.WordID != weakWordID {
-		t.Fatalf("expected highest-weakness fallback %s, got %s", weakWordID, item.WordID)
-	}
-	if nextDue != nil {
-		t.Fatalf("expected nil next due when a fallback card is returned, got %v", *nextDue)
+	if nextDue == nil || !nextDue.Equal(reviewDue) {
+		t.Fatalf("expected next due %v, got %#v", reviewDue, nextDue)
 	}
 }
 
-func TestFindNextCardInItemsUsesSoonestDueAsTieBreaker(t *testing.T) {
+func TestFindNextCardInItemsReturnsPendingBonusPracticeImmediately(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
-	firstWordID := uuid.New()
-	secondWordID := uuid.New()
-	laterDue := now.Add(40 * time.Minute)
-	soonerDue := now.Add(10 * time.Minute)
+	bonusWordID := uuid.New()
+	normalWordID := uuid.New()
+	futureDue := now.Add(10 * time.Minute)
 
-	item, _ := findNextCardInItems([]domain.DailyLearningPoolItem{
+	item, nextDue := findNextCardInItems([]domain.DailyLearningPoolItem{
 		{
 			ID:       uuid.New(),
-			WordID:   firstWordID,
+			WordID:   normalWordID,
 			Ordinal:  1,
 			ItemType: domain.PoolItemTypeReview,
 			Status:   domain.PoolItemStatusPending,
-			DueAt:    &laterDue,
+			DueAt:    &futureDue,
 			Metadata: domain.JSONMap{"weakness_score": 1.0},
 		},
 		{
-			ID:       uuid.New(),
-			WordID:   secondWordID,
-			Ordinal:  2,
-			ItemType: domain.PoolItemTypeReview,
-			Status:   domain.PoolItemStatusPending,
-			DueAt:    &soonerDue,
-			Metadata: domain.JSONMap{"weakness_score": 1.0},
+			ID:            uuid.New(),
+			WordID:        bonusWordID,
+			Ordinal:       2,
+			ItemType:      domain.PoolItemTypeWeak,
+			Status:        domain.PoolItemStatusPending,
+			DueAt:         nil,
+			BonusPractice: true,
+			Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 2.0},
 		},
 	}, now)
 
 	if item == nil {
-		t.Fatalf("expected fallback card, got nil")
+		t.Fatalf("expected bonus practice card, got nil")
 	}
-	if item.WordID != secondWordID {
-		t.Fatalf("expected sooner due fallback %s, got %s", secondWordID, item.WordID)
+	if item.WordID != bonusWordID {
+		t.Fatalf("expected bonus practice word %s, got %s", bonusWordID, item.WordID)
+	}
+	if nextDue != nil {
+		t.Fatalf("expected nil next due when bonus practice is actionable, got %v", *nextDue)
 	}
 }

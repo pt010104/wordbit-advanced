@@ -183,10 +183,23 @@ func (r *replenishPoolRepo) GetNextActionableCard(ctx context.Context, userID uu
 }
 
 func (r *replenishPoolRepo) GetPoolItem(ctx context.Context, userID uuid.UUID, itemID uuid.UUID) (domain.DailyLearningPoolItem, error) {
+	for _, item := range r.items {
+		if item.ID == itemID && item.UserID == userID {
+			return item, nil
+		}
+	}
 	return domain.DailyLearningPoolItem{}, domain.ErrNotFound
 }
 
 func (r *replenishPoolRepo) MarkPoolItemCompleted(ctx context.Context, itemID uuid.UUID, completedAt time.Time) error {
+	for i := range r.items {
+		if r.items[i].ID != itemID {
+			continue
+		}
+		r.items[i].Status = domain.PoolItemStatusCompleted
+		r.items[i].CompletedAt = &completedAt
+		return nil
+	}
 	return nil
 }
 
@@ -494,5 +507,346 @@ func TestGetNextCardReplenishesWeakFallbackWhenPoolIsExhausted(t *testing.T) {
 	}
 	if poolRepo.pool.WeakCount != 1 {
 		t.Fatalf("expected weak count incremented to 1, got %d", poolRepo.pool.WeakCount)
+	}
+}
+
+func TestGetNextCardCreatesBonusPracticeFromFutureReviewItem(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	futureWordID := uuid.New()
+	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
+	futureReview := now.Add(18 * time.Hour)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			futureWordID: {
+				ID:                futureWordID,
+				Word:              "mentor",
+				NormalizedForm:    "mentor",
+				CanonicalForm:     "mentor",
+				Lemma:             "mentor",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "experienced advisor",
+				VietnameseMeaning: "nguoi huong dan",
+			},
+		},
+	}
+	futureWord := wordRepo.words[futureWordID]
+	state := domain.UserWordState{
+		UserID:        userID,
+		WordID:        futureWordID,
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &futureReview,
+		WeaknessScore: 1.9,
+	}
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			futureWordID: state,
+		},
+		weakCandidates: []domain.UserWordState{state},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-19",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			WeakCount: 1,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        futureWordID,
+				Ordinal:       1,
+				ItemType:      domain.PoolItemTypeReview,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				DueAt:         &futureReview,
+				Status:        domain.PoolItemStatusPending,
+				IsReview:      true,
+				BonusPractice: false,
+				Metadata:      domain.JSONMap{"weakness_score": 1.9},
+				Word:          &futureWord,
+			},
+		},
+	}
+	settingsRepo := &replenishSettingsRepo{
+		settings: domain.DefaultUserSettings(userID),
+	}
+
+	service := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&replenishGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("GetNextCard returned error: %v", err)
+	}
+	if card.PoolItem == nil {
+		t.Fatalf("expected bonus practice card, got nil")
+	}
+	if !card.PoolItem.BonusPractice {
+		t.Fatalf("expected returned card to be bonus practice")
+	}
+	if card.PoolItem.DueAt != nil {
+		t.Fatalf("expected bonus practice card due_at to be nil, got %v", *card.PoolItem.DueAt)
+	}
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected cloned bonus practice item to be appended, got %d items", len(poolRepo.items))
+	}
+}
+
+func TestGetNextCardBonusPracticeUsesUnseenCandidatesBeforeRepeating(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	firstWordID := uuid.New()
+	secondWordID := uuid.New()
+	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
+	futureReview := now.Add(12 * time.Hour)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			firstWordID: {
+				ID:                firstWordID,
+				Word:              "mentor",
+				NormalizedForm:    "mentor",
+				CanonicalForm:     "mentor",
+				Lemma:             "mentor",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "experienced advisor",
+				VietnameseMeaning: "nguoi huong dan",
+			},
+			secondWordID: {
+				ID:                secondWordID,
+				Word:              "salary",
+				NormalizedForm:    "salary",
+				CanonicalForm:     "salary",
+				Lemma:             "salary",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "pay from a job",
+				VietnameseMeaning: "luong",
+			},
+		},
+	}
+	firstWord := wordRepo.words[firstWordID]
+	firstState := domain.UserWordState{
+		UserID:        userID,
+		WordID:        firstWordID,
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &futureReview,
+		WeaknessScore: 2.5,
+	}
+	secondState := domain.UserWordState{
+		UserID:        userID,
+		WordID:        secondWordID,
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &futureReview,
+		WeaknessScore: 1.9,
+	}
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			firstWordID:  firstState,
+			secondWordID: secondState,
+		},
+		weakCandidates: []domain.UserWordState{firstState, secondState},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-19",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			WeakCount: 1,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        firstWordID,
+				Ordinal:       1,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 2.5},
+				Word:          &firstWord,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+
+	service := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&replenishGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("GetNextCard returned error: %v", err)
+	}
+	if card.PoolItem == nil {
+		t.Fatalf("expected bonus practice card, got nil")
+	}
+	if card.PoolItem.WordID != secondWordID {
+		t.Fatalf("expected unseen bonus practice word %s, got %s", secondWordID, card.PoolItem.WordID)
+	}
+}
+
+func TestGetNextCardBonusPracticeRepeatsAfterCycleIsExhausted(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	firstWordID := uuid.New()
+	secondWordID := uuid.New()
+	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
+	futureReview := now.Add(12 * time.Hour)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			firstWordID: {
+				ID:                firstWordID,
+				Word:              "mentor",
+				NormalizedForm:    "mentor",
+				CanonicalForm:     "mentor",
+				Lemma:             "mentor",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "experienced advisor",
+				VietnameseMeaning: "nguoi huong dan",
+			},
+			secondWordID: {
+				ID:                secondWordID,
+				Word:              "salary",
+				NormalizedForm:    "salary",
+				CanonicalForm:     "salary",
+				Lemma:             "salary",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "pay from a job",
+				VietnameseMeaning: "luong",
+			},
+		},
+	}
+	firstWord := wordRepo.words[firstWordID]
+	secondWord := wordRepo.words[secondWordID]
+	firstState := domain.UserWordState{
+		UserID:        userID,
+		WordID:        firstWordID,
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &futureReview,
+		WeaknessScore: 2.5,
+	}
+	secondState := domain.UserWordState{
+		UserID:        userID,
+		WordID:        secondWordID,
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &futureReview,
+		WeaknessScore: 1.9,
+	}
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			firstWordID:  firstState,
+			secondWordID: secondState,
+		},
+		weakCandidates: []domain.UserWordState{firstState, secondState},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-19",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			WeakCount: 2,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        firstWordID,
+				Ordinal:       1,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 2.5},
+				Word:          &firstWord,
+			},
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        secondWordID,
+				Ordinal:       2,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 1.9},
+				Word:          &secondWord,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+
+	service := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&replenishGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("GetNextCard returned error: %v", err)
+	}
+	if card.PoolItem == nil {
+		t.Fatalf("expected recycled bonus practice card, got nil")
+	}
+	if card.PoolItem.WordID != firstWordID {
+		t.Fatalf("expected highest-priority recycled bonus word %s, got %s", firstWordID, card.PoolItem.WordID)
+	}
+	if !card.PoolItem.BonusPractice {
+		t.Fatalf("expected recycled card to remain bonus practice")
 	}
 }

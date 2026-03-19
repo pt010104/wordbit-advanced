@@ -70,3 +70,25 @@ func TestSelectReviewMode(t *testing.T) {
 		t.Fatalf("expected fill-in-blank mode, got %s", mode)
 	}
 }
+
+func TestApplyBonusPracticeOutcomeDoesNotMoveNextReviewAt(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 19, 10, 0, 0, 0, time.UTC)
+	nextReview := now.Add(48 * time.Hour)
+	state := domain.UserWordState{
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &nextReview,
+		WeaknessScore: 2.0,
+		Stability:     1.2,
+		Difficulty:    0.7,
+	}
+
+	updated := ApplyBonusPracticeOutcome(state, domain.RatingEasy, domain.ReviewModeMultipleChoice, now, 2400)
+	if updated.NextReviewAt == nil || !updated.NextReviewAt.Equal(nextReview) {
+		t.Fatalf("expected next review to stay unchanged, got %#v", updated.NextReviewAt)
+	}
+	if updated.WeaknessScore >= state.WeaknessScore {
+		t.Fatalf("expected bonus practice easy rating to reduce weakness, got %.2f from %.2f", updated.WeaknessScore, state.WeaknessScore)
+	}
+}

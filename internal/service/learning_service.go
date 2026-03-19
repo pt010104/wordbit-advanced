@@ -105,7 +105,17 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 		return err
 	}
 	now := s.clock.Now()
-	state = ApplyReviewOutcome(state, req.Rating, req.ModeUsed, now, req.ResponseTimeMs)
+	eventType := domain.EventTypeReviewAnswer
+	payload := domain.JSONMap{
+		"rating": req.Rating,
+	}
+	if item.BonusPractice {
+		state = ApplyBonusPracticeOutcome(state, req.Rating, req.ModeUsed, now, req.ResponseTimeMs)
+		payload["bonus_practice"] = true
+		eventType = domain.EventTypeBonusPractice
+	} else {
+		state = ApplyReviewOutcome(state, req.Rating, req.ModeUsed, now, req.ResponseTimeMs)
+	}
 	if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
 		return err
 	}
@@ -116,16 +126,17 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 		UserID:         user.ID,
 		WordID:         item.WordID,
 		PoolItemID:     &item.ID,
-		EventType:      domain.EventTypeReviewAnswer,
+		EventType:      eventType,
 		EventTime:      now,
 		ResponseTimeMs: req.ResponseTimeMs,
 		ModeUsed:       req.ModeUsed,
 		ClientEventID:  req.ClientEventID,
-		Payload: domain.JSONMap{
-			"rating": req.Rating,
-		},
+		Payload:        payload,
 	}); err != nil {
 		return err
+	}
+	if item.BonusPractice {
+		return nil
 	}
 	if err := s.maybeAppendSameDayFollowUp(ctx, user.ID, item, state); err != nil {
 		s.logger.Warn("append same-day review follow-up", "error", err)

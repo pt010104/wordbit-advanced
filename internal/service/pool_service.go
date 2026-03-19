@@ -203,7 +203,7 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 			LocalDate: view.Pool.LocalDate,
 			PoolItem:  item,
 		}, nil
-	} else if replenished, replenishErr := s.replenishWeakFallbackItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+	} else if replenished, replenishErr := s.replenishBonusPracticeItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
 		return CardResponse{}, replenishErr
 	} else if replenished {
 		view, err = s.GetOrCreateDailyPool(ctx, user)
@@ -248,7 +248,7 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 	}
 }
 
-func (s *PoolService) replenishWeakFallbackItems(
+func (s *PoolService) replenishBonusPracticeItems(
 	ctx context.Context,
 	userID uuid.UUID,
 	pool domain.DailyLearningPool,
@@ -261,16 +261,9 @@ func (s *PoolService) replenishWeakFallbackItems(
 	}
 
 	limit := maxInt(ComputeWeakSlots(settings.DailyNewWordLimit), 1)
-	existingWordIDs := extractPoolWordIDs(items)
-	weakStates, err := s.stateRepo.ListWeakCandidates(ctx, userID, existingWordIDs, limit)
+	weakStates, err := s.listBonusPracticeCandidates(ctx, userID, items, limit)
 	if err != nil {
 		return false, err
-	}
-	if len(weakStates) == 0 {
-		weakStates, err = s.stateRepo.ListWeakCandidates(ctx, userID, nil, limit)
-		if err != nil {
-			return false, err
-		}
 	}
 	if len(weakStates) == 0 {
 		return false, nil
@@ -285,14 +278,10 @@ func (s *PoolService) replenishWeakFallbackItems(
 		return false, err
 	}
 
-	pendingWordIDs := extractPendingPoolWordIDs(items)
 	appended := 0
-	for _, fallbackItem := range buildReviewItems(userID, pool.ID, weakStates, wordMap, domain.PoolItemTypeWeak) {
-		if _, exists := pendingWordIDs[fallbackItem.WordID]; exists {
-			continue
-		}
-		fallbackItem.Ordinal = lastOrdinal + appended + 1
-		if _, err := s.poolRepo.AppendPoolItem(ctx, fallbackItem); err != nil {
+	for _, bonusItem := range buildBonusPracticeItems(userID, pool.ID, weakStates, wordMap) {
+		bonusItem.Ordinal = lastOrdinal + appended + 1
+		if _, err := s.poolRepo.AppendPoolItem(ctx, bonusItem); err != nil {
 			return false, err
 		}
 		appended++
@@ -304,14 +293,43 @@ func (s *PoolService) replenishWeakFallbackItems(
 		return false, err
 	}
 
-	s.logger.Info("replenished weak fallback items",
+	s.logger.Info("replenished bonus practice items",
 		"user_id", userID,
 		"pool_id", pool.ID,
 		"local_date", pool.LocalDate,
-		"appended_weak_items", appended,
+		"appended_bonus_items", appended,
 		"at", now,
 	)
 	return true, nil
+}
+
+func (s *PoolService) listBonusPracticeCandidates(
+	ctx context.Context,
+	userID uuid.UUID,
+	items []domain.DailyLearningPoolItem,
+	limit int,
+) ([]domain.UserWordState, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	seenTodayWordIDs := extractBonusPracticeHistoryWordIDs(items)
+	freshCandidates, err := s.stateRepo.ListWeakCandidates(ctx, userID, seenTodayWordIDs, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(freshCandidates) >= limit {
+		return freshCandidates, nil
+	}
+
+	remaining := limit - len(freshCandidates)
+	recycleExcludeWordIDs := extractStateWordIDs(freshCandidates)
+	recycledCandidates, err := s.stateRepo.ListWeakCandidates(ctx, userID, recycleExcludeWordIDs, remaining)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(freshCandidates, recycledCandidates...), nil
 }
 
 func (s *PoolService) replenishUnknownDailySlots(
@@ -405,7 +423,6 @@ func (s *PoolService) computeUnknownDailyDeficit(
 
 func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*domain.DailyLearningPoolItem, *time.Time) {
 	var nextDue *time.Time
-	var fallback *domain.DailyLearningPoolItem
 	for i := range items {
 		item := items[i]
 		if item.Status != domain.PoolItemStatusPending {
@@ -415,101 +432,12 @@ func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*
 			if nextDue == nil || item.DueAt.Before(*nextDue) {
 				nextDue = item.DueAt
 			}
-			if fallback == nil || compareFallbackCard(item, *fallback) < 0 {
-				copyItem := item
-				fallback = &copyItem
-			}
 			continue
 		}
 		copyItem := item
 		return &copyItem, nil
 	}
-	if fallback != nil {
-		return fallback, nil
-	}
 	return nil, nextDue
-}
-
-func compareFallbackCard(a domain.DailyLearningPoolItem, b domain.DailyLearningPoolItem) int {
-	aWeakness := fallbackWeaknessScore(a)
-	bWeakness := fallbackWeaknessScore(b)
-	switch {
-	case aWeakness > bWeakness:
-		return -1
-	case aWeakness < bWeakness:
-		return 1
-	}
-
-	aPriority := fallbackItemTypePriority(a.ItemType)
-	bPriority := fallbackItemTypePriority(b.ItemType)
-	switch {
-	case aPriority < bPriority:
-		return -1
-	case aPriority > bPriority:
-		return 1
-	}
-
-	switch {
-	case a.DueAt == nil && b.DueAt != nil:
-		return 1
-	case a.DueAt != nil && b.DueAt == nil:
-		return -1
-	case a.DueAt != nil && b.DueAt != nil:
-		switch {
-		case a.DueAt.Before(*b.DueAt):
-			return -1
-		case a.DueAt.After(*b.DueAt):
-			return 1
-		}
-	}
-
-	switch {
-	case a.Ordinal < b.Ordinal:
-		return -1
-	case a.Ordinal > b.Ordinal:
-		return 1
-	default:
-		return 0
-	}
-}
-
-func fallbackWeaknessScore(item domain.DailyLearningPoolItem) float64 {
-	if item.Metadata == nil {
-		return 0
-	}
-	raw, ok := item.Metadata["weakness_score"]
-	if !ok {
-		return 0
-	}
-	switch value := raw.(type) {
-	case float64:
-		return value
-	case float32:
-		return float64(value)
-	case int:
-		return float64(value)
-	case int32:
-		return float64(value)
-	case int64:
-		return float64(value)
-	default:
-		return 0
-	}
-}
-
-func fallbackItemTypePriority(itemType domain.PoolItemType) int {
-	switch itemType {
-	case domain.PoolItemTypeWeak:
-		return 0
-	case domain.PoolItemTypeShortTerm:
-		return 1
-	case domain.PoolItemTypeReview:
-		return 2
-	case domain.PoolItemTypeNew:
-		return 3
-	default:
-		return 4
-	}
 }
 
 func (s *PoolService) ForceRebuildTodayPool(ctx context.Context, user domain.User) (DailyPoolView, error) {
@@ -692,6 +620,19 @@ func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWo
 	return items
 }
 
+func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word) []domain.DailyLearningPoolItem {
+	items := buildReviewItems(userID, poolID, states, words, domain.PoolItemTypeWeak)
+	for i := range items {
+		items[i].BonusPractice = true
+		items[i].DueAt = nil
+		if items[i].Metadata == nil {
+			items[i].Metadata = domain.JSONMap{}
+		}
+		items[i].Metadata["bonus_practice"] = true
+	}
+	return items
+}
+
 func buildNewItems(userID uuid.UUID, poolID uuid.UUID, words []domain.Word) []domain.DailyLearningPoolItem {
 	items := make([]domain.DailyLearningPoolItem, 0, len(words))
 	for _, word := range words {
@@ -735,15 +676,14 @@ func extractPoolWordIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
 	return mapUUIDKeys(set)
 }
 
-func extractPendingPoolWordIDs(items []domain.DailyLearningPoolItem) map[uuid.UUID]struct{} {
+func extractBonusPracticeHistoryWordIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
 	set := map[uuid.UUID]struct{}{}
 	for _, item := range items {
-		if item.Status != domain.PoolItemStatusPending {
-			continue
+		if item.BonusPractice {
+			set[item.WordID] = struct{}{}
 		}
-		set[item.WordID] = struct{}{}
 	}
-	return set
+	return mapUUIDKeys(set)
 }
 
 func extractStateWordIDs(states []domain.UserWordState) []uuid.UUID {

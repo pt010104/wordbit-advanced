@@ -156,6 +156,31 @@ func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, 
 	return state
 }
 
+func ApplyBonusPracticeOutcome(state domain.UserWordState, rating domain.ReviewRating, mode domain.ReviewMode, now time.Time, responseTimeMs int) domain.UserWordState {
+	state.LastSeenAt = &now
+	state.LastRating = rating
+	state.LastMode = mode
+
+	baseline := ComputeWeaknessScore(state)
+	if responseTimeMs > 9000 {
+		baseline += 0.15
+	}
+
+	switch rating {
+	case domain.RatingEasy:
+		state.WeaknessScore = maxFloat(0, baseline*0.55)
+	case domain.RatingMedium:
+		state.WeaknessScore = maxFloat(0, baseline*0.8)
+	case domain.RatingHard:
+		state.WrongCount++
+		state.WeaknessScore = ComputeWeaknessScore(state) + 0.35
+	default:
+		state.WeaknessScore = baseline
+	}
+
+	return state
+}
+
 func nextConsolidationStep(stage int, rating domain.ReviewRating) (time.Duration, int, domain.WordStatus) {
 	if rating == domain.RatingHard {
 		switch stage {

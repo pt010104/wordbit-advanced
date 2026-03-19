@@ -269,6 +269,9 @@ func scanPoolItem(row pgx.Row) (domain.DailyLearningPoolItem, error) {
 		&word.UpdatedAt,
 	)
 	item.Metadata = toJSONMap(metadata)
+	if rawBonus, ok := item.Metadata["bonus_practice"].(bool); ok {
+		item.BonusPractice = rawBonus
+	}
 	word.SourceMetadata = toJSONMap(wordMetadata)
 	if word.ID != uuid.Nil {
 		item.Word = &word

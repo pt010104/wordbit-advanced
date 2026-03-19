@@ -95,6 +95,7 @@ const (
 	EventTypePronunciation   EventType = "play_pronunciation"
 	EventTypePoolGenerated   EventType = "pool_generated"
 	EventTypeWeaknessRefresh EventType = "weakness_refresh"
+	EventTypeBonusPractice   EventType = "bonus_practice_review"
 )
 
 type RevealKind string
@@ -212,6 +213,7 @@ type DailyLearningPoolItem struct {
 	Status                PoolItemStatus `json:"status"`
 	IsReview              bool           `json:"is_review"`
 	FirstExposureRequired bool           `json:"first_exposure_required"`
+	BonusPractice         bool           `json:"bonus_practice"`
 	RevealedMeaning       bool           `json:"revealed_meaning"`
 	RevealedExample       bool           `json:"revealed_example"`
 	Metadata              JSONMap        `json:"metadata,omitempty"`
