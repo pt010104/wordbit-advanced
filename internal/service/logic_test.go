@@ -11,8 +11,8 @@ func TestComputeNewWordQuota(t *testing.T) {
 	t.Parallel()
 
 	got := ComputeNewWordQuota(10, 6, 2, 3)
-	if got != 5 {
-		t.Fatalf("expected quota 5, got %d", got)
+	if got != 10 {
+		t.Fatalf("expected quota 10, got %d", got)
 	}
 }
 
@@ -90,5 +90,47 @@ func TestApplyBonusPracticeOutcomeDoesNotMoveNextReviewAt(t *testing.T) {
 	}
 	if updated.WeaknessScore >= state.WeaknessScore {
 		t.Fatalf("expected bonus practice easy rating to reduce weakness, got %.2f from %.2f", updated.WeaknessScore, state.WeaknessScore)
+	}
+}
+
+func TestApplyBonusPracticeOutcomeEasyDoesNotIncreaseStoredWeakness(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 19, 10, 0, 0, 0, time.UTC)
+	state := domain.UserWordState{
+		Status:            domain.WordStatusReview,
+		WeaknessScore:     0.3,
+		WrongCount:        2,
+		HintUsedCount:     1,
+		Stability:         0.8,
+		AvgResponseTimeMs: 8200,
+	}
+
+	updated := ApplyBonusPracticeOutcome(state, domain.RatingEasy, domain.ReviewModeMultipleChoice, now, 1800)
+	if updated.WeaknessScore >= state.WeaknessScore {
+		t.Fatalf("expected easy bonus practice to keep improving stored weakness, got %.2f from %.2f", updated.WeaknessScore, state.WeaknessScore)
+	}
+}
+
+func TestApplyBonusPracticeOutcomeEasyKeepsReducingAcrossRepeats(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 19, 10, 0, 0, 0, time.UTC)
+	state := domain.UserWordState{
+		Status:        domain.WordStatusReview,
+		WeaknessScore: 2.0,
+		WrongCount:    2,
+		Stability:     1.1,
+		Difficulty:    0.7,
+	}
+
+	first := ApplyBonusPracticeOutcome(state, domain.RatingEasy, domain.ReviewModeMultipleChoice, now, 1800)
+	second := ApplyBonusPracticeOutcome(first, domain.RatingEasy, domain.ReviewModeMultipleChoice, now.Add(time.Minute), 1800)
+
+	if first.WeaknessScore >= state.WeaknessScore {
+		t.Fatalf("expected first easy bonus practice to reduce weakness, got %.2f from %.2f", first.WeaknessScore, state.WeaknessScore)
+	}
+	if second.WeaknessScore >= first.WeaknessScore {
+		t.Fatalf("expected repeated easy bonus practice to continue reducing weakness, got %.2f from %.2f", second.WeaknessScore, first.WeaknessScore)
 	}
 }

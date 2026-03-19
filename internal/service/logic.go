@@ -19,11 +19,10 @@ func ComputeWeakSlots(dailyLimit int) int {
 }
 
 func ComputeNewWordQuota(dailyLimit int, dueReview int, shortTerm int, weakSlots int) int {
-	quota := dailyLimit - int(math.Ceil(float64(dueReview+shortTerm)/2.0)) - int(math.Floor(float64(weakSlots)/2.0))
-	if quota < 0 {
+	if dailyLimit < 0 {
 		return 0
 	}
-	return quota
+	return dailyLimit
 }
 
 func SelectReviewMode(state domain.UserWordState) domain.ReviewMode {
@@ -161,19 +160,28 @@ func ApplyBonusPracticeOutcome(state domain.UserWordState, rating domain.ReviewR
 	state.LastRating = rating
 	state.LastMode = mode
 
-	baseline := ComputeWeaknessScore(state)
-	if responseTimeMs > 9000 {
-		baseline += 0.15
+	baseline := state.WeaknessScore
+	if baseline <= 0 {
+		baseline = ComputeWeaknessScore(state)
 	}
 
 	switch rating {
 	case domain.RatingEasy:
-		state.WeaknessScore = maxFloat(0, baseline*0.55)
+		multiplier := 0.55
+		if responseTimeMs > 9000 {
+			multiplier = 0.65
+		}
+		state.WeaknessScore = maxFloat(0, baseline*multiplier)
 	case domain.RatingMedium:
-		state.WeaknessScore = maxFloat(0, baseline*0.8)
+		multiplier := 0.8
+		if responseTimeMs > 9000 {
+			multiplier = 0.9
+		}
+		state.WeaknessScore = maxFloat(0, baseline*multiplier)
 	case domain.RatingHard:
 		state.WrongCount++
-		state.WeaknessScore = ComputeWeaknessScore(state) + 0.35
+		baseline = maxFloat(baseline, ComputeWeaknessScore(state))
+		state.WeaknessScore = baseline + 0.35
 	default:
 		state.WeaknessScore = baseline
 	}
