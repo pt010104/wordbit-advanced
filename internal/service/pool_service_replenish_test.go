@@ -204,6 +204,18 @@ func (r *replenishPoolRepo) MarkPoolItemCompleted(ctx context.Context, itemID uu
 }
 
 func (r *replenishPoolRepo) UpdatePoolItemReveal(ctx context.Context, itemID uuid.UUID, kind domain.RevealKind) error {
+	for i := range r.items {
+		if r.items[i].ID != itemID {
+			continue
+		}
+		switch kind {
+		case domain.RevealKindMeaning:
+			r.items[i].RevealedMeaning = true
+		case domain.RevealKindExample:
+			r.items[i].RevealedExample = true
+		}
+		return nil
+	}
 	return nil
 }
 
@@ -848,5 +860,215 @@ func TestGetNextCardBonusPracticeRepeatsAfterCycleIsExhausted(t *testing.T) {
 	}
 	if !card.PoolItem.BonusPractice {
 		t.Fatalf("expected recycled card to remain bonus practice")
+	}
+}
+
+func TestGetNextCardBonusPracticeRecyclePrefersLeastRecentWords(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	firstWordID := uuid.New()
+	secondWordID := uuid.New()
+	thirdWordID := uuid.New()
+	fourthWordID := uuid.New()
+	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
+	futureReview := now.Add(12 * time.Hour)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			firstWordID: {
+				ID:                firstWordID,
+				Word:              "mentor",
+				NormalizedForm:    "mentor",
+				CanonicalForm:     "mentor",
+				Lemma:             "mentor",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "experienced advisor",
+				VietnameseMeaning: "nguoi huong dan",
+			},
+			secondWordID: {
+				ID:                secondWordID,
+				Word:              "salary",
+				NormalizedForm:    "salary",
+				CanonicalForm:     "salary",
+				Lemma:             "salary",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "pay from a job",
+				VietnameseMeaning: "luong",
+			},
+			thirdWordID: {
+				ID:                thirdWordID,
+				Word:              "promotion",
+				NormalizedForm:    "promotion",
+				CanonicalForm:     "promotion",
+				Lemma:             "promotion",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "rise to a higher job level",
+				VietnameseMeaning: "thang chuc",
+			},
+			fourthWordID: {
+				ID:                fourthWordID,
+				Word:              "initiative",
+				NormalizedForm:    "initiative",
+				CanonicalForm:     "initiative",
+				Lemma:             "initiative",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "ability to act without being told",
+				VietnameseMeaning: "su chu dong",
+			},
+		},
+	}
+	firstWord := wordRepo.words[firstWordID]
+	secondWord := wordRepo.words[secondWordID]
+	thirdWord := wordRepo.words[thirdWordID]
+	fourthWord := wordRepo.words[fourthWordID]
+	firstState := domain.UserWordState{UserID: userID, WordID: firstWordID, Status: domain.WordStatusReview, NextReviewAt: &futureReview, WeaknessScore: 4.2}
+	secondState := domain.UserWordState{UserID: userID, WordID: secondWordID, Status: domain.WordStatusReview, NextReviewAt: &futureReview, WeaknessScore: 3.8}
+	thirdState := domain.UserWordState{UserID: userID, WordID: thirdWordID, Status: domain.WordStatusReview, NextReviewAt: &futureReview, WeaknessScore: 2.4}
+	fourthState := domain.UserWordState{UserID: userID, WordID: fourthWordID, Status: domain.WordStatusLearning, LearningStage: 2, NextReviewAt: &futureReview, WeaknessScore: 2.2}
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			firstWordID:  firstState,
+			secondWordID: secondState,
+			thirdWordID:  thirdState,
+			fourthWordID: fourthState,
+		},
+		weakCandidates: []domain.UserWordState{firstState, secondState, thirdState, fourthState},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-19",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			WeakCount: 6,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        firstWordID,
+				Ordinal:       1,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 4.2},
+				Word:          &firstWord,
+			},
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        secondWordID,
+				Ordinal:       2,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 3.8},
+				Word:          &secondWord,
+			},
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        thirdWordID,
+				Ordinal:       3,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 2.4},
+				Word:          &thirdWord,
+			},
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        fourthWordID,
+				Ordinal:       4,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeReveal,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 2.2},
+				Word:          &fourthWord,
+			},
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        firstWordID,
+				Ordinal:       5,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 4.2},
+				Word:          &firstWord,
+			},
+			{
+				ID:            uuid.New(),
+				PoolID:        poolID,
+				UserID:        userID,
+				WordID:        secondWordID,
+				Ordinal:       6,
+				ItemType:      domain.PoolItemTypeWeak,
+				ReviewMode:    domain.ReviewModeMultipleChoice,
+				Status:        domain.PoolItemStatusCompleted,
+				IsReview:      true,
+				BonusPractice: true,
+				Metadata:      domain.JSONMap{"bonus_practice": true, "weakness_score": 3.8},
+				Word:          &secondWord,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 6
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+
+	service := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&replenishGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("GetNextCard returned error: %v", err)
+	}
+	if card.PoolItem == nil {
+		t.Fatalf("expected recycled bonus practice card, got nil")
+	}
+	if card.PoolItem.WordID != thirdWordID {
+		t.Fatalf("expected least-recent recycled bonus word %s, got %s", thirdWordID, card.PoolItem.WordID)
+	}
+	if len(poolRepo.items) != 8 {
+		t.Fatalf("expected two recycled bonus items to be appended, got %d items", len(poolRepo.items))
+	}
+	if poolRepo.items[6].WordID != thirdWordID {
+		t.Fatalf("expected first appended recycled word %s, got %s", thirdWordID, poolRepo.items[6].WordID)
+	}
+	if poolRepo.items[7].WordID != fourthWordID {
+		t.Fatalf("expected second appended recycled word %s, got %s", fourthWordID, poolRepo.items[7].WordID)
 	}
 }

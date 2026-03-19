@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -313,7 +314,8 @@ func (s *PoolService) listBonusPracticeCandidates(
 		return nil, nil
 	}
 
-	seenTodayWordIDs := extractBonusPracticeHistoryWordIDs(items)
+	history := extractBonusPracticeHistory(items)
+	seenTodayWordIDs := bonusPracticeHistoryWordIDs(history)
 	freshCandidates, err := s.stateRepo.ListWeakCandidates(ctx, userID, seenTodayWordIDs, limit)
 	if err != nil {
 		return nil, err
@@ -324,12 +326,64 @@ func (s *PoolService) listBonusPracticeCandidates(
 
 	remaining := limit - len(freshCandidates)
 	recycleExcludeWordIDs := extractStateWordIDs(freshCandidates)
-	recycledCandidates, err := s.stateRepo.ListWeakCandidates(ctx, userID, recycleExcludeWordIDs, remaining)
+	recycledCandidates, err := s.recycleBonusPracticeCandidates(ctx, userID, history, recycleExcludeWordIDs, remaining)
 	if err != nil {
 		return nil, err
 	}
 
 	return append(freshCandidates, recycledCandidates...), nil
+}
+
+func (s *PoolService) recycleBonusPracticeCandidates(
+	ctx context.Context,
+	userID uuid.UUID,
+	history map[uuid.UUID]bonusPracticeHistoryEntry,
+	excludeWordIDs []uuid.UUID,
+	limit int,
+) ([]domain.UserWordState, error) {
+	if limit <= 0 || len(history) == 0 {
+		return nil, nil
+	}
+
+	excluded := make(map[uuid.UUID]struct{}, len(excludeWordIDs))
+	for _, wordID := range excludeWordIDs {
+		excluded[wordID] = struct{}{}
+	}
+
+	candidates := make([]domain.UserWordState, 0, len(history))
+	for wordID := range history {
+		if _, skip := excluded[wordID]; skip {
+			continue
+		}
+		state, err := s.stateRepo.Get(ctx, userID, wordID)
+		if err != nil {
+			if isNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		if state.Status != domain.WordStatusLearning && state.Status != domain.WordStatusReview {
+			continue
+		}
+		candidates = append(candidates, state)
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		leftHistory := history[candidates[i].WordID]
+		rightHistory := history[candidates[j].WordID]
+		if leftHistory.latestOrdinal != rightHistory.latestOrdinal {
+			return leftHistory.latestOrdinal < rightHistory.latestOrdinal
+		}
+		if candidates[i].WeaknessScore != candidates[j].WeaknessScore {
+			return candidates[i].WeaknessScore > candidates[j].WeaknessScore
+		}
+		return candidates[i].WordID.String() < candidates[j].WordID.String()
+	})
+
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates, nil
 }
 
 func (s *PoolService) replenishUnknownDailySlots(
@@ -676,14 +730,30 @@ func extractPoolWordIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
 	return mapUUIDKeys(set)
 }
 
-func extractBonusPracticeHistoryWordIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
-	set := map[uuid.UUID]struct{}{}
+type bonusPracticeHistoryEntry struct {
+	latestOrdinal int
+}
+
+func extractBonusPracticeHistory(items []domain.DailyLearningPoolItem) map[uuid.UUID]bonusPracticeHistoryEntry {
+	history := make(map[uuid.UUID]bonusPracticeHistoryEntry)
 	for _, item := range items {
 		if item.BonusPractice {
-			set[item.WordID] = struct{}{}
+			entry := history[item.WordID]
+			if item.Ordinal > entry.latestOrdinal {
+				entry.latestOrdinal = item.Ordinal
+			}
+			history[item.WordID] = entry
 		}
 	}
-	return mapUUIDKeys(set)
+	return history
+}
+
+func bonusPracticeHistoryWordIDs(history map[uuid.UUID]bonusPracticeHistoryEntry) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(history))
+	for wordID := range history {
+		out = append(out, wordID)
+	}
+	return out
 }
 
 func extractStateWordIDs(states []domain.UserWordState) []uuid.UUID {

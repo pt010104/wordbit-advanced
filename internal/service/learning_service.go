@@ -150,24 +150,29 @@ func (s *LearningService) SubmitReveal(ctx context.Context, user domain.User, re
 		return err
 	}
 	now := s.clock.Now()
-	state, err := s.stateRepo.Get(ctx, user.ID, item.WordID)
-	if err == nil {
-		switch req.Kind {
-		case domain.RevealKindMeaning:
-			state.RevealMeaningCount++
-		case domain.RevealKindExample:
-			state.RevealExampleCount++
-		case domain.RevealKindHint:
-			state.HintUsedCount++
-		default:
-			return fmt.Errorf("%w: unsupported reveal kind", domain.ErrValidation)
-		}
-		state.WeaknessScore = ComputeWeaknessScore(state)
-		if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
+	switch req.Kind {
+	case domain.RevealKindMeaning, domain.RevealKindExample, domain.RevealKindHint:
+	default:
+		return fmt.Errorf("%w: unsupported reveal kind", domain.ErrValidation)
+	}
+	if !item.BonusPractice {
+		state, err := s.stateRepo.Get(ctx, user.ID, item.WordID)
+		if err == nil {
+			switch req.Kind {
+			case domain.RevealKindMeaning:
+				state.RevealMeaningCount++
+			case domain.RevealKindExample:
+				state.RevealExampleCount++
+			case domain.RevealKindHint:
+				state.HintUsedCount++
+			}
+			state.WeaknessScore = ComputeWeaknessScore(state)
+			if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, domain.ErrNotFound) {
 			return err
 		}
-	} else if !errors.Is(err, domain.ErrNotFound) {
-		return err
 	}
 	if err := s.poolRepo.UpdatePoolItemReveal(ctx, item.ID, req.Kind); err != nil {
 		return err
