@@ -63,8 +63,17 @@ func TestSelectReviewMode(t *testing.T) {
 	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 1, Stability: 0.7}); mode != domain.ReviewModeReveal {
 		t.Fatalf("expected reveal mode, got %s", mode)
 	}
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 0.85, Difficulty: 0.8}); mode != domain.ReviewModeReveal {
+		t.Fatalf("expected low-stability review to stay in reveal mode, got %s", mode)
+	}
 	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.8}); mode != domain.ReviewModeMultipleChoice {
 		t.Fatalf("expected multiple choice mode, got %s", mode)
+	}
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 1.0, Difficulty: 0.68}); mode != domain.ReviewModeMultipleChoice {
+		t.Fatalf("expected stable review with moderate difficulty to use multiple choice, got %s", mode)
+	}
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 1.0, Difficulty: 0.35, WeaknessScore: 0.6}); mode != domain.ReviewModeFillBlank {
+		t.Fatalf("expected stable low-weakness review to use fill-in-blank, got %s", mode)
 	}
 	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 3.0, Difficulty: 0.3}); mode != domain.ReviewModeFillBlank {
 		t.Fatalf("expected fill-in-blank mode, got %s", mode)

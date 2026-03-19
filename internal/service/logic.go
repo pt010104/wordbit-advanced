@@ -26,10 +26,10 @@ func ComputeNewWordQuota(dailyLimit int, dueReview int, shortTerm int, weakSlots
 }
 
 func SelectReviewMode(state domain.UserWordState) domain.ReviewMode {
-	if state.LearningStage > 0 || state.Stability < 1.2 {
+	if state.LearningStage > 0 || state.Stability < 0.9 {
 		return domain.ReviewModeReveal
 	}
-	if state.Difficulty >= 0.7 || state.WeaknessScore >= 1.5 {
+	if state.Difficulty >= 0.65 || state.WeaknessScore >= 1.2 {
 		return domain.ReviewModeMultipleChoice
 	}
 	return domain.ReviewModeFillBlank
