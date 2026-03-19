@@ -203,6 +203,24 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 			LocalDate: view.Pool.LocalDate,
 			PoolItem:  item,
 		}, nil
+	} else if replenished, replenishErr := s.replenishWeakFallbackItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+		return CardResponse{}, replenishErr
+	} else if replenished {
+		view, err = s.GetOrCreateDailyPool(ctx, user)
+		if err != nil {
+			return CardResponse{}, err
+		}
+		if item, nextDue := findNextCardInItems(view.Items, now); item != nil {
+			return CardResponse{
+				LocalDate: view.Pool.LocalDate,
+				PoolItem:  item,
+			}, nil
+		} else {
+			return CardResponse{
+				LocalDate: view.Pool.LocalDate,
+				NextDueAt: nextDue,
+			}, nil
+		}
 	} else if replenished, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
 		return CardResponse{}, replenishErr
 	} else if replenished {
@@ -228,6 +246,72 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 			NextDueAt: nextDue,
 		}, nil
 	}
+}
+
+func (s *PoolService) replenishWeakFallbackItems(
+	ctx context.Context,
+	userID uuid.UUID,
+	pool domain.DailyLearningPool,
+	items []domain.DailyLearningPoolItem,
+	now time.Time,
+) (bool, error) {
+	settings, err := s.settingsRepo.Get(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+
+	limit := maxInt(ComputeWeakSlots(settings.DailyNewWordLimit), 1)
+	existingWordIDs := extractPoolWordIDs(items)
+	weakStates, err := s.stateRepo.ListWeakCandidates(ctx, userID, existingWordIDs, limit)
+	if err != nil {
+		return false, err
+	}
+	if len(weakStates) == 0 {
+		weakStates, err = s.stateRepo.ListWeakCandidates(ctx, userID, nil, limit)
+		if err != nil {
+			return false, err
+		}
+	}
+	if len(weakStates) == 0 {
+		return false, nil
+	}
+
+	wordMap, err := s.loadWordMap(ctx, extractStateWordIDs(weakStates))
+	if err != nil {
+		return false, err
+	}
+	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, pool.ID)
+	if err != nil {
+		return false, err
+	}
+
+	pendingWordIDs := extractPendingPoolWordIDs(items)
+	appended := 0
+	for _, fallbackItem := range buildReviewItems(userID, pool.ID, weakStates, wordMap, domain.PoolItemTypeWeak) {
+		if _, exists := pendingWordIDs[fallbackItem.WordID]; exists {
+			continue
+		}
+		fallbackItem.Ordinal = lastOrdinal + appended + 1
+		if _, err := s.poolRepo.AppendPoolItem(ctx, fallbackItem); err != nil {
+			return false, err
+		}
+		appended++
+	}
+	if appended == 0 {
+		return false, nil
+	}
+	if err := s.poolRepo.IncrementWeakCount(ctx, pool.ID, appended); err != nil {
+		return false, err
+	}
+
+	s.logger.Info("replenished weak fallback items",
+		"user_id", userID,
+		"pool_id", pool.ID,
+		"local_date", pool.LocalDate,
+		"appended_weak_items", appended,
+		"at", now,
+	)
+	return true, nil
 }
 
 func (s *PoolService) replenishUnknownDailySlots(
@@ -641,6 +725,25 @@ func collectStateWordIDs(collections ...[]domain.UserWordState) []uuid.UUID {
 		}
 	}
 	return mapUUIDKeys(set)
+}
+
+func extractPoolWordIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
+	set := map[uuid.UUID]struct{}{}
+	for _, item := range items {
+		set[item.WordID] = struct{}{}
+	}
+	return mapUUIDKeys(set)
+}
+
+func extractPendingPoolWordIDs(items []domain.DailyLearningPoolItem) map[uuid.UUID]struct{} {
+	set := map[uuid.UUID]struct{}{}
+	for _, item := range items {
+		if item.Status != domain.PoolItemStatusPending {
+			continue
+		}
+		set[item.WordID] = struct{}{}
+	}
+	return set
 }
 
 func extractStateWordIDs(states []domain.UserWordState) []uuid.UUID {

@@ -208,6 +208,10 @@ func (m *memoryPoolRepo) IncrementNewCount(ctx context.Context, poolID uuid.UUID
 	m.pool.NewCount += delta
 	return nil
 }
+func (m *memoryPoolRepo) IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error {
+	m.pool.WeakCount += delta
+	return nil
+}
 func (m *memoryPoolRepo) DeleteItemsForUserWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error {
 	return nil
 }

@@ -88,7 +88,8 @@ func (r *replenishWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID)
 }
 
 type replenishStateRepo struct {
-	states map[uuid.UUID]domain.UserWordState
+	states         map[uuid.UUID]domain.UserWordState
+	weakCandidates []domain.UserWordState
 }
 
 func (r *replenishStateRepo) Get(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) (domain.UserWordState, error) {
@@ -104,7 +105,28 @@ func (r *replenishStateRepo) ListDueWithinWindow(ctx context.Context, userID uui
 }
 
 func (r *replenishStateRepo) ListWeakCandidates(ctx context.Context, userID uuid.UUID, excludeWordIDs []uuid.UUID, limit int) ([]domain.UserWordState, error) {
-	return nil, nil
+	if limit <= 0 || len(r.weakCandidates) == 0 {
+		return nil, nil
+	}
+	excluded := make(map[uuid.UUID]struct{}, len(excludeWordIDs))
+	for _, id := range excludeWordIDs {
+		excluded[id] = struct{}{}
+	}
+	capacity := limit
+	if len(r.weakCandidates) < capacity {
+		capacity = len(r.weakCandidates)
+	}
+	out := make([]domain.UserWordState, 0, capacity)
+	for _, state := range r.weakCandidates {
+		if _, skip := excluded[state.WordID]; skip {
+			continue
+		}
+		out = append(out, state)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (r *replenishStateRepo) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
@@ -201,6 +223,11 @@ func (r *replenishPoolRepo) GetLastOrdinal(ctx context.Context, poolID uuid.UUID
 
 func (r *replenishPoolRepo) IncrementNewCount(ctx context.Context, poolID uuid.UUID, delta int) error {
 	r.pool.NewCount += delta
+	return nil
+}
+
+func (r *replenishPoolRepo) IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error {
+	r.pool.WeakCount += delta
 	return nil
 }
 
@@ -350,5 +377,122 @@ func TestGetNextCardReplenishesUnknownDailySlotsAtPoolEnd(t *testing.T) {
 	}
 	if pendingNew != 2 {
 		t.Fatalf("expected 2 replenished pending new items, got %d", pendingNew)
+	}
+}
+
+func TestGetNextCardReplenishesWeakFallbackWhenPoolIsExhausted(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	completedWordID := uuid.New()
+	fallbackWordID := uuid.New()
+	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
+	futureReview := now.Add(36 * time.Hour)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			completedWordID: {
+				ID:                completedWordID,
+				Word:              "apply",
+				NormalizedForm:    "apply",
+				CanonicalForm:     "apply",
+				Lemma:             "apply",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "request",
+				VietnameseMeaning: "ung tuyen",
+			},
+			fallbackWordID: {
+				ID:                fallbackWordID,
+				Word:              "mentor",
+				NormalizedForm:    "mentor",
+				CanonicalForm:     "mentor",
+				Lemma:             "mentor",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "experienced advisor",
+				VietnameseMeaning: "nguoi huong dan",
+			},
+		},
+	}
+	completedWord := wordRepo.words[completedWordID]
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			fallbackWordID: {
+				UserID:        userID,
+				WordID:        fallbackWordID,
+				Status:        domain.WordStatusReview,
+				NextReviewAt:  &futureReview,
+				WeaknessScore: 2.3,
+			},
+		},
+		weakCandidates: []domain.UserWordState{
+			{
+				UserID:        userID,
+				WordID:        fallbackWordID,
+				Status:        domain.WordStatusReview,
+				NextReviewAt:  &futureReview,
+				WeaknessScore: 2.3,
+			},
+		},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-19",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:                    uuid.New(),
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                completedWordID,
+				Ordinal:               1,
+				ItemType:              domain.PoolItemTypeNew,
+				Status:                domain.PoolItemStatusCompleted,
+				FirstExposureRequired: true,
+				Word:                  &completedWord,
+			},
+		},
+	}
+	settingsRepo := &replenishSettingsRepo{
+		settings: domain.DefaultUserSettings(userID),
+	}
+
+	service := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&replenishGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("GetNextCard returned error: %v", err)
+	}
+	if card.PoolItem == nil {
+		t.Fatalf("expected weak fallback card, got nil")
+	}
+	if card.PoolItem.WordID != fallbackWordID {
+		t.Fatalf("expected fallback word %s, got %s", fallbackWordID, card.PoolItem.WordID)
+	}
+	if card.PoolItem.ItemType != domain.PoolItemTypeWeak {
+		t.Fatalf("expected weak fallback item, got %s", card.PoolItem.ItemType)
+	}
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected appended weak fallback item, got %d pool items", len(poolRepo.items))
+	}
+	if poolRepo.pool.WeakCount != 1 {
+		t.Fatalf("expected weak count incremented to 1, got %d", poolRepo.pool.WeakCount)
 	}
 }

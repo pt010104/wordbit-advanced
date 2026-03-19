@@ -50,6 +50,7 @@ type PoolRepository interface {
 	AppendPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) (domain.DailyLearningPoolItem, error)
 	GetLastOrdinal(ctx context.Context, poolID uuid.UUID) (int, error)
 	IncrementNewCount(ctx context.Context, poolID uuid.UUID, delta int) error
+	IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error
 	DeleteItemsForUserWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error
 	ForceDeleteByLocalDate(ctx context.Context, userID uuid.UUID, localDate string) error
 }

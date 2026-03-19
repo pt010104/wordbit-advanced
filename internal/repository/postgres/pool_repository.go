@@ -269,6 +269,18 @@ func (r *PoolRepository) IncrementNewCount(ctx context.Context, poolID uuid.UUID
 	return mapError(err)
 }
 
+func (r *PoolRepository) IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error {
+	if delta == 0 {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE daily_learning_pools
+		SET weak_count = weak_count + $2
+		WHERE id = $1
+	`, poolID, delta)
+	return mapError(err)
+}
+
 func (r *PoolRepository) DeleteItemsForUserWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		WITH deleted AS (
