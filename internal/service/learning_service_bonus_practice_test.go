@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -69,6 +71,7 @@ func TestSubmitReviewBonusPracticeDoesNotChangeNextReviewAt(t *testing.T) {
 		stateRepo,
 		poolRepo,
 		eventRepo,
+		nil,
 		replenishClock{now: now},
 		nil,
 	)
@@ -175,6 +178,7 @@ func TestSubmitRevealBonusPracticeDoesNotChangeWeaknessOrCounters(t *testing.T) 
 				stateRepo,
 				poolRepo,
 				eventRepo,
+				nil,
 				replenishClock{now: now},
 				nil,
 			)
@@ -272,6 +276,7 @@ func TestSubmitReviewBonusPracticeRepeatedRevealAndReviewDoesNotInflateWeakness(
 		stateRepo,
 		poolRepo,
 		eventRepo,
+		nil,
 		replenishClock{now: now},
 		nil,
 	)
@@ -322,5 +327,117 @@ func TestSubmitReviewBonusPracticeRepeatedRevealAndReviewDoesNotInflateWeakness(
 	}
 	if len(eventRepo.events) != 4 {
 		t.Fatalf("expected four bonus events, got %d", len(eventRepo.events))
+	}
+}
+
+func TestSubmitFirstExposureKnownAppendsReplacementNewCard(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	knownWordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 19, 10, 0, 0, 0, time.UTC)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			knownWordID: {
+				ID:                knownWordID,
+				Word:              "apply",
+				NormalizedForm:    "apply",
+				CanonicalForm:     "apply",
+				Lemma:             "apply",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "request",
+				VietnameseMeaning: "ung tuyen",
+			},
+		},
+	}
+	knownWord := wordRepo.words[knownWordID]
+	stateRepo := &replenishStateRepo{}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-19",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:                    itemID,
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                knownWordID,
+				Ordinal:               1,
+				ItemType:              domain.PoolItemTypeNew,
+				ReviewMode:            domain.ReviewModeReveal,
+				Status:                domain.PoolItemStatusPending,
+				FirstExposureRequired: true,
+				Word:                  &knownWord,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+	generator := &trackingGenerator{
+		candidates: []domain.CandidateWord{
+			{
+				Word:              "deadline",
+				CanonicalForm:     "deadline",
+				Lemma:             "deadline",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "time limit",
+				VietnameseMeaning: "han chot",
+			},
+		},
+	}
+	poolService := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		generator,
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+	service := NewLearningService(
+		settingsRepo,
+		stateRepo,
+		poolRepo,
+		&captureEventRepo{},
+		poolService,
+		replenishClock{now: now},
+		nil,
+	)
+
+	err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
+		PoolItemID:     itemID,
+		Action:         domain.ExposureActionKnown,
+		ResponseTimeMs: 900,
+		ClientEventID:  "known-top-up",
+	})
+	if err != nil {
+		t.Fatalf("SubmitFirstExposure returned error: %v", err)
+	}
+
+	if generator.calls != 1 {
+		t.Fatalf("expected replacement generation after known exposure, got %d calls", generator.calls)
+	}
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected replacement new card appended, got %d pool items", len(poolRepo.items))
+	}
+	appended := poolRepo.items[1]
+	if appended.ItemType != domain.PoolItemTypeNew || appended.Status != domain.PoolItemStatusPending {
+		t.Fatalf("expected appended pending new item, got %#v", appended)
+	}
+	if !appended.FirstExposureRequired {
+		t.Fatalf("expected appended card to require first exposure")
 	}
 }

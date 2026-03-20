@@ -16,6 +16,7 @@ type LearningService struct {
 	stateRepo    WordStateRepository
 	poolRepo     PoolRepository
 	eventRepo    LearningEventRepository
+	quotaManager UnknownDailyQuotaManager
 	clock        Clock
 	logger       *slog.Logger
 }
@@ -25,6 +26,7 @@ func NewLearningService(
 	stateRepo WordStateRepository,
 	poolRepo PoolRepository,
 	eventRepo LearningEventRepository,
+	quotaManager UnknownDailyQuotaManager,
 	clock Clock,
 	logger *slog.Logger,
 ) *LearningService {
@@ -33,6 +35,7 @@ func NewLearningService(
 		stateRepo:    stateRepo,
 		poolRepo:     poolRepo,
 		eventRepo:    eventRepo,
+		quotaManager: quotaManager,
 		clock:        clock,
 		logger:       logger,
 	}
@@ -86,6 +89,10 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 	if req.Action == domain.ExposureActionUnknown {
 		if err := s.maybeAppendSameDayFollowUp(ctx, user.ID, item, state); err != nil {
 			s.logger.Warn("append same-day follow-up", "error", err)
+		}
+	} else if s.quotaManager != nil {
+		if err := s.quotaManager.EnsureUnknownDailyQuota(ctx, user); err != nil {
+			s.logger.Warn("ensure unknown daily quota", "error", err)
 		}
 	}
 	return nil

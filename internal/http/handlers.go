@@ -160,6 +160,20 @@ func (h *Handler) GetDailyPool(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, nethttp.StatusOK, view)
 }
 
+func (h *Handler) AppendMoreWords(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	view, err := h.pools.AppendMoreNewWords(r.Context(), user)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, view)
+}
+
 func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)
 	if err != nil {

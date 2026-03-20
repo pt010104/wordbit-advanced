@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"sort"
 	"testing"
 	"time"
 
@@ -26,7 +27,8 @@ func (r *replenishSettingsRepo) Upsert(ctx context.Context, settings domain.User
 }
 
 type replenishWordRepo struct {
-	words map[uuid.UUID]domain.Word
+	words       map[uuid.UUID]domain.Word
+	bankWordIDs []uuid.UUID
 }
 
 func (r *replenishWordRepo) GetByID(ctx context.Context, wordID uuid.UUID) (domain.Word, error) {
@@ -53,6 +55,7 @@ func (r *replenishWordRepo) UpsertWord(ctx context.Context, candidate domain.Can
 		VietnameseMeaning: candidate.VietnameseMeaning,
 	}
 	r.words[word.ID] = word
+	r.bankWordIDs = append(r.bankWordIDs, word.ID)
 	return word, nil
 }
 
@@ -75,6 +78,36 @@ func (r *replenishWordRepo) UpdateWord(ctx context.Context, wordID uuid.UUID, ca
 
 func (r *replenishWordRepo) ListWordIDsSeenAsNew(ctx context.Context, userID uuid.UUID, since time.Time) ([]uuid.UUID, error) {
 	return nil, nil
+}
+
+func (r *replenishWordRepo) ListBankWords(ctx context.Context, userID uuid.UUID, level domain.CEFRLevel, topic string, excludeWordIDs []uuid.UUID, limit int) ([]domain.Word, error) {
+	if limit <= 0 {
+		return []domain.Word{}, nil
+	}
+	excluded := make(map[uuid.UUID]struct{}, len(excludeWordIDs))
+	for _, id := range excludeWordIDs {
+		excluded[id] = struct{}{}
+	}
+	ids := append([]uuid.UUID{}, r.bankWordIDs...)
+	sort.Slice(ids, func(i, j int) bool {
+		return r.words[ids[i]].Word < r.words[ids[j]].Word
+	})
+
+	out := make([]domain.Word, 0, limit)
+	for _, id := range ids {
+		word := r.words[id]
+		if word.Level != level || word.Topic != topic {
+			continue
+		}
+		if _, skip := excluded[id]; skip {
+			continue
+		}
+		out = append(out, word)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (r *replenishWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([]domain.Word, error) {
@@ -305,6 +338,29 @@ func (g *replenishGenerator) GenerateCandidates(ctx context.Context, input Gener
 	}, "{}", nil
 }
 
+type trackingGenerator struct {
+	calls      int
+	candidates []domain.CandidateWord
+}
+
+func (g *trackingGenerator) GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error) {
+	g.calls++
+	if len(g.candidates) > 0 {
+		return g.candidates, "{}", nil
+	}
+	return []domain.CandidateWord{
+		{
+			Word:              "career",
+			CanonicalForm:     "career",
+			Lemma:             "career",
+			Level:             input.CEFRLevel,
+			Topic:             input.Topic,
+			EnglishMeaning:    "profession",
+			VietnameseMeaning: "su nghiep",
+		},
+	}, "{}", nil
+}
+
 type replenishClock struct {
 	now time.Time
 }
@@ -371,6 +427,7 @@ func TestGetNextCardReplenishesUnknownDailySlotsAtPoolEnd(t *testing.T) {
 	settingsRepo := &replenishSettingsRepo{
 		settings: domain.DefaultUserSettings(userID),
 	}
+	settingsRepo.settings.DailyNewWordLimit = 2
 
 	service := NewPoolService(
 		settingsRepo,
@@ -402,6 +459,81 @@ func TestGetNextCardReplenishesUnknownDailySlotsAtPoolEnd(t *testing.T) {
 	}
 	if pendingNew != 2 {
 		t.Fatalf("expected 2 replenished pending new items, got %d", pendingNew)
+	}
+}
+
+func TestAppendMoreNewWordsAddsLimitSizedBatch(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	now := time.Date(2026, 3, 20, 9, 0, 0, 0, time.UTC)
+	poolID := uuid.New()
+
+	wordRepo := &replenishWordRepo{}
+	stateRepo := &replenishStateRepo{}
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-20",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+		},
+	}
+	settingsRepo := &replenishSettingsRepo{
+		settings: domain.DefaultUserSettings(userID),
+	}
+	settingsRepo.settings.DailyNewWordLimit = 2
+	service := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&trackingGenerator{
+			candidates: []domain.CandidateWord{
+				{
+					Word:              "deadline",
+					CanonicalForm:     "deadline",
+					Lemma:             "deadline",
+					Level:             domain.CEFRB1,
+					Topic:             "Work/Career",
+					EnglishMeaning:    "time limit",
+					VietnameseMeaning: "han chot",
+				},
+				{
+					Word:              "promotion",
+					CanonicalForm:     "promotion",
+					Lemma:             "promotion",
+					Level:             domain.CEFRB1,
+					Topic:             "Work/Career",
+					EnglishMeaning:    "advancement",
+					VietnameseMeaning: "thang tien",
+				},
+			},
+		},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+
+	view, err := service.AppendMoreNewWords(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("AppendMoreNewWords returned error: %v", err)
+	}
+	if view.Pool.NewCount != 2 {
+		t.Fatalf("expected new_count to increase to 2, got %d", view.Pool.NewCount)
+	}
+	if len(view.Items) != 2 {
+		t.Fatalf("expected 2 appended new items, got %d", len(view.Items))
+	}
+	for _, item := range view.Items {
+		if item.ItemType != domain.PoolItemTypeNew {
+			t.Fatalf("expected appended item type new, got %s", item.ItemType)
+		}
+		if !item.FirstExposureRequired {
+			t.Fatalf("expected appended new item to require first exposure")
+		}
 	}
 }
 
@@ -488,6 +620,7 @@ func TestGetNextCardReplenishesWeakFallbackWhenPoolIsExhausted(t *testing.T) {
 	settingsRepo := &replenishSettingsRepo{
 		settings: domain.DefaultUserSettings(userID),
 	}
+	settingsRepo.settings.DailyNewWordLimit = 0
 
 	service := NewPoolService(
 		settingsRepo,
@@ -519,6 +652,239 @@ func TestGetNextCardReplenishesWeakFallbackWhenPoolIsExhausted(t *testing.T) {
 	}
 	if poolRepo.pool.WeakCount != 1 {
 		t.Fatalf("expected weak count incremented to 1, got %d", poolRepo.pool.WeakCount)
+	}
+}
+
+func TestGetNextCardPrioritizesUnknownReplenishmentBeforeBonusPractice(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	completedWordID := uuid.New()
+	weakWordID := uuid.New()
+	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
+	futureReview := now.Add(36 * time.Hour)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			completedWordID: {
+				ID:                completedWordID,
+				Word:              "apply",
+				NormalizedForm:    "apply",
+				CanonicalForm:     "apply",
+				Lemma:             "apply",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "request",
+				VietnameseMeaning: "ung tuyen",
+			},
+			weakWordID: {
+				ID:                weakWordID,
+				Word:              "mentor",
+				NormalizedForm:    "mentor",
+				CanonicalForm:     "mentor",
+				Lemma:             "mentor",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "experienced advisor",
+				VietnameseMeaning: "nguoi huong dan",
+			},
+		},
+	}
+	completedWord := wordRepo.words[completedWordID]
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			completedWordID: {UserID: userID, WordID: completedWordID, Status: domain.WordStatusKnown},
+			weakWordID:      {UserID: userID, WordID: weakWordID, Status: domain.WordStatusReview, NextReviewAt: &futureReview, WeaknessScore: 2.3},
+		},
+		weakCandidates: []domain.UserWordState{
+			{UserID: userID, WordID: weakWordID, Status: domain.WordStatusReview, NextReviewAt: &futureReview, WeaknessScore: 2.3},
+		},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-19",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:                    uuid.New(),
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                completedWordID,
+				Ordinal:               1,
+				ItemType:              domain.PoolItemTypeNew,
+				Status:                domain.PoolItemStatusCompleted,
+				FirstExposureRequired: true,
+				Word:                  &completedWord,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+	generator := &trackingGenerator{
+		candidates: []domain.CandidateWord{
+			{
+				Word:              "deadline",
+				CanonicalForm:     "deadline",
+				Lemma:             "deadline",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "time limit",
+				VietnameseMeaning: "han chot",
+			},
+		},
+	}
+
+	service := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		generator,
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("GetNextCard returned error: %v", err)
+	}
+	if card.PoolItem == nil {
+		t.Fatalf("expected replenished new card, got nil")
+	}
+	if card.PoolItem.ItemType != domain.PoolItemTypeNew {
+		t.Fatalf("expected replenished new card before weak fallback, got %s", card.PoolItem.ItemType)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("expected generator to run once for unknown replenishment, got %d", generator.calls)
+	}
+}
+
+func TestGetNextCardReusesStoredBankWordsBeforeGeneratingAgain(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	completedWordID := uuid.New()
+	now := time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			completedWordID: {
+				ID:                completedWordID,
+				Word:              "apply",
+				NormalizedForm:    "apply",
+				CanonicalForm:     "apply",
+				Lemma:             "apply",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "request",
+				VietnameseMeaning: "ung tuyen",
+			},
+		},
+	}
+	completedWord := wordRepo.words[completedWordID]
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			completedWordID: {UserID: userID, WordID: completedWordID, Status: domain.WordStatusKnown},
+		},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-19",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:                    uuid.New(),
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                completedWordID,
+				Ordinal:               1,
+				ItemType:              domain.PoolItemTypeNew,
+				Status:                domain.PoolItemStatusCompleted,
+				FirstExposureRequired: true,
+				Word:                  &completedWord,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+	generator := &trackingGenerator{
+		candidates: []domain.CandidateWord{
+			{
+				Word:              "career",
+				CanonicalForm:     "career",
+				Lemma:             "career",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "profession",
+				VietnameseMeaning: "su nghiep",
+			},
+			{
+				Word:              "network",
+				CanonicalForm:     "network",
+				Lemma:             "network",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "professional connection",
+				VietnameseMeaning: "mang luoi",
+			},
+		},
+	}
+
+	service := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		generator,
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+
+	firstCard, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("first GetNextCard returned error: %v", err)
+	}
+	if firstCard.PoolItem == nil || firstCard.PoolItem.ItemType != domain.PoolItemTypeNew {
+		t.Fatalf("expected first replenished new card, got %#v", firstCard.PoolItem)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("expected one generator call after first replenish, got %d", generator.calls)
+	}
+	if len(wordRepo.words) != 3 {
+		t.Fatalf("expected overflow candidate stored in bank, got %d total words", len(wordRepo.words))
+	}
+
+	appendedWordID := poolRepo.items[len(poolRepo.items)-1].WordID
+	stateRepo.states[appendedWordID] = domain.UserWordState{UserID: userID, WordID: appendedWordID, Status: domain.WordStatusKnown}
+	poolRepo.items[len(poolRepo.items)-1].Status = domain.PoolItemStatusCompleted
+
+	secondCard, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("second GetNextCard returned error: %v", err)
+	}
+	if secondCard.PoolItem == nil || secondCard.PoolItem.ItemType != domain.PoolItemTypeNew {
+		t.Fatalf("expected second replenished card from bank, got %#v", secondCard.PoolItem)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("expected bank reuse without extra generator calls, got %d", generator.calls)
 	}
 }
 
@@ -590,6 +956,7 @@ func TestGetNextCardCreatesBonusPracticeFromFutureReviewItem(t *testing.T) {
 	settingsRepo := &replenishSettingsRepo{
 		settings: domain.DefaultUserSettings(userID),
 	}
+	settingsRepo.settings.DailyNewWordLimit = 0
 
 	service := NewPoolService(
 		settingsRepo,
@@ -721,15 +1088,15 @@ func TestGetNextCardBonusPracticeUsesUnseenCandidatesBeforeRepeating(t *testing.
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
 	)
 
-	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	candidates, err := service.listBonusPracticeCandidates(context.Background(), userID, poolRepo.items, 1)
 	if err != nil {
-		t.Fatalf("GetNextCard returned error: %v", err)
+		t.Fatalf("listBonusPracticeCandidates returned error: %v", err)
 	}
-	if card.PoolItem == nil {
-		t.Fatalf("expected bonus practice card, got nil")
+	if len(candidates) != 1 {
+		t.Fatalf("expected one unseen candidate, got %d", len(candidates))
 	}
-	if card.PoolItem.WordID != secondWordID {
-		t.Fatalf("expected unseen bonus practice word %s, got %s", secondWordID, card.PoolItem.WordID)
+	if candidates[0].WordID != secondWordID {
+		t.Fatalf("expected unseen bonus practice word %s, got %s", secondWordID, candidates[0].WordID)
 	}
 }
 
@@ -833,7 +1200,7 @@ func TestGetNextCardBonusPracticeRepeatsAfterCycleIsExhausted(t *testing.T) {
 		},
 	}
 	settings := domain.DefaultUserSettings(userID)
-	settings.DailyNewWordLimit = 1
+	settings.DailyNewWordLimit = 0
 	settingsRepo := &replenishSettingsRepo{settings: settings}
 
 	service := NewPoolService(
@@ -848,18 +1215,15 @@ func TestGetNextCardBonusPracticeRepeatsAfterCycleIsExhausted(t *testing.T) {
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
 	)
 
-	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	candidates, err := service.listBonusPracticeCandidates(context.Background(), userID, poolRepo.items, 1)
 	if err != nil {
-		t.Fatalf("GetNextCard returned error: %v", err)
+		t.Fatalf("listBonusPracticeCandidates returned error: %v", err)
 	}
-	if card.PoolItem == nil {
-		t.Fatalf("expected recycled bonus practice card, got nil")
+	if len(candidates) != 1 {
+		t.Fatalf("expected one recycled candidate, got %d", len(candidates))
 	}
-	if card.PoolItem.WordID != firstWordID {
-		t.Fatalf("expected highest-priority recycled bonus word %s, got %s", firstWordID, card.PoolItem.WordID)
-	}
-	if !card.PoolItem.BonusPractice {
-		t.Fatalf("expected recycled card to remain bonus practice")
+	if candidates[0].WordID != firstWordID {
+		t.Fatalf("expected highest-priority recycled bonus word %s, got %s", firstWordID, candidates[0].WordID)
 	}
 }
 
@@ -1037,7 +1401,7 @@ func TestGetNextCardBonusPracticeRecyclePrefersLeastRecentWords(t *testing.T) {
 		},
 	}
 	settings := domain.DefaultUserSettings(userID)
-	settings.DailyNewWordLimit = 6
+	settings.DailyNewWordLimit = 0
 	settingsRepo := &replenishSettingsRepo{settings: settings}
 
 	service := NewPoolService(
@@ -1052,23 +1416,17 @@ func TestGetNextCardBonusPracticeRecyclePrefersLeastRecentWords(t *testing.T) {
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
 	)
 
-	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	candidates, err := service.listBonusPracticeCandidates(context.Background(), userID, poolRepo.items, 2)
 	if err != nil {
-		t.Fatalf("GetNextCard returned error: %v", err)
+		t.Fatalf("listBonusPracticeCandidates returned error: %v", err)
 	}
-	if card.PoolItem == nil {
-		t.Fatalf("expected recycled bonus practice card, got nil")
+	if len(candidates) != 2 {
+		t.Fatalf("expected two recycled candidates, got %d", len(candidates))
 	}
-	if card.PoolItem.WordID != thirdWordID {
-		t.Fatalf("expected least-recent recycled bonus word %s, got %s", thirdWordID, card.PoolItem.WordID)
+	if candidates[0].WordID != thirdWordID {
+		t.Fatalf("expected least-recent recycled word %s first, got %s", thirdWordID, candidates[0].WordID)
 	}
-	if len(poolRepo.items) != 8 {
-		t.Fatalf("expected two recycled bonus items to be appended, got %d items", len(poolRepo.items))
-	}
-	if poolRepo.items[6].WordID != thirdWordID {
-		t.Fatalf("expected first appended recycled word %s, got %s", thirdWordID, poolRepo.items[6].WordID)
-	}
-	if poolRepo.items[7].WordID != fourthWordID {
-		t.Fatalf("expected second appended recycled word %s, got %s", fourthWordID, poolRepo.items[7].WordID)
+	if candidates[1].WordID != fourthWordID {
+		t.Fatalf("expected second recycled word %s, got %s", fourthWordID, candidates[1].WordID)
 	}
 }

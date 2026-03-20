@@ -204,7 +204,7 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 			LocalDate: view.Pool.LocalDate,
 			PoolItem:  item,
 		}, nil
-	} else if replenished, replenishErr := s.replenishBonusPracticeItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+	} else if replenished, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
 		return CardResponse{}, replenishErr
 	} else if replenished {
 		view, err = s.GetOrCreateDailyPool(ctx, user)
@@ -222,7 +222,7 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 				NextDueAt: nextDue,
 			}, nil
 		}
-	} else if replenished, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+	} else if replenished, replenishErr := s.replenishBonusPracticeItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
 		return CardResponse{}, replenishErr
 	} else if replenished {
 		view, err = s.GetOrCreateDailyPool(ctx, user)
@@ -247,6 +247,15 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 			NextDueAt: nextDue,
 		}, nil
 	}
+}
+
+func (s *PoolService) EnsureUnknownDailyQuota(ctx context.Context, user domain.User) error {
+	view, err := s.GetOrCreateDailyPool(ctx, user)
+	if err != nil {
+		return err
+	}
+	_, err = s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, s.clock.Now())
+	return err
 }
 
 func (s *PoolService) replenishBonusPracticeItems(
@@ -397,11 +406,11 @@ func (s *PoolService) replenishUnknownDailySlots(
 	if err != nil {
 		return false, err
 	}
-	deficit, unknownCount, err := s.computeUnknownDailyDeficit(ctx, userID, settings.DailyNewWordLimit, items)
+	additionalNeeded, unknownCount, pendingNewCount, err := s.computeUnknownDailyNeed(ctx, userID, settings.DailyNewWordLimit, items)
 	if err != nil {
 		return false, err
 	}
-	if deficit <= 0 {
+	if additionalNeeded <= 0 {
 		return false, nil
 	}
 
@@ -411,10 +420,11 @@ func (s *PoolService) replenishUnknownDailySlots(
 		"local_date", pool.LocalDate,
 		"daily_new_word_limit", settings.DailyNewWordLimit,
 		"unknown_count", unknownCount,
-		"deficit", deficit,
+		"pending_new_count", pendingNewCount,
+		"additional_needed", additionalNeeded,
 	)
 
-	newWords, _, _, err := s.generateNewWords(ctx, userID, settings, pool.Topic, deficit, items, now)
+	newWords, _, _, err := s.generateNewWords(ctx, userID, settings, pool.Topic, additionalNeeded, items, now)
 	if err != nil {
 		return false, err
 	}
@@ -446,15 +456,20 @@ func (s *PoolService) replenishUnknownDailySlots(
 	return true, nil
 }
 
-func (s *PoolService) computeUnknownDailyDeficit(
+func (s *PoolService) computeUnknownDailyNeed(
 	ctx context.Context,
 	userID uuid.UUID,
 	dailyLimit int,
 	items []domain.DailyLearningPoolItem,
-) (int, int, error) {
+) (int, int, int, error) {
 	unknownCount := 0
+	pendingNewCount := 0
 	for _, item := range items {
 		if item.ItemType != domain.PoolItemTypeNew {
+			continue
+		}
+		if item.Status == domain.PoolItemStatusPending {
+			pendingNewCount++
 			continue
 		}
 		state, err := s.stateRepo.Get(ctx, userID, item.WordID)
@@ -462,17 +477,17 @@ func (s *PoolService) computeUnknownDailyDeficit(
 			if isNotFound(err) {
 				continue
 			}
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		if state.Status != domain.WordStatusKnown {
 			unknownCount++
 		}
 	}
-	deficit := dailyLimit - unknownCount
-	if deficit < 0 {
-		return 0, unknownCount, nil
+	additionalNeeded := dailyLimit - unknownCount - pendingNewCount
+	if additionalNeeded < 0 {
+		return 0, unknownCount, pendingNewCount, nil
 	}
-	return deficit, unknownCount, nil
+	return additionalNeeded, unknownCount, pendingNewCount, nil
 }
 
 func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*domain.DailyLearningPoolItem, *time.Time) {
@@ -509,6 +524,53 @@ func (s *PoolService) ForceRebuildTodayPool(ctx context.Context, user domain.Use
 	return s.GetOrCreateDailyPool(ctx, user)
 }
 
+func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User) (DailyPoolView, error) {
+	settings, err := s.settingsRepo.Get(ctx, user.ID)
+	if err != nil {
+		return DailyPoolView{}, err
+	}
+	view, err := s.GetOrCreateDailyPool(ctx, user)
+	if err != nil {
+		return DailyPoolView{}, err
+	}
+	if settings.DailyNewWordLimit <= 0 {
+		return view, nil
+	}
+
+	now := s.clock.Now()
+	newWords, _, _, err := s.generateNewWords(ctx, user.ID, settings, view.Pool.Topic, settings.DailyNewWordLimit, view.Items, now)
+	if err != nil {
+		return DailyPoolView{}, err
+	}
+	if len(newWords) == 0 {
+		return DailyPoolView{}, fmt.Errorf("unable to append more words: no words generated")
+	}
+
+	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, view.Pool.ID)
+	if err != nil {
+		return DailyPoolView{}, err
+	}
+	newItems := buildNewItems(user.ID, view.Pool.ID, newWords)
+	for i := range newItems {
+		newItems[i].Ordinal = lastOrdinal + i + 1
+		if _, err := s.poolRepo.AppendPoolItem(ctx, newItems[i]); err != nil {
+			return DailyPoolView{}, err
+		}
+	}
+	if err := s.poolRepo.IncrementNewCount(ctx, view.Pool.ID, len(newItems)); err != nil {
+		return DailyPoolView{}, err
+	}
+
+	s.logger.Info("appended more new words",
+		"user_id", user.ID,
+		"pool_id", view.Pool.ID,
+		"local_date", view.Pool.LocalDate,
+		"requested_new_items", settings.DailyNewWordLimit,
+		"appended_new_items", len(newItems),
+	)
+	return s.GetOrCreateDailyPool(ctx, user)
+}
+
 func (s *PoolService) generateNewWords(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -541,6 +603,24 @@ func (s *PoolService) generateNewWords(
 	rejections := map[string][]string{}
 	exclusionWords, exclusionLemmas, exclusionGroups := BuildGenerationExclusions(existingWords, existingStates, seedItems)
 	var lastGenerationErr error
+
+	bankExcludeWordIDs := append(extractStateWordIDs(existingStates), extractPoolWordIDs(seedItems)...)
+	bankWords, err := s.wordRepo.ListBankWords(ctx, userID, settings.CEFRLevel, topic, bankExcludeWordIDs, minInt(newQuota+5, 20))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	for _, word := range filterBankWords(bankWords, &exclusionWords, &exclusionLemmas, &exclusionGroups, seenNewIDs) {
+		if len(selectedWords) >= newQuota {
+			break
+		}
+		selectedWords = append(selectedWords, word)
+		acceptedNames = append(acceptedNames, word.Word)
+		existingWords = append(existingWords, word)
+		addNonEmptySlice(&exclusionWords, word.Word)
+		addNonEmptySlice(&exclusionWords, word.CanonicalForm)
+		addNonEmptySlice(&exclusionLemmas, word.Lemma)
+		addNonEmptySlice(&exclusionGroups, word.ConfusableGroupKey)
+	}
 
 	for attempt := 1; attempt <= s.maxGenerationAttempts && len(selectedWords) < newQuota; attempt++ {
 		remaining := newQuota - len(selectedWords)
@@ -621,12 +701,12 @@ func (s *PoolService) generateNewWords(
 		)
 
 		for _, candidate := range result.Accepted {
-			if len(selectedWords) >= newQuota {
-				break
-			}
 			word, upsertErr := s.wordRepo.UpsertWord(ctx, candidate)
 			if upsertErr != nil {
 				rejections[candidate.Word] = []string{upsertErr.Error()}
+				continue
+			}
+			if len(selectedWords) >= newQuota {
 				continue
 			}
 			selectedWords = append(selectedWords, word)
@@ -730,6 +810,44 @@ func extractPoolWordIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
 	return mapUUIDKeys(set)
 }
 
+func filterBankWords(
+	words []domain.Word,
+	exclusionWords *[]string,
+	exclusionLemmas *[]string,
+	exclusionGroups *[]string,
+	seenNewIDs []uuid.UUID,
+) []domain.Word {
+	seenNewSet := make(map[uuid.UUID]struct{}, len(seenNewIDs))
+	for _, id := range seenNewIDs {
+		seenNewSet[id] = struct{}{}
+	}
+
+	filtered := make([]domain.Word, 0, len(words))
+	for _, word := range words {
+		if _, seen := seenNewSet[word.ID]; seen {
+			continue
+		}
+		if containsNormalized(*exclusionWords, word.Word) {
+			continue
+		}
+		if containsNormalized(*exclusionWords, word.CanonicalForm) {
+			continue
+		}
+		if containsNormalized(*exclusionLemmas, word.Lemma) {
+			continue
+		}
+		if containsNormalized(*exclusionGroups, word.ConfusableGroupKey) {
+			continue
+		}
+		filtered = append(filtered, word)
+		addNonEmptySlice(exclusionWords, word.Word)
+		addNonEmptySlice(exclusionWords, word.CanonicalForm)
+		addNonEmptySlice(exclusionLemmas, word.Lemma)
+		addNonEmptySlice(exclusionGroups, word.ConfusableGroupKey)
+	}
+	return filtered
+}
+
 type bonusPracticeHistoryEntry struct {
 	latestOrdinal int
 }
@@ -815,4 +933,24 @@ func addNonEmptySlice(target *[]string, value string) {
 
 func isNotFound(err error) bool {
 	return errors.Is(err, domain.ErrNotFound)
+}
+
+func containsNormalized(values []string, value string) bool {
+	value = NormalizeWord(value)
+	if value == "" {
+		return false
+	}
+	for _, existing := range values {
+		if existing == value {
+			return true
+		}
+	}
+	return false
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

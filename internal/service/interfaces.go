@@ -25,6 +25,7 @@ type WordRepository interface {
 	GetByID(ctx context.Context, wordID uuid.UUID) (domain.Word, error)
 	UpdateWord(ctx context.Context, wordID uuid.UUID, candidate domain.CandidateWord) (domain.Word, error)
 	ListWordIDsSeenAsNew(ctx context.Context, userID uuid.UUID, since time.Time) ([]uuid.UUID, error)
+	ListBankWords(ctx context.Context, userID uuid.UUID, level domain.CEFRLevel, topic string, excludeWordIDs []uuid.UUID, limit int) ([]domain.Word, error)
 	ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([]domain.Word, error)
 }
 
@@ -67,6 +68,10 @@ type LLMRunRepository interface {
 
 type CandidateGenerator interface {
 	GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error)
+}
+
+type UnknownDailyQuotaManager interface {
+	EnsureUnknownDailyQuota(ctx context.Context, user domain.User) error
 }
 
 type Clock interface {

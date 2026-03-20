@@ -64,6 +64,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Put("/me/dictionary/words/{wordID}", h.UpdateDictionaryWord)
 			r.Delete("/me/dictionary/words/{wordID}", h.DeleteDictionaryWord)
 			r.Get("/me/daily-pool", h.GetDailyPool)
+			r.Post("/me/daily-pool/more-words", h.AppendMoreWords)
 			r.Get("/me/cards/next", h.GetNextCard)
 			r.Post("/me/cards/{poolItemID}/first-exposure", h.SubmitFirstExposure)
 			r.Post("/me/cards/{poolItemID}/review", h.SubmitReview)

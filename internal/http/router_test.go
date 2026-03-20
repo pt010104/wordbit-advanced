@@ -125,6 +125,26 @@ func (m *memoryWordRepo) UpdateWord(ctx context.Context, wordID uuid.UUID, candi
 func (m *memoryWordRepo) ListWordIDsSeenAsNew(ctx context.Context, userID uuid.UUID, since time.Time) ([]uuid.UUID, error) {
 	return nil, nil
 }
+func (m *memoryWordRepo) ListBankWords(ctx context.Context, userID uuid.UUID, level domain.CEFRLevel, topic string, excludeWordIDs []uuid.UUID, limit int) ([]domain.Word, error) {
+	if limit <= 0 {
+		return []domain.Word{}, nil
+	}
+	excluded := make(map[uuid.UUID]struct{}, len(excludeWordIDs))
+	for _, id := range excludeWordIDs {
+		excluded[id] = struct{}{}
+	}
+	words := make([]domain.Word, 0, len(m.byID))
+	for _, word := range m.byID {
+		if word.Level != level || word.Topic != topic {
+			continue
+		}
+		if _, skip := excluded[word.ID]; skip {
+			continue
+		}
+		words = append(words, word)
+	}
+	return words, nil
+}
 func (m *memoryWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([]domain.Word, error) {
 	var words []domain.Word
 	for _, id := range ids {
@@ -199,6 +219,10 @@ func (m *memoryPoolRepo) UpdatePoolItemReveal(ctx context.Context, itemID uuid.U
 	return nil
 }
 func (m *memoryPoolRepo) AppendPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) (domain.DailyLearningPoolItem, error) {
+	if item.ID == uuid.Nil {
+		item.ID = uuid.New()
+	}
+	m.items = append(m.items, item)
 	return item, nil
 }
 func (m *memoryPoolRepo) GetLastOrdinal(ctx context.Context, poolID uuid.UUID) (int, error) {
@@ -238,26 +262,36 @@ func (m *memoryLLMRepo) ListRecentByUser(ctx context.Context, userID uuid.UUID, 
 type staticGenerator struct{}
 
 func (g *staticGenerator) GenerateCandidates(ctx context.Context, input service.GenerationInput) ([]domain.CandidateWord, string, error) {
-	return []domain.CandidateWord{
-		{
-			Word:              "sustain",
-			CanonicalForm:     "sustain",
-			Lemma:             "sustain",
+	base := []struct {
+		word string
+		en   string
+		vi   string
+	}{
+		{word: "sustain", en: "maintain", vi: "duy trì"},
+		{word: "convey", en: "communicate", vi: "truyền đạt"},
+		{word: "adapt", en: "adjust", vi: "thích nghi"},
+		{word: "retain", en: "keep", vi: "giữ lại"},
+		{word: "expand", en: "grow", vi: "mở rộng"},
+		{word: "clarify", en: "make clear", vi: "làm rõ"},
+		{word: "outline", en: "summarize", vi: "phác thảo"},
+		{word: "execute", en: "carry out", vi: "thực hiện"},
+	}
+	candidates := make([]domain.CandidateWord, 0, min(input.RequestedCount, len(base)))
+	for _, item := range base {
+		candidates = append(candidates, domain.CandidateWord{
+			Word:              item.word,
+			CanonicalForm:     item.word,
+			Lemma:             item.word,
 			Level:             input.CEFRLevel,
 			Topic:             input.Topic,
-			EnglishMeaning:    "maintain",
-			VietnameseMeaning: "duy trì",
-		},
-		{
-			Word:              "convey",
-			CanonicalForm:     "convey",
-			Lemma:             "convey",
-			Level:             input.CEFRLevel,
-			Topic:             input.Topic,
-			EnglishMeaning:    "communicate",
-			VietnameseMeaning: "truyền đạt",
-		},
-	}, "{}", nil
+			EnglishMeaning:    item.en,
+			VietnameseMeaning: item.vi,
+		})
+		if len(candidates) >= input.RequestedCount {
+			break
+		}
+	}
+	return candidates, "{}", nil
 }
 
 type failingGenerator struct{}
@@ -283,7 +317,7 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	settingsService := service.NewSettingsService(settingsRepo)
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger)
-	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, clock, logger)
+	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, llmRepo, BuildInfo{})
@@ -295,7 +329,7 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 		t.Fatalf("expected 200 for get settings, got %d", resp.Code)
 	}
 
-	updateBody := bytes.NewBufferString(`{"cefr_level":"C1","daily_new_word_limit":8,"preferred_meaning_language":"vi","timezone":"Asia/Ho_Chi_Minh","pronunciation_enabled":true,"lock_screen_enabled":false}`)
+	updateBody := bytes.NewBufferString(`{"cefr_level":"C1","daily_new_word_limit":2,"preferred_meaning_language":"vi","timezone":"Asia/Ho_Chi_Minh","pronunciation_enabled":true,"lock_screen_enabled":false}`)
 	req = httptest.NewRequest(http.MethodPut, "/v1/me/settings", updateBody)
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -322,6 +356,28 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	if payload.Pool.NewCount == 0 || len(payload.Items) == 0 {
 		t.Fatalf("expected generated new words in pool, got %+v", payload.Pool)
 	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/me/daily-pool/more-words", nil)
+	resp = httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200 for append more words, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var morePayload struct {
+		Pool struct {
+			NewCount int `json:"new_count"`
+		} `json:"pool"`
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&morePayload); err != nil {
+		t.Fatalf("decode append more words response: %v", err)
+	}
+	if morePayload.Pool.NewCount <= payload.Pool.NewCount {
+		t.Fatalf("expected new_count to increase after append, got before=%d after=%d", payload.Pool.NewCount, morePayload.Pool.NewCount)
+	}
+	if len(morePayload.Items) <= len(payload.Items) {
+		t.Fatalf("expected more pool items after append, got before=%d after=%d", len(payload.Items), len(morePayload.Items))
+	}
 }
 
 func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
@@ -341,7 +397,7 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	settingsService := service.NewSettingsService(settingsRepo)
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &failingGenerator{}, clock, logger)
-	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, clock, logger)
+	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, llmRepo, BuildInfo{})
