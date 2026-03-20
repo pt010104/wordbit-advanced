@@ -568,7 +568,12 @@ func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User) 
 		"requested_new_items", settings.DailyNewWordLimit,
 		"appended_new_items", len(newItems),
 	)
-	return s.GetOrCreateDailyPool(ctx, user)
+	updatedView, err := s.GetOrCreateDailyPool(ctx, user)
+	if err != nil {
+		return DailyPoolView{}, err
+	}
+	updatedView.AppendedNew = len(newItems)
+	return updatedView, nil
 }
 
 func (s *PoolService) generateNewWords(

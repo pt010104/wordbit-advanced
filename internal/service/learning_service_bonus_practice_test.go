@@ -441,3 +441,114 @@ func TestSubmitFirstExposureKnownAppendsReplacementNewCard(t *testing.T) {
 		t.Fatalf("expected appended card to require first exposure")
 	}
 }
+
+func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingState(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 20, 8, 0, 0, 0, time.UTC)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			wordID: {
+				ID:                wordID,
+				Word:              "competence",
+				NormalizedForm:    "competence",
+				CanonicalForm:     "competence",
+				Lemma:             "competence",
+				Level:             domain.CEFRB1,
+				Topic:             "Society",
+				EnglishMeaning:    "ability",
+				VietnameseMeaning: "nang luc",
+			},
+		},
+	}
+	word := wordRepo.words[wordID]
+	stateRepo := &replenishStateRepo{}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-20",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Society",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:                    itemID,
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                wordID,
+				Ordinal:               1,
+				ItemType:              domain.PoolItemTypeNew,
+				ReviewMode:            domain.ReviewModeReveal,
+				Status:                domain.PoolItemStatusPending,
+				FirstExposureRequired: true,
+				Word:                  &word,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+	generator := &trackingGenerator{
+		candidates: []domain.CandidateWord{
+			{
+				Word:              "citizenship",
+				CanonicalForm:     "citizenship",
+				Lemma:             "citizenship",
+				Level:             domain.CEFRB1,
+				Topic:             "Society",
+				EnglishMeaning:    "membership of a state",
+				VietnameseMeaning: "quyen cong dan",
+			},
+		},
+	}
+	eventRepo := &captureEventRepo{}
+	poolService := NewPoolService(
+		settingsRepo,
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		generator,
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+	)
+	service := NewLearningService(
+		settingsRepo,
+		stateRepo,
+		poolRepo,
+		eventRepo,
+		poolService,
+		replenishClock{now: now},
+		nil,
+	)
+
+	err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
+		PoolItemID:     itemID,
+		Action:         domain.ExposureActionDontLearn,
+		ResponseTimeMs: 400,
+		ClientEventID:  "discard-new-word",
+	})
+	if err != nil {
+		t.Fatalf("SubmitFirstExposure returned error: %v", err)
+	}
+	if len(eventRepo.events) != 0 {
+		t.Fatalf("expected no learning event for dont_learn, got %d", len(eventRepo.events))
+	}
+	if _, ok := stateRepo.states[wordID]; ok {
+		t.Fatalf("expected no persisted state for discarded word")
+	}
+	if len(poolRepo.items) != 1 {
+		t.Fatalf("expected discarded card to be removed and replaced by one new card, got %d items", len(poolRepo.items))
+	}
+	if poolRepo.items[0].WordID == wordID {
+		t.Fatalf("expected discarded word to be removed from pool")
+	}
+}

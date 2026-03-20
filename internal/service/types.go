@@ -20,9 +20,10 @@ type GenerationInput struct {
 }
 
 type DailyPoolView struct {
-	Pool   domain.DailyLearningPool       `json:"pool"`
-	Items  []domain.DailyLearningPoolItem `json:"items"`
-	Counts domain.PoolGenerationCounts    `json:"counts"`
+	Pool        domain.DailyLearningPool       `json:"pool"`
+	Items       []domain.DailyLearningPoolItem `json:"items"`
+	Counts      domain.PoolGenerationCounts    `json:"counts"`
+	AppendedNew int                            `json:"appended_new,omitempty"`
 }
 
 type CardResponse struct {

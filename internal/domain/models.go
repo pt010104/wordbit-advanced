@@ -80,8 +80,9 @@ const (
 type ExposureAction string
 
 const (
-	ExposureActionKnown   ExposureAction = "known"
-	ExposureActionUnknown ExposureAction = "unknown"
+	ExposureActionDontLearn ExposureAction = "dont_learn"
+	ExposureActionKnown     ExposureAction = "known"
+	ExposureActionUnknown   ExposureAction = "unknown"
 )
 
 type EventType string

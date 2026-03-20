@@ -290,6 +290,24 @@ func (r *replenishPoolRepo) IncrementWeakCount(ctx context.Context, poolID uuid.
 }
 
 func (r *replenishPoolRepo) DeleteItemsForUserWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error {
+	filtered := r.items[:0]
+	removedNew := 0
+	removedWeak := 0
+	for _, item := range r.items {
+		if item.UserID == userID && item.WordID == wordID {
+			switch item.ItemType {
+			case domain.PoolItemTypeNew:
+				removedNew++
+			case domain.PoolItemTypeWeak:
+				removedWeak++
+			}
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	r.items = filtered
+	r.pool.NewCount = maxInt(r.pool.NewCount-removedNew, 0)
+	r.pool.WeakCount = maxInt(r.pool.WeakCount-removedWeak, 0)
 	return nil
 }
 

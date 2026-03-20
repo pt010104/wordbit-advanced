@@ -51,6 +51,9 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 	}
 
 	now := s.clock.Now()
+	if req.Action == domain.ExposureActionDontLearn {
+		return s.discardFirstExposureWord(ctx, user, item)
+	}
 	state, err := s.loadOrInitState(ctx, user.ID, item.WordID)
 	if err != nil {
 		return err
@@ -93,6 +96,21 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 	} else if s.quotaManager != nil {
 		if err := s.quotaManager.EnsureUnknownDailyQuota(ctx, user); err != nil {
 			s.logger.Warn("ensure unknown daily quota", "error", err)
+		}
+	}
+	return nil
+}
+
+func (s *LearningService) discardFirstExposureWord(ctx context.Context, user domain.User, item domain.DailyLearningPoolItem) error {
+	if err := s.poolRepo.DeleteItemsForUserWord(ctx, user.ID, item.WordID); err != nil {
+		return err
+	}
+	if err := s.stateRepo.Delete(ctx, user.ID, item.WordID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+		return err
+	}
+	if s.quotaManager != nil {
+		if err := s.quotaManager.EnsureUnknownDailyQuota(ctx, user); err != nil {
+			s.logger.Warn("ensure unknown daily quota after discard", "error", err)
 		}
 	}
 	return nil
