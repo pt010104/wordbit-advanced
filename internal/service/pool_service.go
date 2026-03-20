@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -524,7 +525,7 @@ func (s *PoolService) ForceRebuildTodayPool(ctx context.Context, user domain.Use
 	return s.GetOrCreateDailyPool(ctx, user)
 }
 
-func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User) (DailyPoolView, error) {
+func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User, topic string) (DailyPoolView, error) {
 	settings, err := s.settingsRepo.Get(ctx, user.ID)
 	if err != nil {
 		return DailyPoolView{}, err
@@ -538,7 +539,11 @@ func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User) 
 	}
 
 	now := s.clock.Now()
-	newWords, _, _, err := s.generateNewWords(ctx, user.ID, settings, view.Pool.Topic, settings.DailyNewWordLimit, view.Items, now)
+	selectedTopic := strings.TrimSpace(topic)
+	if selectedTopic == "" {
+		selectedTopic = view.Pool.Topic
+	}
+	newWords, _, _, err := s.generateNewWords(ctx, user.ID, settings, selectedTopic, settings.DailyNewWordLimit, view.Items, now)
 	if err != nil {
 		return DailyPoolView{}, err
 	}
@@ -565,6 +570,7 @@ func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User) 
 		"user_id", user.ID,
 		"pool_id", view.Pool.ID,
 		"local_date", view.Pool.LocalDate,
+		"topic", selectedTopic,
 		"requested_new_items", settings.DailyNewWordLimit,
 		"appended_new_items", len(newItems),
 	)

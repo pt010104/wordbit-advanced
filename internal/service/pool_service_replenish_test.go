@@ -535,12 +535,15 @@ func TestAppendMoreNewWordsAddsLimitSizedBatch(t *testing.T) {
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
 	)
 
-	view, err := service.AppendMoreNewWords(context.Background(), domain.User{ID: userID})
+	view, err := service.AppendMoreNewWords(context.Background(), domain.User{ID: userID}, "Work/Career")
 	if err != nil {
 		t.Fatalf("AppendMoreNewWords returned error: %v", err)
 	}
 	if view.Pool.NewCount != 2 {
 		t.Fatalf("expected new_count to increase to 2, got %d", view.Pool.NewCount)
+	}
+	if view.AppendedNew != 2 {
+		t.Fatalf("expected appended_new=2, got %d", view.AppendedNew)
 	}
 	if len(view.Items) != 2 {
 		t.Fatalf("expected 2 appended new items, got %d", len(view.Items))

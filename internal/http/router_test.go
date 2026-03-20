@@ -357,7 +357,7 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 		t.Fatalf("expected generated new words in pool, got %+v", payload.Pool)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/v1/me/daily-pool/more-words", nil)
+	req = httptest.NewRequest(http.MethodPost, "/v1/me/daily-pool/more-words", bytes.NewBufferString(`{"topic":"Society"}`))
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
@@ -367,10 +367,14 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 		Pool struct {
 			NewCount int `json:"new_count"`
 		} `json:"pool"`
-		Items []json.RawMessage `json:"items"`
+		Items       []json.RawMessage `json:"items"`
+		AppendedNew int               `json:"appended_new"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&morePayload); err != nil {
 		t.Fatalf("decode append more words response: %v", err)
+	}
+	if morePayload.AppendedNew != 2 {
+		t.Fatalf("expected appended_new=2, got %d", morePayload.AppendedNew)
 	}
 	if morePayload.Pool.NewCount <= payload.Pool.NewCount {
 		t.Fatalf("expected new_count to increase after append, got before=%d after=%d", payload.Pool.NewCount, morePayload.Pool.NewCount)

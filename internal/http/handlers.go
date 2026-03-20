@@ -3,6 +3,7 @@ package apihttp
 import (
 	"errors"
 	"fmt"
+	"io"
 	nethttp "net/http"
 	"strconv"
 
@@ -166,7 +167,16 @@ func (h *Handler) AppendMoreWords(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeError(w, err)
 		return
 	}
-	view, err := h.pools.AppendMoreNewWords(r.Context(), user)
+	var payload struct {
+		Topic string `json:"topic"`
+	}
+	if r.Body != nil {
+		if err := decodeJSON(r, &payload); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, errors.New(domain.ErrValidation.Error()+": invalid json body"))
+			return
+		}
+	}
+	view, err := h.pools.AppendMoreNewWords(r.Context(), user, payload.Topic)
 	if err != nil {
 		writeError(w, err)
 		return
