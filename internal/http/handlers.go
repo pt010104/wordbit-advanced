@@ -281,12 +281,22 @@ func (h *Handler) UndoLastAnswer(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeError(w, err)
 		return
 	}
-	card, err := h.pools.GetNextCard(r.Context(), user)
+	view, err := h.pools.GetOrCreateDailyPool(r.Context(), user)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, card)
+	for idx := range view.Items {
+		if view.Items[idx].ID == itemID {
+			card := service.CardResponse{
+				LocalDate: view.Pool.LocalDate,
+				PoolItem:  &view.Items[idx],
+			}
+			writeJSON(w, nethttp.StatusOK, card)
+			return
+		}
+	}
+	writeError(w, fmt.Errorf("%w: reopened card was not found in the current pool", domain.ErrNotFound))
 }
 
 func (h *Handler) SubmitReveal(w nethttp.ResponseWriter, r *nethttp.Request) {
