@@ -25,9 +25,19 @@ func ComputeNewWordQuota(dailyLimit int, dueReview int, shortTerm int, weakSlots
 	return dailyLimit
 }
 
-func SelectReviewMode(state domain.UserWordState) domain.ReviewMode {
+func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) domain.ReviewMode {
 	if state.LearningStage > 0 || state.Stability < 0.9 {
 		return domain.ReviewModeReveal
+	}
+	if memoryCauseBiasEnabled {
+		switch state.LastMemoryCause {
+		case domain.MemoryCauseForgotMeaning:
+			return domain.ReviewModeReveal
+		case domain.MemoryCauseSpellingIssue:
+			return domain.ReviewModeFillBlank
+		case domain.MemoryCauseMixedUpWord:
+			return domain.ReviewModeMultipleChoice
+		}
 	}
 	if state.Difficulty >= 0.65 || state.WeaknessScore >= 1.2 {
 		return domain.ReviewModeMultipleChoice

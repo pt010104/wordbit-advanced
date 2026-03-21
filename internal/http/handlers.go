@@ -242,21 +242,46 @@ func (h *Handler) SubmitReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	var payload struct {
-		Rating         domain.ReviewRating `json:"rating"`
-		ModeUsed       domain.ReviewMode   `json:"mode_used"`
-		ResponseTimeMs int                 `json:"response_time_ms"`
-		ClientEventID  string              `json:"client_event_id"`
+		Rating                           domain.ReviewRating      `json:"rating"`
+		ModeUsed                         domain.ReviewMode        `json:"mode_used"`
+		ResponseTimeMs                   int                      `json:"response_time_ms"`
+		ClientEventID                    string                   `json:"client_event_id"`
+		AnswerCorrect                    *bool                    `json:"answer_correct"`
+		RevealedMeaningBeforeAnswer      bool                     `json:"revealed_meaning_before_answer"`
+		RevealedExampleBeforeAnswer      bool                     `json:"revealed_example_before_answer"`
+		UsedHint                         bool                     `json:"used_hint"`
+		InputMethod                      domain.ReviewInputMethod `json:"input_method"`
+		NormalizedTypedAnswer            string                   `json:"normalized_typed_answer"`
+		SelectedChoiceWordID             string                   `json:"selected_choice_word_id"`
+		SelectedChoiceConfusableGroupKey string                   `json:"selected_choice_confusable_group_key"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, domain.ErrValidation)
 		return
 	}
+	var selectedChoiceWordID *uuid.UUID
+	if payload.SelectedChoiceWordID != "" {
+		parsed, parseErr := uuid.Parse(payload.SelectedChoiceWordID)
+		if parseErr != nil {
+			writeError(w, domain.ErrValidation)
+			return
+		}
+		selectedChoiceWordID = &parsed
+	}
 	if err := h.learning.SubmitReview(r.Context(), user, service.ReviewRequest{
-		PoolItemID:     itemID,
-		Rating:         payload.Rating,
-		ModeUsed:       payload.ModeUsed,
-		ResponseTimeMs: payload.ResponseTimeMs,
-		ClientEventID:  payload.ClientEventID,
+		PoolItemID:                       itemID,
+		Rating:                           payload.Rating,
+		ModeUsed:                         payload.ModeUsed,
+		ResponseTimeMs:                   payload.ResponseTimeMs,
+		ClientEventID:                    payload.ClientEventID,
+		AnswerCorrect:                    payload.AnswerCorrect,
+		RevealedMeaningBeforeAnswer:      payload.RevealedMeaningBeforeAnswer,
+		RevealedExampleBeforeAnswer:      payload.RevealedExampleBeforeAnswer,
+		UsedHint:                         payload.UsedHint,
+		InputMethod:                      payload.InputMethod,
+		NormalizedTypedAnswer:            payload.NormalizedTypedAnswer,
+		SelectedChoiceWordID:             selectedChoiceWordID,
+		SelectedChoiceConfusableGroupKey: payload.SelectedChoiceConfusableGroupKey,
 	}); err != nil {
 		writeError(w, err)
 		return

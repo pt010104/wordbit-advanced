@@ -528,6 +528,7 @@ func TestGetNextCardReplenishesUnknownDailySlotsAtPoolEnd(t *testing.T) {
 		&replenishGenerator{},
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
@@ -604,6 +605,7 @@ func TestAppendMoreNewWordsAddsLimitSizedBatch(t *testing.T) {
 		},
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	view, err := service.AppendMoreNewWords(context.Background(), domain.User{ID: userID}, "Work/Career")
@@ -724,6 +726,7 @@ func TestGetNextCardReplenishesWeakFallbackWhenPoolIsExhausted(t *testing.T) {
 		&replenishGenerator{},
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
@@ -843,6 +846,7 @@ func TestGetNextCardPrioritizesUnknownReplenishmentBeforeBonusPractice(t *testin
 		generator,
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
@@ -948,6 +952,7 @@ func TestGetNextCardReusesStoredBankWordsBeforeGeneratingAgain(t *testing.T) {
 		generator,
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	firstCard, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
@@ -1060,6 +1065,7 @@ func TestGetNextCardCreatesBonusPracticeFromFutureReviewItem(t *testing.T) {
 		&replenishGenerator{},
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
@@ -1178,6 +1184,7 @@ func TestGetNextCardBonusPracticeUsesUnseenCandidatesBeforeRepeating(t *testing.
 		&replenishGenerator{},
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	candidates, err := service.listBonusPracticeCandidates(context.Background(), userID, poolRepo.items, 1)
@@ -1305,6 +1312,7 @@ func TestGetNextCardBonusPracticeRepeatsAfterCycleIsExhausted(t *testing.T) {
 		&replenishGenerator{},
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	candidates, err := service.listBonusPracticeCandidates(context.Background(), userID, poolRepo.items, 1)
@@ -1506,6 +1514,7 @@ func TestGetNextCardBonusPracticeRecyclePrefersLeastRecentWords(t *testing.T) {
 		&replenishGenerator{},
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 
 	candidates, err := service.listBonusPracticeCandidates(context.Background(), userID, poolRepo.items, 2)

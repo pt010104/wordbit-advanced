@@ -83,6 +83,7 @@ func TestSubmitReviewBonusPracticeDoesNotChangeNextReviewAt(t *testing.T) {
 		nil,
 		replenishClock{now: now},
 		nil,
+		true,
 	)
 
 	err := service.SubmitReview(context.Background(), domain.User{ID: userID}, ReviewRequest{
@@ -190,6 +191,7 @@ func TestSubmitRevealBonusPracticeDoesNotChangeWeaknessOrCounters(t *testing.T) 
 				nil,
 				replenishClock{now: now},
 				nil,
+				true,
 			)
 
 			err := service.SubmitReveal(context.Background(), domain.User{ID: userID}, RevealRequest{
@@ -288,6 +290,7 @@ func TestSubmitReviewBonusPracticeRepeatedRevealAndReviewDoesNotInflateWeakness(
 		nil,
 		replenishClock{now: now},
 		nil,
+		true,
 	)
 
 	if err := service.SubmitReveal(context.Background(), domain.User{ID: userID}, RevealRequest{
@@ -415,6 +418,7 @@ func TestSubmitFirstExposureKnownAppendsReplacementNewCard(t *testing.T) {
 		generator,
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 	service := NewLearningService(
 		settingsRepo,
@@ -424,6 +428,7 @@ func TestSubmitFirstExposureKnownAppendsReplacementNewCard(t *testing.T) {
 		poolService,
 		replenishClock{now: now},
 		nil,
+		true,
 	)
 
 	err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
@@ -528,6 +533,7 @@ func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingState(t *testing.T)
 		generator,
 		replenishClock{now: now},
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
 	)
 	service := NewLearningService(
 		settingsRepo,
@@ -537,6 +543,7 @@ func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingState(t *testing.T)
 		poolService,
 		replenishClock{now: now},
 		nil,
+		true,
 	)
 
 	err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
@@ -631,8 +638,8 @@ func TestUndoLastAnswerKnownRestoresPendingCardAndRemovesReplacement(t *testing.
 		}},
 	}
 	eventRepo := &captureEventRepo{}
-	poolService := NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, &replenishEventRepo{}, &replenishLLMRepo{}, generator, replenishClock{now: now}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
-	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, replenishClock{now: now}, nil)
+	poolService := NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, &replenishEventRepo{}, &replenishLLMRepo{}, generator, replenishClock{now: now}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), true)
+	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, replenishClock{now: now}, nil, true)
 
 	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
 		PoolItemID:     itemID,
@@ -706,7 +713,7 @@ func TestUndoLastAnswerUnknownRestoresPendingCardAndDeletesFollowUp(t *testing.T
 	}
 	settingsRepo := &replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}
 	eventRepo := &captureEventRepo{}
-	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil, true)
 
 	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
 		PoolItemID:     itemID,
@@ -798,8 +805,8 @@ func TestUndoLastAnswerDontLearnRestoresPendingCardAndDeletesReplacement(t *test
 		}},
 	}
 	eventRepo := &captureEventRepo{}
-	poolService := NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, &replenishEventRepo{}, &replenishLLMRepo{}, generator, replenishClock{now: now}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
-	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, replenishClock{now: now}, nil)
+	poolService := NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, &replenishEventRepo{}, &replenishLLMRepo{}, generator, replenishClock{now: now}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), true)
+	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, replenishClock{now: now}, nil, true)
 
 	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
 		PoolItemID:     itemID,
@@ -880,7 +887,7 @@ func TestUndoLastAnswerReviewRestoresPreviousStateAndRemovesFollowUp(t *testing.
 		}},
 	}
 	eventRepo := &captureEventRepo{}
-	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil, true)
 
 	if err := service.SubmitReview(context.Background(), domain.User{ID: userID}, ReviewRequest{
 		PoolItemID:     itemID,
@@ -953,7 +960,7 @@ func TestUndoLastAnswerBonusPracticeRestoresPreviousWeakness(t *testing.T) {
 		}},
 	}
 	eventRepo := &captureEventRepo{}
-	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil, true)
 
 	if err := service.SubmitReview(context.Background(), domain.User{ID: userID}, ReviewRequest{
 		PoolItemID:     itemID,
@@ -1027,7 +1034,7 @@ func TestUndoLastAnswerRejectsWhenNotLatestCompleted(t *testing.T) {
 			Payload:    payload,
 		}},
 	}
-	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil, true)
 
 	err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID1})
 	if !errors.Is(err, domain.ErrValidation) {
@@ -1078,7 +1085,7 @@ func TestUndoLastAnswerRejectsWhenDependentItemAlreadyCompleted(t *testing.T) {
 		}},
 	}
 	eventRepo := &captureEventRepo{}
-	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil, true)
 
 	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
 		PoolItemID:     itemID,
@@ -1095,5 +1102,140 @@ func TestUndoLastAnswerRejectsWhenDependentItemAlreadyCompleted(t *testing.T) {
 	err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID})
 	if !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("expected validation error when dependent item was already answered, got %v", err)
+	}
+}
+
+func TestSubmitReviewInfersMemoryCauseAndUpdatesState(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	nextReview := now.Add(24 * time.Hour)
+	word := domain.Word{
+		ID:                 wordID,
+		Word:               "adapt",
+		CanonicalForm:      "adapt",
+		Lemma:              "adapt",
+		ConfusableGroupKey: "adapt_adopt",
+		EnglishMeaning:     "adjust to",
+		VietnameseMeaning:  "thich nghi",
+	}
+
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			wordID: {
+				UserID:            userID,
+				WordID:            wordID,
+				Status:            domain.WordStatusReview,
+				NextReviewAt:      &nextReview,
+				IntervalSeconds:   int((24 * time.Hour).Seconds()),
+				Stability:         1.8,
+				Difficulty:        0.8,
+				WeaknessScore:     1.5,
+				LastMode:          domain.ReviewModeFillBlank,
+				LastAnswerCorrect: boolPointer(false),
+			},
+		},
+	}
+	poolRepo := &replenishPoolRepo{
+		items: []domain.DailyLearningPoolItem{{
+			ID:         itemID,
+			UserID:     userID,
+			WordID:     wordID,
+			ItemType:   domain.PoolItemTypeReview,
+			ReviewMode: domain.ReviewModeMultipleChoice,
+			Status:     domain.PoolItemStatusPending,
+			IsReview:   true,
+			Word:       &word,
+		}},
+	}
+	eventRepo := &captureEventRepo{}
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil, true)
+
+	if err := service.SubmitReview(context.Background(), domain.User{ID: userID}, ReviewRequest{
+		PoolItemID:                       itemID,
+		Rating:                           domain.RatingEasy,
+		ModeUsed:                         domain.ReviewModeMultipleChoice,
+		ResponseTimeMs:                   1800,
+		ClientEventID:                    "memory-cause-1",
+		AnswerCorrect:                    boolPointer(true),
+		InputMethod:                      domain.ReviewInputMethodTap,
+		SelectedChoiceConfusableGroupKey: "adapt_adopt",
+	}); err != nil {
+		t.Fatalf("SubmitReview returned error: %v", err)
+	}
+
+	updated := stateRepo.states[wordID]
+	if updated.LastMemoryCause != domain.MemoryCauseSpellingIssue {
+		t.Fatalf("expected last memory cause spelling_issue, got %s", updated.LastMemoryCause)
+	}
+	if updated.SpellingIssueCount != 1 {
+		t.Fatalf("expected spelling issue count 1, got %d", updated.SpellingIssueCount)
+	}
+	if updated.LastAnswerCorrect == nil || !*updated.LastAnswerCorrect {
+		t.Fatalf("expected last answer correct to be true, got %#v", updated.LastAnswerCorrect)
+	}
+	if len(eventRepo.events) != 1 {
+		t.Fatalf("expected one event, got %d", len(eventRepo.events))
+	}
+	if eventRepo.events[0].Payload["memory_cause"] != domain.MemoryCauseSpellingIssue {
+		t.Fatalf("expected memory_cause payload spelling_issue, got %#v", eventRepo.events[0].Payload["memory_cause"])
+	}
+}
+
+func TestSubmitReviewWithoutBehaviorSignalsStillWorks(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	nextReview := now.Add(24 * time.Hour)
+	word := domain.Word{
+		ID:                wordID,
+		Word:              "budget",
+		CanonicalForm:     "budget",
+		Lemma:             "budget",
+		EnglishMeaning:    "financial plan",
+		VietnameseMeaning: "ngan sach",
+	}
+
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			wordID: {
+				UserID:          userID,
+				WordID:          wordID,
+				Status:          domain.WordStatusReview,
+				NextReviewAt:    &nextReview,
+				IntervalSeconds: int((24 * time.Hour).Seconds()),
+				Stability:       1.4,
+				Difficulty:      0.4,
+			},
+		},
+	}
+	poolRepo := &replenishPoolRepo{
+		items: []domain.DailyLearningPoolItem{{
+			ID:         itemID,
+			UserID:     userID,
+			WordID:     wordID,
+			ItemType:   domain.PoolItemTypeReview,
+			ReviewMode: domain.ReviewModeReveal,
+			Status:     domain.PoolItemStatusPending,
+			IsReview:   true,
+			Word:       &word,
+		}},
+	}
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, &captureEventRepo{}, nil, replenishClock{now: now}, nil, true)
+
+	if err := service.SubmitReview(context.Background(), domain.User{ID: userID}, ReviewRequest{
+		PoolItemID:     itemID,
+		Rating:         domain.RatingMedium,
+		ModeUsed:       domain.ReviewModeReveal,
+		ResponseTimeMs: 3200,
+		ClientEventID:  "memory-cause-compat",
+	}); err != nil {
+		t.Fatalf("SubmitReview returned error for compatibility payload: %v", err)
 	}
 }

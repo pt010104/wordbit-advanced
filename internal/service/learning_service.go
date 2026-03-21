@@ -13,13 +13,14 @@ import (
 )
 
 type LearningService struct {
-	settingsRepo SettingsRepository
-	stateRepo    WordStateRepository
-	poolRepo     PoolRepository
-	eventRepo    LearningEventRepository
-	quotaManager UnknownDailyQuotaManager
-	clock        Clock
-	logger       *slog.Logger
+	settingsRepo                SettingsRepository
+	stateRepo                   WordStateRepository
+	poolRepo                    PoolRepository
+	eventRepo                   LearningEventRepository
+	quotaManager                UnknownDailyQuotaManager
+	clock                       Clock
+	logger                      *slog.Logger
+	memoryCauseInferenceEnabled bool
 }
 
 func NewLearningService(
@@ -30,15 +31,17 @@ func NewLearningService(
 	quotaManager UnknownDailyQuotaManager,
 	clock Clock,
 	logger *slog.Logger,
+	memoryCauseInferenceEnabled bool,
 ) *LearningService {
 	return &LearningService{
-		settingsRepo: settingsRepo,
-		stateRepo:    stateRepo,
-		poolRepo:     poolRepo,
-		eventRepo:    eventRepo,
-		quotaManager: quotaManager,
-		clock:        clock,
-		logger:       logger,
+		settingsRepo:                settingsRepo,
+		stateRepo:                   stateRepo,
+		poolRepo:                    poolRepo,
+		eventRepo:                   eventRepo,
+		quotaManager:                quotaManager,
+		clock:                       clock,
+		logger:                      logger,
+		memoryCauseInferenceEnabled: memoryCauseInferenceEnabled,
 	}
 }
 
@@ -161,6 +164,26 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 	payload := domain.JSONMap{
 		"rating": req.Rating,
 	}
+	answerCorrect := req.Rating != domain.RatingHard
+	if req.AnswerCorrect != nil {
+		answerCorrect = *req.AnswerCorrect
+	}
+	inferredCause := domain.MemoryCause("")
+	if s.memoryCauseInferenceEnabled && item.Word != nil {
+		inferredCause = InferMemoryCause(MemoryCauseInput{
+			State:                            previousState,
+			TargetWord:                       *item.Word,
+			ModeUsed:                         req.ModeUsed,
+			AnswerCorrect:                    answerCorrect,
+			RevealedMeaningBeforeAnswer:      req.RevealedMeaningBeforeAnswer,
+			RevealedExampleBeforeAnswer:      req.RevealedExampleBeforeAnswer,
+			UsedHint:                         req.UsedHint,
+			ResponseTimeMs:                   req.ResponseTimeMs,
+			InputMethod:                      req.InputMethod,
+			NormalizedTypedAnswer:            NormalizeTypedAnswerForStorage(req.NormalizedTypedAnswer),
+			SelectedChoiceConfusableGroupKey: req.SelectedChoiceConfusableGroupKey,
+		})
+	}
 	createdItemIDs := []uuid.UUID{}
 	if item.BonusPractice {
 		state = ApplyBonusPracticeOutcome(state, req.Rating, req.ModeUsed, now, req.ResponseTimeMs)
@@ -168,6 +191,31 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 		eventType = domain.EventTypeBonusPractice
 	} else {
 		state = ApplyReviewOutcome(state, req.Rating, req.ModeUsed, now, req.ResponseTimeMs)
+		if s.memoryCauseInferenceEnabled {
+			state = ApplyMemoryCauseIntervalBias(state, inferredCause, now)
+		}
+	}
+	if s.memoryCauseInferenceEnabled {
+		state = ApplyMemoryCause(state, inferredCause, req.ResponseTimeMs, answerCorrect)
+	}
+	payload["answer_correct"] = answerCorrect
+	payload["revealed_meaning_before_answer"] = req.RevealedMeaningBeforeAnswer
+	payload["revealed_example_before_answer"] = req.RevealedExampleBeforeAnswer
+	payload["used_hint"] = req.UsedHint
+	if req.InputMethod != "" {
+		payload["input_method"] = req.InputMethod
+	}
+	if normalizedTypedAnswer := NormalizeTypedAnswerForStorage(req.NormalizedTypedAnswer); normalizedTypedAnswer != "" {
+		payload["normalized_typed_answer"] = normalizedTypedAnswer
+	}
+	if req.SelectedChoiceWordID != nil && *req.SelectedChoiceWordID != uuid.Nil {
+		payload["selected_choice_word_id"] = req.SelectedChoiceWordID.String()
+	}
+	if req.SelectedChoiceConfusableGroupKey != "" {
+		payload["selected_choice_confusable_group_key"] = req.SelectedChoiceConfusableGroupKey
+	}
+	if inferredCause != "" {
+		payload["memory_cause"] = inferredCause
 	}
 	if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
 		return err
@@ -332,7 +380,7 @@ func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID
 		WordID:                item.WordID,
 		Ordinal:               lastOrdinal + 1,
 		ItemType:              domain.PoolItemTypeShortTerm,
-		ReviewMode:            SelectReviewMode(state),
+		ReviewMode:            SelectReviewMode(state, s.memoryCauseInferenceEnabled),
 		DueAt:                 state.NextReviewAt,
 		Status:                domain.PoolItemStatusPending,
 		IsReview:              true,

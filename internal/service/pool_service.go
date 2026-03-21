@@ -15,16 +15,17 @@ import (
 )
 
 type PoolService struct {
-	settingsRepo          SettingsRepository
-	wordRepo              WordRepository
-	stateRepo             WordStateRepository
-	poolRepo              PoolRepository
-	eventRepo             LearningEventRepository
-	llmRepo               LLMRunRepository
-	generator             CandidateGenerator
-	clock                 Clock
-	logger                *slog.Logger
-	maxGenerationAttempts int
+	settingsRepo                SettingsRepository
+	wordRepo                    WordRepository
+	stateRepo                   WordStateRepository
+	poolRepo                    PoolRepository
+	eventRepo                   LearningEventRepository
+	llmRepo                     LLMRunRepository
+	generator                   CandidateGenerator
+	clock                       Clock
+	logger                      *slog.Logger
+	memoryCauseInferenceEnabled bool
+	maxGenerationAttempts       int
 }
 
 func NewPoolService(
@@ -37,18 +38,20 @@ func NewPoolService(
 	generator CandidateGenerator,
 	clock Clock,
 	logger *slog.Logger,
+	memoryCauseInferenceEnabled bool,
 ) *PoolService {
 	return &PoolService{
-		settingsRepo:          settingsRepo,
-		wordRepo:              wordRepo,
-		stateRepo:             stateRepo,
-		poolRepo:              poolRepo,
-		eventRepo:             eventRepo,
-		llmRepo:               llmRepo,
-		generator:             generator,
-		clock:                 clock,
-		logger:                logger,
-		maxGenerationAttempts: 3,
+		settingsRepo:                settingsRepo,
+		wordRepo:                    wordRepo,
+		stateRepo:                   stateRepo,
+		poolRepo:                    poolRepo,
+		eventRepo:                   eventRepo,
+		llmRepo:                     llmRepo,
+		generator:                   generator,
+		clock:                       clock,
+		logger:                      logger,
+		memoryCauseInferenceEnabled: memoryCauseInferenceEnabled,
+		maxGenerationAttempts:       3,
 	}
 }
 
@@ -124,9 +127,9 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 		return DailyPoolView{}, err
 	}
 
-	items = buildReviewItems(user.ID, uuid.Nil, shortTermStates, wordMap, domain.PoolItemTypeShortTerm)
-	items = append(items, buildReviewItems(user.ID, uuid.Nil, reviewStates, wordMap, domain.PoolItemTypeReview)...)
-	items = append(items, buildReviewItems(user.ID, uuid.Nil, weakStates, wordMap, domain.PoolItemTypeWeak)...)
+	items = buildReviewItems(user.ID, uuid.Nil, shortTermStates, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled)
+	items = append(items, buildReviewItems(user.ID, uuid.Nil, reviewStates, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled)...)
+	items = append(items, buildReviewItems(user.ID, uuid.Nil, weakStates, wordMap, domain.PoolItemTypeWeak, s.memoryCauseInferenceEnabled)...)
 
 	newWords, acceptedWords, rejectionSummary, err := s.generateNewWords(ctx, user.ID, settings, topic, newQuota, items, now)
 	if err != nil {
@@ -290,7 +293,7 @@ func (s *PoolService) replenishBonusPracticeItems(
 	}
 
 	appended := 0
-	for _, bonusItem := range buildBonusPracticeItems(userID, pool.ID, weakStates, wordMap) {
+	for _, bonusItem := range buildBonusPracticeItems(userID, pool.ID, weakStates, wordMap, s.memoryCauseInferenceEnabled) {
 		bonusItem.Ordinal = lastOrdinal + appended + 1
 		if _, err := s.poolRepo.AppendPoolItem(ctx, bonusItem); err != nil {
 			return false, err
@@ -751,7 +754,7 @@ func (s *PoolService) generateNewWords(
 	return selectedWords, acceptedNames, rejections, nil
 }
 
-func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, itemType domain.PoolItemType) []domain.DailyLearningPoolItem {
+func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, itemType domain.PoolItemType, memoryCauseInferenceEnabled bool) []domain.DailyLearningPoolItem {
 	items := make([]domain.DailyLearningPoolItem, 0, len(states))
 	for _, state := range states {
 		word := words[state.WordID]
@@ -762,7 +765,7 @@ func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWo
 			UserID:                userID,
 			WordID:                state.WordID,
 			ItemType:              itemType,
-			ReviewMode:            SelectReviewMode(state),
+			ReviewMode:            SelectReviewMode(state, memoryCauseInferenceEnabled),
 			DueAt:                 dueAt,
 			Status:                domain.PoolItemStatusPending,
 			IsReview:              true,
@@ -776,8 +779,8 @@ func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWo
 	return items
 }
 
-func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word) []domain.DailyLearningPoolItem {
-	items := buildReviewItems(userID, poolID, states, words, domain.PoolItemTypeWeak)
+func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, memoryCauseInferenceEnabled bool) []domain.DailyLearningPoolItem {
+	items := buildReviewItems(userID, poolID, states, words, domain.PoolItemTypeWeak, memoryCauseInferenceEnabled)
 	for i := range items {
 		items[i].BonusPractice = true
 		items[i].DueAt = nil

@@ -14,19 +14,20 @@ import (
 )
 
 type Config struct {
-	AppEnv           string
-	Port             string
-	LogLevel         string
-	DatabaseURL      string
-	DefaultTimezone  string
-	AdminToken       string
-	AutoMigrate      bool
-	HTTPReadTimeout  time.Duration
-	HTTPWriteTimeout time.Duration
-	HTTPIdleTimeout  time.Duration
-	Gemini           GeminiConfig
-	Auth             AuthConfig
-	Scheduler        SchedulerConfig
+	AppEnv                      string
+	Port                        string
+	LogLevel                    string
+	DatabaseURL                 string
+	DefaultTimezone             string
+	AdminToken                  string
+	AutoMigrate                 bool
+	MemoryCauseInferenceEnabled bool
+	HTTPReadTimeout             time.Duration
+	HTTPWriteTimeout            time.Duration
+	HTTPIdleTimeout             time.Duration
+	Gemini                      GeminiConfig
+	Auth                        AuthConfig
+	Scheduler                   SchedulerConfig
 }
 
 type GeminiConfig struct {
@@ -59,16 +60,17 @@ func Load() (Config, error) {
 	_ = godotenv.Load(".env")
 
 	cfg := Config{
-		AppEnv:           envString("APP_ENV", "development"),
-		Port:             envString("PORT", "8080"),
-		LogLevel:         envString("LOG_LEVEL", "info"),
-		DatabaseURL:      envString("DATABASE_URL", ""),
-		DefaultTimezone:  envString("DEFAULT_TIMEZONE", domain.DefaultTimezone),
-		AdminToken:       envString("ADMIN_TOKEN", ""),
-		AutoMigrate:      envBool("AUTO_MIGRATE", true),
-		HTTPReadTimeout:  envDuration("HTTP_READ_TIMEOUT", 10*time.Second),
-		HTTPWriteTimeout: envDuration("HTTP_WRITE_TIMEOUT", 15*time.Second),
-		HTTPIdleTimeout:  envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
+		AppEnv:                      envString("APP_ENV", "development"),
+		Port:                        envString("PORT", "8080"),
+		LogLevel:                    envString("LOG_LEVEL", "info"),
+		DatabaseURL:                 envString("DATABASE_URL", ""),
+		DefaultTimezone:             envString("DEFAULT_TIMEZONE", domain.DefaultTimezone),
+		AdminToken:                  envString("ADMIN_TOKEN", ""),
+		AutoMigrate:                 envBool("AUTO_MIGRATE", true),
+		MemoryCauseInferenceEnabled: envBool("MEMORY_CAUSE_INFERENCE_ENABLED", true),
+		HTTPReadTimeout:             envDuration("HTTP_READ_TIMEOUT", 10*time.Second),
+		HTTPWriteTimeout:            envDuration("HTTP_WRITE_TIMEOUT", 15*time.Second),
+		HTTPIdleTimeout:             envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		Gemini: GeminiConfig{
 			BaseURL:         envString("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
 			Model:           envString("GEMINI_MODEL", "gemini-2.0-flash"),

@@ -125,6 +125,35 @@ func nullableCommonRatePointer(value sql.NullString) *domain.WordCommonRate {
 	return &rate
 }
 
+func nullableMemoryCauseValue(value domain.MemoryCause) any {
+	if strings.TrimSpace(string(value)) == "" {
+		return nil
+	}
+	return string(value)
+}
+
+func nullableMemoryCausePointer(value sql.NullString) domain.MemoryCause {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return ""
+	}
+	return domain.MemoryCause(value.String)
+}
+
+func nullableBoolValue(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableBoolPointer(value sql.NullBool) *bool {
+	if !value.Valid {
+		return nil
+	}
+	copied := value.Bool
+	return &copied
+}
+
 func scanUser(row pgx.Row) (domain.User, error) {
 	var user domain.User
 	err := row.Scan(
@@ -190,6 +219,8 @@ func scanState(row pgx.Row) (domain.UserWordState, error) {
 	var state domain.UserWordState
 	var lastRating string
 	var lastMode string
+	var lastMemoryCause sql.NullString
+	var lastAnswerCorrect sql.NullBool
 	err := row.Scan(
 		&state.UserID,
 		&state.WordID,
@@ -213,12 +244,22 @@ func scanState(row pgx.Row) (domain.UserWordState, error) {
 		&state.WeaknessScore,
 		&state.LearningStage,
 		&lastMode,
+		&lastMemoryCause,
+		&state.LastResponseTimeMs,
+		&lastAnswerCorrect,
+		&state.MeaningForgetCount,
+		&state.SpellingIssueCount,
+		&state.ConfusableMixupCount,
+		&state.SlowRecallCount,
+		&state.GuessedCorrectCount,
 		&state.KnownAt,
 		&state.CreatedAt,
 		&state.UpdatedAt,
 	)
 	state.LastRating = domain.ReviewRating(lastRating)
 	state.LastMode = domain.ReviewMode(lastMode)
+	state.LastMemoryCause = nullableMemoryCausePointer(lastMemoryCause)
+	state.LastAnswerCorrect = nullableBoolPointer(lastAnswerCorrect)
 	return state, mapError(err)
 }
 

@@ -99,23 +99,35 @@ func TestApplyReviewOutcomeUsesShorterStandardIntervals(t *testing.T) {
 func TestSelectReviewMode(t *testing.T) {
 	t.Parallel()
 
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 1, Stability: 0.7}); mode != domain.ReviewModeReveal {
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 1, Stability: 0.7}, true); mode != domain.ReviewModeReveal {
 		t.Fatalf("expected reveal mode, got %s", mode)
 	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 0.85, Difficulty: 0.8}); mode != domain.ReviewModeReveal {
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 0.85, Difficulty: 0.8}, true); mode != domain.ReviewModeReveal {
 		t.Fatalf("expected low-stability review to stay in reveal mode, got %s", mode)
 	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.8}); mode != domain.ReviewModeMultipleChoice {
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.8}, true); mode != domain.ReviewModeMultipleChoice {
 		t.Fatalf("expected multiple choice mode, got %s", mode)
 	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 1.0, Difficulty: 0.68}); mode != domain.ReviewModeMultipleChoice {
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 1.0, Difficulty: 0.68}, true); mode != domain.ReviewModeMultipleChoice {
 		t.Fatalf("expected stable review with moderate difficulty to use multiple choice, got %s", mode)
 	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 1.0, Difficulty: 0.35, WeaknessScore: 0.6}); mode != domain.ReviewModeFillBlank {
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 1.0, Difficulty: 0.35, WeaknessScore: 0.6}, true); mode != domain.ReviewModeFillBlank {
 		t.Fatalf("expected stable low-weakness review to use fill-in-blank, got %s", mode)
 	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 3.0, Difficulty: 0.3}); mode != domain.ReviewModeFillBlank {
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 3.0, Difficulty: 0.3}, true); mode != domain.ReviewModeFillBlank {
 		t.Fatalf("expected fill-in-blank mode, got %s", mode)
+	}
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.8, LastMemoryCause: domain.MemoryCauseSpellingIssue}, true); mode != domain.ReviewModeFillBlank {
+		t.Fatalf("expected spelling issue to bias toward fill-in-blank, got %s", mode)
+	}
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.3, LastMemoryCause: domain.MemoryCauseMixedUpWord}, true); mode != domain.ReviewModeMultipleChoice {
+		t.Fatalf("expected mixed up cause to bias toward multiple choice, got %s", mode)
+	}
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.3, LastMemoryCause: domain.MemoryCauseForgotMeaning}, true); mode != domain.ReviewModeReveal {
+		t.Fatalf("expected forgot meaning cause to bias toward reveal, got %s", mode)
+	}
+	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.3, LastMemoryCause: domain.MemoryCauseMixedUpWord}, false); mode != domain.ReviewModeFillBlank {
+		t.Fatalf("expected bias-disabled mode selection to ignore memory cause, got %s", mode)
 	}
 }
 

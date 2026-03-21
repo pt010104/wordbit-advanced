@@ -40,11 +40,19 @@ type FirstExposureRequest struct {
 }
 
 type ReviewRequest struct {
-	PoolItemID     uuid.UUID
-	Rating         domain.ReviewRating
-	ModeUsed       domain.ReviewMode
-	ResponseTimeMs int
-	ClientEventID  string
+	PoolItemID                       uuid.UUID
+	Rating                           domain.ReviewRating
+	ModeUsed                         domain.ReviewMode
+	ResponseTimeMs                   int
+	ClientEventID                    string
+	AnswerCorrect                    *bool
+	RevealedMeaningBeforeAnswer      bool
+	RevealedExampleBeforeAnswer      bool
+	UsedHint                         bool
+	InputMethod                      domain.ReviewInputMethod
+	NormalizedTypedAnswer            string
+	SelectedChoiceWordID             *uuid.UUID
+	SelectedChoiceConfusableGroupKey string
 }
 
 type RevealRequest struct {

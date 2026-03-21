@@ -61,6 +61,24 @@ const (
 	ReviewModeFillBlank      ReviewMode = "fill_in_blank"
 )
 
+type ReviewInputMethod string
+
+const (
+	ReviewInputMethodTap        ReviewInputMethod = "tap"
+	ReviewInputMethodTyping     ReviewInputMethod = "typing"
+	ReviewInputMethodRevealOnly ReviewInputMethod = "reveal_only"
+)
+
+type MemoryCause string
+
+const (
+	MemoryCauseForgotMeaning  MemoryCause = "forgot_meaning"
+	MemoryCauseSpellingIssue  MemoryCause = "spelling_issue"
+	MemoryCauseMixedUpWord    MemoryCause = "mixed_up_word"
+	MemoryCauseSlowRecall     MemoryCause = "slow_recall"
+	MemoryCauseGuessedCorrect MemoryCause = "guessed_correct"
+)
+
 type PoolItemType string
 
 const (
@@ -162,31 +180,39 @@ type Word struct {
 }
 
 type UserWordState struct {
-	UserID             uuid.UUID    `json:"user_id"`
-	WordID             uuid.UUID    `json:"word_id"`
-	Status             WordStatus   `json:"status"`
-	FirstSeenAt        *time.Time   `json:"first_seen_at,omitempty"`
-	LastSeenAt         *time.Time   `json:"last_seen_at,omitempty"`
-	LastRating         ReviewRating `json:"last_rating,omitempty"`
-	NextReviewAt       *time.Time   `json:"next_review_at,omitempty"`
-	IntervalSeconds    int          `json:"interval_seconds"`
-	Stability          float64      `json:"stability"`
-	Difficulty         float64      `json:"difficulty"`
-	ReviewCount        int          `json:"review_count"`
-	WrongCount         int          `json:"wrong_count"`
-	EasyCount          int          `json:"easy_count"`
-	MediumCount        int          `json:"medium_count"`
-	HardCount          int          `json:"hard_count"`
-	HintUsedCount      int          `json:"hint_used_count"`
-	RevealMeaningCount int          `json:"reveal_meaning_count"`
-	RevealExampleCount int          `json:"reveal_example_count"`
-	AvgResponseTimeMs  int64        `json:"avg_response_time_ms"`
-	WeaknessScore      float64      `json:"weakness_score"`
-	LearningStage      int          `json:"learning_stage"`
-	LastMode           ReviewMode   `json:"last_mode,omitempty"`
-	KnownAt            *time.Time   `json:"known_at,omitempty"`
-	CreatedAt          time.Time    `json:"created_at"`
-	UpdatedAt          time.Time    `json:"updated_at"`
+	UserID               uuid.UUID    `json:"user_id"`
+	WordID               uuid.UUID    `json:"word_id"`
+	Status               WordStatus   `json:"status"`
+	FirstSeenAt          *time.Time   `json:"first_seen_at,omitempty"`
+	LastSeenAt           *time.Time   `json:"last_seen_at,omitempty"`
+	LastRating           ReviewRating `json:"last_rating,omitempty"`
+	NextReviewAt         *time.Time   `json:"next_review_at,omitempty"`
+	IntervalSeconds      int          `json:"interval_seconds"`
+	Stability            float64      `json:"stability"`
+	Difficulty           float64      `json:"difficulty"`
+	ReviewCount          int          `json:"review_count"`
+	WrongCount           int          `json:"wrong_count"`
+	EasyCount            int          `json:"easy_count"`
+	MediumCount          int          `json:"medium_count"`
+	HardCount            int          `json:"hard_count"`
+	HintUsedCount        int          `json:"hint_used_count"`
+	RevealMeaningCount   int          `json:"reveal_meaning_count"`
+	RevealExampleCount   int          `json:"reveal_example_count"`
+	AvgResponseTimeMs    int64        `json:"avg_response_time_ms"`
+	WeaknessScore        float64      `json:"weakness_score"`
+	LearningStage        int          `json:"learning_stage"`
+	LastMode             ReviewMode   `json:"last_mode,omitempty"`
+	LastMemoryCause      MemoryCause  `json:"last_memory_cause,omitempty"`
+	LastResponseTimeMs   int          `json:"last_response_time_ms"`
+	LastAnswerCorrect    *bool        `json:"last_answer_correct,omitempty"`
+	MeaningForgetCount   int          `json:"meaning_forget_count"`
+	SpellingIssueCount   int          `json:"spelling_issue_count"`
+	ConfusableMixupCount int          `json:"confusable_mixup_count"`
+	SlowRecallCount      int          `json:"slow_recall_count"`
+	GuessedCorrectCount  int          `json:"guessed_correct_count"`
+	KnownAt              *time.Time   `json:"known_at,omitempty"`
+	CreatedAt            time.Time    `json:"created_at"`
+	UpdatedAt            time.Time    `json:"updated_at"`
 }
 
 type DailyLearningPool struct {

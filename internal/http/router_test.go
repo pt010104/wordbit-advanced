@@ -329,8 +329,8 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	identity := service.NewIdentityService(userRepo, clock)
 	settingsService := service.NewSettingsService(settingsRepo)
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
-	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger)
-	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger)
+	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
+	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, llmRepo, BuildInfo{})
@@ -420,8 +420,8 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	identity := service.NewIdentityService(userRepo, clock)
 	settingsService := service.NewSettingsService(settingsRepo)
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
-	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &failingGenerator{}, clock, logger)
-	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger)
+	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &failingGenerator{}, clock, logger, true)
+	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, llmRepo, BuildInfo{})

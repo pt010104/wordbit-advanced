@@ -45,8 +45,8 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	settings := service.NewSettingsService(repos.Settings)
 	dictionary := service.NewDictionaryService(repos.Settings, repos.Words, repos.States, repos.Pools, clock)
 	geminiClient := gemini.NewClient(cfg.Gemini, logger)
-	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, geminiClient, clock, logger)
-	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger)
+	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, geminiClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
+	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
 	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, repos.LLMRuns, apihttp.BuildInfo{
