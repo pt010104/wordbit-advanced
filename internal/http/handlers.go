@@ -264,6 +264,31 @@ func (h *Handler) SubmitReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, nethttp.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (h *Handler) UndoLastAnswer(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	itemID, err := parseUUID(chi.URLParam(r, "poolItemID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	if err := h.learning.UndoLastAnswer(r.Context(), user, service.UndoLastAnswerRequest{
+		PoolItemID: itemID,
+	}); err != nil {
+		writeError(w, err)
+		return
+	}
+	card, err := h.pools.GetNextCard(r.Context(), user)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, card)
+}
+
 func (h *Handler) SubmitReveal(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)
 	if err != nil {

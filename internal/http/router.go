@@ -68,6 +68,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Get("/me/cards/next", h.GetNextCard)
 			r.Post("/me/cards/{poolItemID}/first-exposure", h.SubmitFirstExposure)
 			r.Post("/me/cards/{poolItemID}/review", h.SubmitReview)
+			r.Post("/me/cards/{poolItemID}/undo-last-answer", h.UndoLastAnswer)
 			r.Post("/me/cards/{poolItemID}/events/reveal", h.SubmitReveal)
 			r.Post("/me/cards/{poolItemID}/events/pronunciation", h.SubmitPronunciation)
 		})

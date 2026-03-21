@@ -131,21 +131,21 @@ func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, 
 	multiplier := 1.0
 	switch rating {
 	case domain.RatingEasy:
-		multiplier = 2.4
+		multiplier = 0.75
 		state.Difficulty = minFloat(maxFloat(state.Difficulty-0.08, 0.1), 0.95)
 		state.Stability += 0.6
 	case domain.RatingMedium:
-		multiplier = 1.6
+		multiplier = 0.5
 		state.Difficulty = minFloat(maxFloat(state.Difficulty-0.02, 0.1), 0.95)
 		state.Stability += 0.25
 	case domain.RatingHard:
-		multiplier = 0.7
+		multiplier = 0.2
 		state.Difficulty = minFloat(state.Difficulty+0.1, 0.95)
 		state.Stability = maxFloat(state.Stability*0.85, 0.6)
 	}
 	seconds := int(float64(baseInterval) * multiplier * (1 + state.Stability/5))
-	if rating == domain.RatingHard && seconds < int((12*time.Hour).Seconds()) {
-		seconds = int((12 * time.Hour).Seconds())
+	if rating == domain.RatingHard && seconds < int((4*time.Hour).Seconds()) {
+		seconds = int((4 * time.Hour).Seconds())
 	}
 	state.IntervalSeconds = seconds
 	next := now.Add(time.Duration(seconds) * time.Second)
@@ -193,21 +193,21 @@ func nextConsolidationStep(stage int, rating domain.ReviewRating) (time.Duration
 	if rating == domain.RatingHard {
 		switch stage {
 		case 1:
-			return 10 * time.Minute, 1, domain.WordStatusLearning
+			return 5 * time.Minute, 1, domain.WordStatusLearning
 		case 2:
-			return 24 * time.Hour, 2, domain.WordStatusLearning
+			return 8 * time.Hour, 2, domain.WordStatusLearning
 		default:
-			return 72 * time.Hour, 3, domain.WordStatusLearning
+			return 24 * time.Hour, 3, domain.WordStatusLearning
 		}
 	}
 
 	switch stage {
 	case 1:
-		return 24 * time.Hour, 2, domain.WordStatusLearning
+		return 8 * time.Hour, 2, domain.WordStatusLearning
 	case 2:
-		return 72 * time.Hour, 3, domain.WordStatusLearning
+		return 24 * time.Hour, 3, domain.WordStatusLearning
 	default:
-		return 7 * 24 * time.Hour, 0, domain.WordStatusReview
+		return 2 * 24 * time.Hour, 0, domain.WordStatusReview
 	}
 }
 

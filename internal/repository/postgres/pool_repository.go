@@ -190,12 +190,31 @@ func (r *PoolRepository) GetPoolItem(ctx context.Context, userID uuid.UUID, item
 	`, userID, itemID))
 }
 
+func (r *PoolRepository) GetLatestCompletedPoolItem(ctx context.Context, userID uuid.UUID, poolID uuid.UUID) (domain.DailyLearningPoolItem, error) {
+	return scanPoolItem(r.pool.QueryRow(ctx, poolItemSelect+`
+		WHERE i.user_id = $1
+		  AND i.pool_id = $2
+		  AND i.status = 'completed'
+		ORDER BY i.completed_at DESC NULLS LAST, i.ordinal DESC, i.created_at DESC
+		LIMIT 1
+	`, userID, poolID))
+}
+
 func (r *PoolRepository) MarkPoolItemCompleted(ctx context.Context, itemID uuid.UUID, completedAt time.Time) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE daily_learning_pool_items
 		SET status = 'completed', completed_at = $2
 		WHERE id = $1
 	`, itemID, completedAt)
+	return mapError(err)
+}
+
+func (r *PoolRepository) ReopenPoolItem(ctx context.Context, itemID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE daily_learning_pool_items
+		SET status = 'pending', completed_at = NULL
+		WHERE id = $1
+	`, itemID)
 	return mapError(err)
 }
 
@@ -278,6 +297,39 @@ func (r *PoolRepository) IncrementWeakCount(ctx context.Context, poolID uuid.UUI
 		SET weak_count = weak_count + $2
 		WHERE id = $1
 	`, poolID, delta)
+	return mapError(err)
+}
+
+func (r *PoolRepository) DeletePoolItems(ctx context.Context, userID uuid.UUID, itemIDs []uuid.UUID) error {
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	placeholders := joinPlaceholders(2, len(itemIDs))
+	args := append([]any{userID}, inClauseUUIDs(itemIDs)...)
+	_, err := r.pool.Exec(ctx, `
+		WITH deleted AS (
+			DELETE FROM daily_learning_pool_items
+			WHERE user_id = $1
+			  AND id IN (`+placeholders+`)
+			RETURNING pool_id, item_type
+		),
+		aggregated AS (
+			SELECT pool_id,
+			       COUNT(*) FILTER (WHERE item_type = 'review') AS review_count,
+			       COUNT(*) FILTER (WHERE item_type = 'short_term') AS short_term_count,
+			       COUNT(*) FILTER (WHERE item_type = 'weak') AS weak_count,
+			       COUNT(*) FILTER (WHERE item_type = 'new') AS new_count
+			FROM deleted
+			GROUP BY pool_id
+		)
+		UPDATE daily_learning_pools p
+		SET due_review_count = GREATEST(0, p.due_review_count - aggregated.review_count),
+		    short_term_count = GREATEST(0, p.short_term_count - aggregated.short_term_count),
+		    weak_count = GREATEST(0, p.weak_count - aggregated.weak_count),
+		    new_count = GREATEST(0, p.new_count - aggregated.new_count)
+		FROM aggregated
+		WHERE p.id = aggregated.pool_id
+	`, args...)
 	return mapError(err)
 }
 

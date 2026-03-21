@@ -46,12 +46,15 @@ type PoolRepository interface {
 	AcquireDailyPoolLock(ctx context.Context, userID uuid.UUID, localDate string) error
 	GetNextActionableCard(ctx context.Context, userID uuid.UUID, localDate string, now time.Time) (*domain.DailyLearningPoolItem, error)
 	GetPoolItem(ctx context.Context, userID uuid.UUID, itemID uuid.UUID) (domain.DailyLearningPoolItem, error)
+	GetLatestCompletedPoolItem(ctx context.Context, userID uuid.UUID, poolID uuid.UUID) (domain.DailyLearningPoolItem, error)
 	MarkPoolItemCompleted(ctx context.Context, itemID uuid.UUID, completedAt time.Time) error
+	ReopenPoolItem(ctx context.Context, itemID uuid.UUID) error
 	UpdatePoolItemReveal(ctx context.Context, itemID uuid.UUID, kind domain.RevealKind) error
 	AppendPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) (domain.DailyLearningPoolItem, error)
 	GetLastOrdinal(ctx context.Context, poolID uuid.UUID) (int, error)
 	IncrementNewCount(ctx context.Context, poolID uuid.UUID, delta int) error
 	IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error
+	DeletePoolItems(ctx context.Context, userID uuid.UUID, itemIDs []uuid.UUID) error
 	DeleteItemsForUserWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error
 	ForceDeleteByLocalDate(ctx context.Context, userID uuid.UUID, localDate string) error
 }
@@ -71,7 +74,7 @@ type CandidateGenerator interface {
 }
 
 type UnknownDailyQuotaManager interface {
-	EnsureUnknownDailyQuota(ctx context.Context, user domain.User) error
+	EnsureUnknownDailyQuota(ctx context.Context, user domain.User, sourcePoolItemID *uuid.UUID) ([]uuid.UUID, error)
 }
 
 type Clock interface {

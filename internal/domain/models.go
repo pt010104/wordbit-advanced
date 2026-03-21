@@ -97,6 +97,7 @@ const (
 	EventTypePoolGenerated   EventType = "pool_generated"
 	EventTypeWeaknessRefresh EventType = "weakness_refresh"
 	EventTypeBonusPractice   EventType = "bonus_practice_review"
+	EventTypeAnswerUndo      EventType = "answer_undo"
 )
 
 type RevealKind string

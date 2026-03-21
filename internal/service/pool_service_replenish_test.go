@@ -224,6 +224,24 @@ func (r *replenishPoolRepo) GetPoolItem(ctx context.Context, userID uuid.UUID, i
 	return domain.DailyLearningPoolItem{}, domain.ErrNotFound
 }
 
+func (r *replenishPoolRepo) GetLatestCompletedPoolItem(ctx context.Context, userID uuid.UUID, poolID uuid.UUID) (domain.DailyLearningPoolItem, error) {
+	var latest domain.DailyLearningPoolItem
+	var found bool
+	for _, item := range r.items {
+		if item.UserID != userID || item.PoolID != poolID || item.Status != domain.PoolItemStatusCompleted || item.CompletedAt == nil {
+			continue
+		}
+		if !found || item.CompletedAt.After(*latest.CompletedAt) || (item.CompletedAt.Equal(*latest.CompletedAt) && item.Ordinal > latest.Ordinal) {
+			latest = item
+			found = true
+		}
+	}
+	if !found {
+		return domain.DailyLearningPoolItem{}, domain.ErrNotFound
+	}
+	return latest, nil
+}
+
 func (r *replenishPoolRepo) MarkPoolItemCompleted(ctx context.Context, itemID uuid.UUID, completedAt time.Time) error {
 	for i := range r.items {
 		if r.items[i].ID != itemID {
@@ -234,6 +252,18 @@ func (r *replenishPoolRepo) MarkPoolItemCompleted(ctx context.Context, itemID uu
 		return nil
 	}
 	return nil
+}
+
+func (r *replenishPoolRepo) ReopenPoolItem(ctx context.Context, itemID uuid.UUID) error {
+	for i := range r.items {
+		if r.items[i].ID != itemID {
+			continue
+		}
+		r.items[i].Status = domain.PoolItemStatusPending
+		r.items[i].CompletedAt = nil
+		return nil
+	}
+	return domain.ErrNotFound
 }
 
 func (r *replenishPoolRepo) UpdatePoolItemReveal(ctx context.Context, itemID uuid.UUID, kind domain.RevealKind) error {
@@ -286,6 +316,45 @@ func (r *replenishPoolRepo) IncrementNewCount(ctx context.Context, poolID uuid.U
 
 func (r *replenishPoolRepo) IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error {
 	r.pool.WeakCount += delta
+	return nil
+}
+
+func (r *replenishPoolRepo) DeletePoolItems(ctx context.Context, userID uuid.UUID, itemIDs []uuid.UUID) error {
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	targets := make(map[uuid.UUID]struct{}, len(itemIDs))
+	for _, itemID := range itemIDs {
+		targets[itemID] = struct{}{}
+	}
+	filtered := r.items[:0]
+	removedReview := 0
+	removedShortTerm := 0
+	removedWeak := 0
+	removedNew := 0
+	for _, item := range r.items {
+		if item.UserID == userID {
+			if _, remove := targets[item.ID]; remove {
+				switch item.ItemType {
+				case domain.PoolItemTypeReview:
+					removedReview++
+				case domain.PoolItemTypeShortTerm:
+					removedShortTerm++
+				case domain.PoolItemTypeWeak:
+					removedWeak++
+				case domain.PoolItemTypeNew:
+					removedNew++
+				}
+				continue
+			}
+		}
+		filtered = append(filtered, item)
+	}
+	r.items = filtered
+	r.pool.DueReviewCount = maxInt(r.pool.DueReviewCount-removedReview, 0)
+	r.pool.ShortTermCount = maxInt(r.pool.ShortTermCount-removedShortTerm, 0)
+	r.pool.WeakCount = maxInt(r.pool.WeakCount-removedWeak, 0)
+	r.pool.NewCount = maxInt(r.pool.NewCount-removedNew, 0)
 	return nil
 }
 

@@ -212,7 +212,13 @@ func (m *memoryPoolRepo) GetNextActionableCard(ctx context.Context, userID uuid.
 func (m *memoryPoolRepo) GetPoolItem(ctx context.Context, userID uuid.UUID, itemID uuid.UUID) (domain.DailyLearningPoolItem, error) {
 	return domain.DailyLearningPoolItem{}, domain.ErrNotFound
 }
+func (m *memoryPoolRepo) GetLatestCompletedPoolItem(ctx context.Context, userID uuid.UUID, poolID uuid.UUID) (domain.DailyLearningPoolItem, error) {
+	return domain.DailyLearningPoolItem{}, domain.ErrNotFound
+}
 func (m *memoryPoolRepo) MarkPoolItemCompleted(ctx context.Context, itemID uuid.UUID, completedAt time.Time) error {
+	return nil
+}
+func (m *memoryPoolRepo) ReopenPoolItem(ctx context.Context, itemID uuid.UUID) error {
 	return nil
 }
 func (m *memoryPoolRepo) UpdatePoolItemReveal(ctx context.Context, itemID uuid.UUID, kind domain.RevealKind) error {
@@ -234,6 +240,9 @@ func (m *memoryPoolRepo) IncrementNewCount(ctx context.Context, poolID uuid.UUID
 }
 func (m *memoryPoolRepo) IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error {
 	m.pool.WeakCount += delta
+	return nil
+}
+func (m *memoryPoolRepo) DeletePoolItems(ctx context.Context, userID uuid.UUID, itemIDs []uuid.UUID) error {
 	return nil
 }
 func (m *memoryPoolRepo) DeleteItemsForUserWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error {

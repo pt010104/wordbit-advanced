@@ -43,8 +43,8 @@ func TestReviewOutcomeMovesThroughConsolidation(t *testing.T) {
 	if state.LearningStage != 2 {
 		t.Fatalf("expected stage 2, got %d", state.LearningStage)
 	}
-	if state.NextReviewAt == nil || state.NextReviewAt.Sub(now) != 24*time.Hour {
-		t.Fatalf("expected +1d review, got %#v", state.NextReviewAt)
+	if state.NextReviewAt == nil || state.NextReviewAt.Sub(now) != 8*time.Hour {
+		t.Fatalf("expected +8h review, got %#v", state.NextReviewAt)
 	}
 
 	state.LearningStage = 3
@@ -54,6 +54,45 @@ func TestReviewOutcomeMovesThroughConsolidation(t *testing.T) {
 	}
 	if state.Status != domain.WordStatusReview {
 		t.Fatalf("expected review status, got %s", state.Status)
+	}
+	if state.NextReviewAt == nil || state.NextReviewAt.Sub(now) != 2*24*time.Hour {
+		t.Fatalf("expected +2d review, got %#v", state.NextReviewAt)
+	}
+}
+
+func TestApplyReviewOutcomeUsesShorterStandardIntervals(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	state := domain.UserWordState{
+		Status:          domain.WordStatusReview,
+		IntervalSeconds: int((24 * time.Hour).Seconds()),
+		Stability:       2.0,
+		Difficulty:      0.55,
+	}
+
+	medium := ApplyReviewOutcome(state, domain.RatingMedium, domain.ReviewModeMultipleChoice, now, 2800)
+	if medium.NextReviewAt == nil {
+		t.Fatalf("expected medium review to schedule next review")
+	}
+	if got := medium.NextReviewAt.Sub(now); got <= 12*time.Hour || got >= 18*time.Hour {
+		t.Fatalf("expected medium review interval between 12h and 18h, got %s", got)
+	}
+
+	easy := ApplyReviewOutcome(state, domain.RatingEasy, domain.ReviewModeFillBlank, now, 2200)
+	if easy.NextReviewAt == nil {
+		t.Fatalf("expected easy review to schedule next review")
+	}
+	if got := easy.NextReviewAt.Sub(now); got <= 24*time.Hour || got >= 30*time.Hour {
+		t.Fatalf("expected easy review interval between 24h and 30h, got %s", got)
+	}
+
+	hard := ApplyReviewOutcome(state, domain.RatingHard, domain.ReviewModeReveal, now, 5200)
+	if hard.NextReviewAt == nil {
+		t.Fatalf("expected hard review to schedule next review")
+	}
+	if got := hard.NextReviewAt.Sub(now); got < 4*time.Hour || got >= 7*time.Hour {
+		t.Fatalf("expected hard review interval between 4h and 7h, got %s", got)
 	}
 }
 

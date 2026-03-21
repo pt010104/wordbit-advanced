@@ -205,7 +205,7 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 			LocalDate: view.Pool.LocalDate,
 			PoolItem:  item,
 		}, nil
-	} else if replenished, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+	} else if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now, nil); replenishErr != nil {
 		return CardResponse{}, replenishErr
 	} else if replenished {
 		view, err = s.GetOrCreateDailyPool(ctx, user)
@@ -250,13 +250,13 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 	}
 }
 
-func (s *PoolService) EnsureUnknownDailyQuota(ctx context.Context, user domain.User) error {
+func (s *PoolService) EnsureUnknownDailyQuota(ctx context.Context, user domain.User, sourcePoolItemID *uuid.UUID) ([]uuid.UUID, error) {
 	view, err := s.GetOrCreateDailyPool(ctx, user)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, s.clock.Now())
-	return err
+	_, createdItemIDs, err := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, s.clock.Now(), sourcePoolItemID)
+	return createdItemIDs, err
 }
 
 func (s *PoolService) replenishBonusPracticeItems(
@@ -402,17 +402,18 @@ func (s *PoolService) replenishUnknownDailySlots(
 	pool domain.DailyLearningPool,
 	items []domain.DailyLearningPoolItem,
 	now time.Time,
-) (bool, error) {
+	sourcePoolItemID *uuid.UUID,
+) (bool, []uuid.UUID, error) {
 	settings, err := s.settingsRepo.Get(ctx, userID)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	additionalNeeded, unknownCount, pendingNewCount, err := s.computeUnknownDailyNeed(ctx, userID, settings.DailyNewWordLimit, items)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if additionalNeeded <= 0 {
-		return false, nil
+		return false, nil, nil
 	}
 
 	s.logger.Info("replenishing unknown daily slots at pool end",
@@ -427,25 +428,35 @@ func (s *PoolService) replenishUnknownDailySlots(
 
 	newWords, _, _, err := s.generateNewWords(ctx, userID, settings, pool.Topic, additionalNeeded, items, now)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if len(newWords) == 0 {
-		return false, fmt.Errorf("unable to replenish known daily slots: no replacement words generated")
+		return false, nil, fmt.Errorf("unable to replenish known daily slots: no replacement words generated")
 	}
 
 	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, pool.ID)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	newItems := buildNewItems(userID, pool.ID, newWords)
+	createdItemIDs := make([]uuid.UUID, 0, len(newItems))
 	for i := range newItems {
-		newItems[i].Ordinal = lastOrdinal + i + 1
-		if _, err := s.poolRepo.AppendPoolItem(ctx, newItems[i]); err != nil {
-			return false, err
+		if sourcePoolItemID != nil {
+			if newItems[i].Metadata == nil {
+				newItems[i].Metadata = domain.JSONMap{}
+			}
+			newItems[i].Metadata["source_pool_item_id"] = sourcePoolItemID.String()
+			newItems[i].Metadata["source_reason"] = "unknown_daily_quota"
 		}
+		newItems[i].Ordinal = lastOrdinal + i + 1
+		appendedItem, err := s.poolRepo.AppendPoolItem(ctx, newItems[i])
+		if err != nil {
+			return false, nil, err
+		}
+		createdItemIDs = append(createdItemIDs, appendedItem.ID)
 	}
 	if err := s.poolRepo.IncrementNewCount(ctx, pool.ID, len(newItems)); err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	s.logger.Info("replenished unknown daily slots",
@@ -454,7 +465,7 @@ func (s *PoolService) replenishUnknownDailySlots(
 		"local_date", pool.LocalDate,
 		"appended_new_items", len(newItems),
 	)
-	return true, nil
+	return true, createdItemIDs, nil
 }
 
 func (s *PoolService) computeUnknownDailyNeed(

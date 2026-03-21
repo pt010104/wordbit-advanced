@@ -59,3 +59,7 @@ type PronunciationRequest struct {
 	PoolItemID    uuid.UUID
 	ClientEventID string
 }
+
+type UndoLastAnswerRequest struct {
+	PoolItemID uuid.UUID
+}

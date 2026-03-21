@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -51,29 +52,54 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 	}
 
 	now := s.clock.Now()
-	if req.Action == domain.ExposureActionDontLearn {
-		return s.discardFirstExposureWord(ctx, user, item)
-	}
-	state, err := s.loadOrInitState(ctx, user.ID, item.WordID)
+	previousState, hadPreviousState, err := s.loadExistingStateSnapshot(ctx, user.ID, item.WordID)
 	if err != nil {
 		return err
 	}
+	createdItemIDs := []uuid.UUID{}
+	payload := domain.JSONMap{
+		"action": req.Action,
+	}
 
 	switch req.Action {
+	case domain.ExposureActionDontLearn:
+		if err := s.markFirstExposureDontLearn(ctx, user, item, hadPreviousState, now, &createdItemIDs); err != nil {
+			return err
+		}
 	case domain.ExposureActionKnown:
+		state := s.initStateFromSnapshot(user.ID, item.WordID, previousState, hadPreviousState, now)
 		state = ApplyFirstExposureKnown(state, now, req.ResponseTimeMs)
+		if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
+			return err
+		}
+		if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
+			return err
+		}
+		if s.quotaManager != nil {
+			if createdItemIDs, err = s.quotaManager.EnsureUnknownDailyQuota(ctx, user, &item.ID); err != nil {
+				s.logger.Warn("ensure unknown daily quota", "error", err)
+				createdItemIDs = nil
+			}
+		}
 	case domain.ExposureActionUnknown:
+		state := s.initStateFromSnapshot(user.ID, item.WordID, previousState, hadPreviousState, now)
 		state = ApplyFirstExposureUnknown(state, now, req.ResponseTimeMs)
+		if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
+			return err
+		}
+		if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
+			return err
+		}
+		if followUpID, err := s.maybeAppendSameDayFollowUp(ctx, user.ID, item, state); err != nil {
+			s.logger.Warn("append same-day follow-up", "error", err)
+		} else if followUpID != uuid.Nil {
+			createdItemIDs = append(createdItemIDs, followUpID)
+		}
 	default:
 		return fmt.Errorf("%w: unsupported action", domain.ErrValidation)
 	}
 
-	if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
-		return err
-	}
-	if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
-		return err
-	}
+	appendUndoSnapshotPayload(payload, previousState, hadPreviousState, createdItemIDs)
 	if err := s.recordEvent(ctx, domain.LearningEvent{
 		UserID:         user.ID,
 		WordID:         item.WordID,
@@ -82,36 +108,36 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 		EventTime:      now,
 		ResponseTimeMs: req.ResponseTimeMs,
 		ClientEventID:  req.ClientEventID,
-		Payload: domain.JSONMap{
-			"action": req.Action,
-		},
+		Payload:        payload,
 	}); err != nil {
 		return err
-	}
-
-	if req.Action == domain.ExposureActionUnknown {
-		if err := s.maybeAppendSameDayFollowUp(ctx, user.ID, item, state); err != nil {
-			s.logger.Warn("append same-day follow-up", "error", err)
-		}
-	} else if s.quotaManager != nil {
-		if err := s.quotaManager.EnsureUnknownDailyQuota(ctx, user); err != nil {
-			s.logger.Warn("ensure unknown daily quota", "error", err)
-		}
 	}
 	return nil
 }
 
-func (s *LearningService) discardFirstExposureWord(ctx context.Context, user domain.User, item domain.DailyLearningPoolItem) error {
-	if err := s.poolRepo.DeleteItemsForUserWord(ctx, user.ID, item.WordID); err != nil {
+func (s *LearningService) markFirstExposureDontLearn(
+	ctx context.Context,
+	user domain.User,
+	item domain.DailyLearningPoolItem,
+	hadPreviousState bool,
+	now time.Time,
+	createdItemIDs *[]uuid.UUID,
+) error {
+	if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
 		return err
 	}
-	if err := s.stateRepo.Delete(ctx, user.ID, item.WordID); err != nil && !errors.Is(err, domain.ErrNotFound) {
-		return err
+	if hadPreviousState {
+		if err := s.stateRepo.Delete(ctx, user.ID, item.WordID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return err
+		}
 	}
 	if s.quotaManager != nil {
-		if err := s.quotaManager.EnsureUnknownDailyQuota(ctx, user); err != nil {
+		appendedIDs, err := s.quotaManager.EnsureUnknownDailyQuota(ctx, user, &item.ID)
+		if err != nil {
 			s.logger.Warn("ensure unknown daily quota after discard", "error", err)
+			return nil
 		}
+		*createdItemIDs = append(*createdItemIDs, appendedIDs...)
 	}
 	return nil
 }
@@ -129,11 +155,13 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 	if err != nil {
 		return err
 	}
+	previousState := state
 	now := s.clock.Now()
 	eventType := domain.EventTypeReviewAnswer
 	payload := domain.JSONMap{
 		"rating": req.Rating,
 	}
+	createdItemIDs := []uuid.UUID{}
 	if item.BonusPractice {
 		state = ApplyBonusPracticeOutcome(state, req.Rating, req.ModeUsed, now, req.ResponseTimeMs)
 		payload["bonus_practice"] = true
@@ -147,6 +175,14 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 	if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
 		return err
 	}
+	if !item.BonusPractice {
+		if followUpID, err := s.maybeAppendSameDayFollowUp(ctx, user.ID, item, state); err != nil {
+			s.logger.Warn("append same-day review follow-up", "error", err)
+		} else if followUpID != uuid.Nil {
+			createdItemIDs = append(createdItemIDs, followUpID)
+		}
+	}
+	appendUndoSnapshotPayload(payload, &previousState, true, createdItemIDs)
 	if err := s.recordEvent(ctx, domain.LearningEvent{
 		UserID:         user.ID,
 		WordID:         item.WordID,
@@ -159,12 +195,6 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 		Payload:        payload,
 	}); err != nil {
 		return err
-	}
-	if item.BonusPractice {
-		return nil
-	}
-	if err := s.maybeAppendSameDayFollowUp(ctx, user.ID, item, state); err != nil {
-		s.logger.Warn("append same-day review follow-up", "error", err)
 	}
 	return nil
 }
@@ -268,33 +298,33 @@ func (s *LearningService) loadOrInitState(ctx context.Context, userID uuid.UUID,
 	}, nil
 }
 
-func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID uuid.UUID, item domain.DailyLearningPoolItem, state domain.UserWordState) error {
+func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID uuid.UUID, item domain.DailyLearningPoolItem, state domain.UserWordState) (uuid.UUID, error) {
 	if state.NextReviewAt == nil {
-		return nil
+		return uuid.Nil, nil
 	}
 	settings, err := s.settingsRepo.Get(ctx, userID)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	localDate, _, _, loc, err := domain.BoundsForLocalDate(*state.NextReviewAt, settings.Timezone)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	nowDate, _, _, _, err := domain.BoundsForLocalDate(s.clock.Now(), settings.Timezone)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	if localDate != nowDate {
-		return nil
+		return uuid.Nil, nil
 	}
 
 	pool, _, err := s.poolRepo.GetByLocalDate(ctx, userID, nowDate)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, pool.ID)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	followUp := domain.DailyLearningPoolItem{
 		PoolID:                pool.ID,
@@ -311,9 +341,13 @@ func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID
 			"scheduled_local_date": localDate,
 			"scheduled_timezone":   loc.String(),
 			"source_pool_item_id":  item.ID.String(),
+			"source_reason":        "same_day_follow_up",
 			"weakness_score":       state.WeaknessScore,
 		},
 	}
-	_, err = s.poolRepo.AppendPoolItem(ctx, followUp)
-	return err
+	appendedItem, err := s.poolRepo.AppendPoolItem(ctx, followUp)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return appendedItem.ID, nil
 }

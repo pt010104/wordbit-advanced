@@ -2,19 +2,35 @@ package service
 
 import "time"
 
-var weekdayTopics = map[time.Weekday]string{
-	time.Monday:    "Education",
-	time.Tuesday:   "Environment",
-	time.Wednesday: "Technology",
-	time.Thursday:  "Work/Career",
-	time.Friday:    "Society",
-	time.Saturday:  "Health",
-	time.Sunday:    "Mixed Review/Weak",
+var rotatingTopics = []string{
+	"Education",
+	"Environment",
+	"Technology",
+	"Work/Career",
+	"Society",
+	"Health",
+	"Business",
+	"Finance",
+	"Communication",
+	"Travel",
+	"Science",
+	"Media",
+	"Culture",
+	"Law/Government",
+	"Psychology",
+	"Relationships",
+	"Daily Life",
+	"Mixed Review/Weak",
 }
 
 func TopicForDate(localNow time.Time) string {
-	if topic, ok := weekdayTopics[localNow.Weekday()]; ok {
-		return topic
+	if len(rotatingTopics) == 0 {
+		return "Mixed Review/Weak"
 	}
-	return "Mixed Review/Weak"
+	civilMidnightUTC := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC)
+	dayIndex := int(civilMidnightUTC.Unix() / 86400)
+	if dayIndex < 0 {
+		dayIndex = -dayIndex
+	}
+	return rotatingTopics[dayIndex%len(rotatingTopics)]
 }

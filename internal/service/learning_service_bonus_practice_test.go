@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -22,7 +23,15 @@ func (r *captureEventRepo) Insert(ctx context.Context, event domain.LearningEven
 }
 
 func (r *captureEventRepo) ListRecentByPoolItem(ctx context.Context, itemID uuid.UUID) ([]domain.LearningEvent, error) {
-	return nil, nil
+	events := make([]domain.LearningEvent, 0, len(r.events))
+	for i := len(r.events) - 1; i >= 0; i-- {
+		event := r.events[i]
+		if event.PoolItemID == nil || *event.PoolItemID != itemID {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events, nil
 }
 
 func TestSubmitReviewBonusPracticeDoesNotChangeNextReviewAt(t *testing.T) {
@@ -539,16 +548,552 @@ func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingState(t *testing.T)
 	if err != nil {
 		t.Fatalf("SubmitFirstExposure returned error: %v", err)
 	}
-	if len(eventRepo.events) != 0 {
-		t.Fatalf("expected no learning event for dont_learn, got %d", len(eventRepo.events))
+	if len(eventRepo.events) != 1 {
+		t.Fatalf("expected one undoable event for dont_learn, got %d", len(eventRepo.events))
+	}
+	if eventRepo.events[0].EventType != domain.EventTypeFirstExposure {
+		t.Fatalf("expected first exposure event for dont_learn, got %s", eventRepo.events[0].EventType)
 	}
 	if _, ok := stateRepo.states[wordID]; ok {
 		t.Fatalf("expected no persisted state for discarded word")
 	}
-	if len(poolRepo.items) != 1 {
-		t.Fatalf("expected discarded card to be removed and replaced by one new card, got %d items", len(poolRepo.items))
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected discarded card to stay completed and one replacement to be appended, got %d items", len(poolRepo.items))
 	}
-	if poolRepo.items[0].WordID == wordID {
-		t.Fatalf("expected discarded word to be removed from pool")
+	if poolRepo.items[0].WordID != wordID || poolRepo.items[0].Status != domain.PoolItemStatusCompleted {
+		t.Fatalf("expected original discarded card to stay completed for undo, got %#v", poolRepo.items[0])
+	}
+	if poolRepo.items[1].WordID == wordID {
+		t.Fatalf("expected replacement card to use a different word")
+	}
+}
+
+func TestUndoLastAnswerKnownRestoresPendingCardAndRemovesReplacement(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 8, 0, 0, 0, time.UTC)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			wordID: {
+				ID:                wordID,
+				Word:              "delegate",
+				NormalizedForm:    "delegate",
+				CanonicalForm:     "delegate",
+				Lemma:             "delegate",
+				Level:             domain.CEFRB1,
+				Topic:             "Work/Career",
+				EnglishMeaning:    "assign work",
+				VietnameseMeaning: "uy quyen",
+			},
+		},
+	}
+	word := wordRepo.words[wordID]
+	stateRepo := &replenishStateRepo{}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-21",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{{
+			ID:                    itemID,
+			PoolID:                poolID,
+			UserID:                userID,
+			WordID:                wordID,
+			Ordinal:               1,
+			ItemType:              domain.PoolItemTypeNew,
+			ReviewMode:            domain.ReviewModeReveal,
+			Status:                domain.PoolItemStatusPending,
+			FirstExposureRequired: true,
+			Word:                  &word,
+		}},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+	generator := &trackingGenerator{
+		candidates: []domain.CandidateWord{{
+			Word:              "budget",
+			CanonicalForm:     "budget",
+			Lemma:             "budget",
+			Level:             domain.CEFRB1,
+			Topic:             "Work/Career",
+			EnglishMeaning:    "financial plan",
+			VietnameseMeaning: "ngan sach",
+		}},
+	}
+	eventRepo := &captureEventRepo{}
+	poolService := NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, &replenishEventRepo{}, &replenishLLMRepo{}, generator, replenishClock{now: now}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, replenishClock{now: now}, nil)
+
+	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
+		PoolItemID:     itemID,
+		Action:         domain.ExposureActionKnown,
+		ResponseTimeMs: 900,
+		ClientEventID:  "known-undo-1",
+	}); err != nil {
+		t.Fatalf("SubmitFirstExposure returned error: %v", err)
+	}
+
+	if err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID}); err != nil {
+		t.Fatalf("UndoLastAnswer returned error: %v", err)
+	}
+
+	if len(poolRepo.items) != 1 {
+		t.Fatalf("expected replacement card to be removed after undo, got %d items", len(poolRepo.items))
+	}
+	if poolRepo.items[0].Status != domain.PoolItemStatusPending {
+		t.Fatalf("expected original card to reopen, got %#v", poolRepo.items[0])
+	}
+	if _, ok := stateRepo.states[wordID]; ok {
+		t.Fatalf("expected restored state to be absent for original first exposure")
+	}
+	if len(eventRepo.events) != 2 || eventRepo.events[1].EventType != domain.EventTypeAnswerUndo {
+		t.Fatalf("expected undo audit event, got %#v", eventRepo.events)
+	}
+}
+
+func TestUndoLastAnswerUnknownRestoresPendingCardAndDeletesFollowUp(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 9, 0, 0, 0, time.UTC)
+
+	word := domain.Word{
+		ID:                wordID,
+		Word:              "resilient",
+		NormalizedForm:    "resilient",
+		CanonicalForm:     "resilient",
+		Lemma:             "resilient",
+		Level:             domain.CEFRB1,
+		Topic:             "Society",
+		EnglishMeaning:    "able to recover quickly",
+		VietnameseMeaning: "kien cuong",
+	}
+	stateRepo := &replenishStateRepo{}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-21",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Society",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{{
+			ID:                    itemID,
+			PoolID:                poolID,
+			UserID:                userID,
+			WordID:                wordID,
+			Ordinal:               1,
+			ItemType:              domain.PoolItemTypeNew,
+			ReviewMode:            domain.ReviewModeReveal,
+			Status:                domain.PoolItemStatusPending,
+			FirstExposureRequired: true,
+			Word:                  &word,
+		}},
+	}
+	settingsRepo := &replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}
+	eventRepo := &captureEventRepo{}
+	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+
+	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
+		PoolItemID:     itemID,
+		Action:         domain.ExposureActionUnknown,
+		ResponseTimeMs: 1200,
+		ClientEventID:  "unknown-undo-1",
+	}); err != nil {
+		t.Fatalf("SubmitFirstExposure returned error: %v", err)
+	}
+
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected same-day follow-up after unknown, got %d items", len(poolRepo.items))
+	}
+	if err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID}); err != nil {
+		t.Fatalf("UndoLastAnswer returned error: %v", err)
+	}
+
+	if len(poolRepo.items) != 1 {
+		t.Fatalf("expected follow-up to be deleted after undo, got %d items", len(poolRepo.items))
+	}
+	if poolRepo.items[0].Status != domain.PoolItemStatusPending {
+		t.Fatalf("expected original card to reopen, got %#v", poolRepo.items[0])
+	}
+	if _, ok := stateRepo.states[wordID]; ok {
+		t.Fatalf("expected unknown state to be removed after undo")
+	}
+}
+
+func TestUndoLastAnswerDontLearnRestoresPendingCardAndDeletesReplacement(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			wordID: {
+				ID:                wordID,
+				Word:              "coverage",
+				NormalizedForm:    "coverage",
+				CanonicalForm:     "coverage",
+				Lemma:             "coverage",
+				Level:             domain.CEFRB1,
+				Topic:             "Media",
+				EnglishMeaning:    "reporting",
+				VietnameseMeaning: "su dua tin",
+			},
+		},
+	}
+	word := wordRepo.words[wordID]
+	stateRepo := &replenishStateRepo{}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-21",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Media",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{{
+			ID:                    itemID,
+			PoolID:                poolID,
+			UserID:                userID,
+			WordID:                wordID,
+			Ordinal:               1,
+			ItemType:              domain.PoolItemTypeNew,
+			ReviewMode:            domain.ReviewModeReveal,
+			Status:                domain.PoolItemStatusPending,
+			FirstExposureRequired: true,
+			Word:                  &word,
+		}},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+	generator := &trackingGenerator{
+		candidates: []domain.CandidateWord{{
+			Word:              "headline",
+			CanonicalForm:     "headline",
+			Lemma:             "headline",
+			Level:             domain.CEFRB1,
+			Topic:             "Media",
+			EnglishMeaning:    "news title",
+			VietnameseMeaning: "tieu de",
+		}},
+	}
+	eventRepo := &captureEventRepo{}
+	poolService := NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, &replenishEventRepo{}, &replenishLLMRepo{}, generator, replenishClock{now: now}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, replenishClock{now: now}, nil)
+
+	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
+		PoolItemID:     itemID,
+		Action:         domain.ExposureActionDontLearn,
+		ResponseTimeMs: 400,
+		ClientEventID:  "dont-learn-undo-1",
+	}); err != nil {
+		t.Fatalf("SubmitFirstExposure returned error: %v", err)
+	}
+	if err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID}); err != nil {
+		t.Fatalf("UndoLastAnswer returned error: %v", err)
+	}
+	if len(poolRepo.items) != 1 {
+		t.Fatalf("expected replacement card deleted after undo, got %d items", len(poolRepo.items))
+	}
+	if poolRepo.items[0].Status != domain.PoolItemStatusPending || poolRepo.items[0].WordID != wordID {
+		t.Fatalf("expected original dont-learn card reopened, got %#v", poolRepo.items[0])
+	}
+}
+
+func TestUndoLastAnswerReviewRestoresPreviousStateAndRemovesFollowUp(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 7, 0, 0, 0, time.UTC)
+	previousReview := now.Add(-2 * time.Hour)
+
+	word := domain.Word{
+		ID:                wordID,
+		Word:              "brief",
+		NormalizedForm:    "brief",
+		CanonicalForm:     "brief",
+		Lemma:             "brief",
+		Level:             domain.CEFRB1,
+		Topic:             "Communication",
+		EnglishMeaning:    "short summary",
+		VietnameseMeaning: "ban tom tat",
+	}
+	previousState := domain.UserWordState{
+		UserID:          userID,
+		WordID:          wordID,
+		Status:          domain.WordStatusLearning,
+		LastSeenAt:      &previousReview,
+		NextReviewAt:    &previousReview,
+		IntervalSeconds: int((10 * time.Minute).Seconds()),
+		LearningStage:   1,
+		Stability:       0.5,
+		Difficulty:      0.5,
+	}
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			wordID: previousState,
+		},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:             poolID,
+			UserID:         userID,
+			LocalDate:      "2026-03-21",
+			Timezone:       domain.DefaultTimezone,
+			Topic:          "Communication",
+			ShortTermCount: 1,
+		},
+		items: []domain.DailyLearningPoolItem{{
+			ID:         itemID,
+			PoolID:     poolID,
+			UserID:     userID,
+			WordID:     wordID,
+			Ordinal:    1,
+			ItemType:   domain.PoolItemTypeShortTerm,
+			ReviewMode: domain.ReviewModeReveal,
+			Status:     domain.PoolItemStatusPending,
+			IsReview:   true,
+			Word:       &word,
+		}},
+	}
+	eventRepo := &captureEventRepo{}
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+
+	if err := service.SubmitReview(context.Background(), domain.User{ID: userID}, ReviewRequest{
+		PoolItemID:     itemID,
+		Rating:         domain.RatingMedium,
+		ModeUsed:       domain.ReviewModeReveal,
+		ResponseTimeMs: 2000,
+		ClientEventID:  "review-undo-1",
+	}); err != nil {
+		t.Fatalf("SubmitReview returned error: %v", err)
+	}
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected follow-up review item appended, got %d items", len(poolRepo.items))
+	}
+	if err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID}); err != nil {
+		t.Fatalf("UndoLastAnswer returned error: %v", err)
+	}
+
+	restored := stateRepo.states[wordID]
+	if restored.LearningStage != previousState.LearningStage || restored.IntervalSeconds != previousState.IntervalSeconds {
+		t.Fatalf("expected previous learning state restored, got %#v", restored)
+	}
+	if len(poolRepo.items) != 1 || poolRepo.items[0].Status != domain.PoolItemStatusPending {
+		t.Fatalf("expected original review item reopened and follow-up removed, got %#v", poolRepo.items)
+	}
+}
+
+func TestUndoLastAnswerBonusPracticeRestoresPreviousWeakness(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 11, 0, 0, 0, time.UTC)
+	nextReview := now.Add(48 * time.Hour)
+
+	previousState := domain.UserWordState{
+		UserID:        userID,
+		WordID:        wordID,
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &nextReview,
+		WeaknessScore: 2.4,
+		Stability:     1.2,
+		Difficulty:    0.7,
+	}
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			wordID: previousState,
+		},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-21",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Mixed Review/Weak",
+		},
+		items: []domain.DailyLearningPoolItem{{
+			ID:            itemID,
+			PoolID:        poolID,
+			UserID:        userID,
+			WordID:        wordID,
+			Ordinal:       1,
+			ItemType:      domain.PoolItemTypeWeak,
+			ReviewMode:    domain.ReviewModeMultipleChoice,
+			Status:        domain.PoolItemStatusPending,
+			IsReview:      true,
+			BonusPractice: true,
+		}},
+	}
+	eventRepo := &captureEventRepo{}
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+
+	if err := service.SubmitReview(context.Background(), domain.User{ID: userID}, ReviewRequest{
+		PoolItemID:     itemID,
+		Rating:         domain.RatingEasy,
+		ModeUsed:       domain.ReviewModeMultipleChoice,
+		ResponseTimeMs: 1800,
+		ClientEventID:  "bonus-undo-1",
+	}); err != nil {
+		t.Fatalf("SubmitReview returned error: %v", err)
+	}
+	if err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID}); err != nil {
+		t.Fatalf("UndoLastAnswer returned error: %v", err)
+	}
+	restored := stateRepo.states[wordID]
+	if restored.WeaknessScore != previousState.WeaknessScore {
+		t.Fatalf("expected bonus weakness restored, got %.2f want %.2f", restored.WeaknessScore, previousState.WeaknessScore)
+	}
+	if restored.NextReviewAt == nil || !restored.NextReviewAt.Equal(*previousState.NextReviewAt) {
+		t.Fatalf("expected next review restored, got %#v", restored.NextReviewAt)
+	}
+}
+
+func TestUndoLastAnswerRejectsWhenNotLatestCompleted(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID1 := uuid.New()
+	wordID2 := uuid.New()
+	itemID1 := uuid.New()
+	itemID2 := uuid.New()
+	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
+	completedAt1 := now.Add(-2 * time.Minute)
+	completedAt2 := now.Add(-time.Minute)
+	previousState := domain.UserWordState{
+		UserID:          userID,
+		WordID:          wordID1,
+		Status:          domain.WordStatusReview,
+		IntervalSeconds: int((24 * time.Hour).Seconds()),
+		Stability:       1.0,
+		Difficulty:      0.6,
+	}
+
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			wordID1: previousState,
+		},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-21",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Technology",
+		},
+		items: []domain.DailyLearningPoolItem{
+			{ID: itemID1, PoolID: poolID, UserID: userID, WordID: wordID1, Ordinal: 1, ItemType: domain.PoolItemTypeReview, Status: domain.PoolItemStatusCompleted, IsReview: true, CompletedAt: &completedAt1},
+			{ID: itemID2, PoolID: poolID, UserID: userID, WordID: wordID2, Ordinal: 2, ItemType: domain.PoolItemTypeReview, Status: domain.PoolItemStatusCompleted, IsReview: true, CompletedAt: &completedAt2},
+		},
+	}
+	payload := domain.JSONMap{"rating": domain.RatingMedium}
+	appendUndoSnapshotPayload(payload, &previousState, true, nil)
+	eventRepo := &captureEventRepo{
+		events: []domain.LearningEvent{{
+			UserID:     userID,
+			WordID:     wordID1,
+			PoolItemID: &itemID1,
+			EventType:  domain.EventTypeReviewAnswer,
+			EventTime:  completedAt1,
+			Payload:    payload,
+		}},
+	}
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+
+	err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID1})
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected validation error for non-latest undo, got %v", err)
+	}
+}
+
+func TestUndoLastAnswerRejectsWhenDependentItemAlreadyCompleted(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 13, 0, 0, 0, time.UTC)
+
+	word := domain.Word{
+		ID:                wordID,
+		Word:              "policy",
+		NormalizedForm:    "policy",
+		CanonicalForm:     "policy",
+		Lemma:             "policy",
+		Level:             domain.CEFRB1,
+		Topic:             "Law/Government",
+		EnglishMeaning:    "official plan",
+		VietnameseMeaning: "chinh sach",
+	}
+	stateRepo := &replenishStateRepo{}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-21",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Law/Government",
+			NewCount:  1,
+		},
+		items: []domain.DailyLearningPoolItem{{
+			ID:                    itemID,
+			PoolID:                poolID,
+			UserID:                userID,
+			WordID:                wordID,
+			Ordinal:               1,
+			ItemType:              domain.PoolItemTypeNew,
+			Status:                domain.PoolItemStatusPending,
+			FirstExposureRequired: true,
+			Word:                  &word,
+		}},
+	}
+	eventRepo := &captureEventRepo{}
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil)
+
+	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
+		PoolItemID:     itemID,
+		Action:         domain.ExposureActionUnknown,
+		ResponseTimeMs: 1300,
+		ClientEventID:  "unknown-dependent-complete",
+	}); err != nil {
+		t.Fatalf("SubmitFirstExposure returned error: %v", err)
+	}
+	poolRepo.items[1].Status = domain.PoolItemStatusCompleted
+	completedAt := now.Add(time.Minute)
+	poolRepo.items[1].CompletedAt = &completedAt
+
+	err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID})
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected validation error when dependent item was already answered, got %v", err)
 	}
 }
