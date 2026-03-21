@@ -20,7 +20,7 @@ const poolItemSelect = `
 	SELECT i.id, i.pool_id, i.user_id, i.word_id, i.ordinal, i.item_type, i.review_mode, i.due_at, i.status, i.is_review,
 	       i.first_exposure_required, i.revealed_meaning, i.revealed_example, i.metadata, i.completed_at, i.created_at, i.updated_at,
 	       w.id, w.word, w.normalized_form, w.canonical_form, w.lemma, w.word_family, w.confusable_group_key, w.part_of_speech, w.level, w.topic,
-	       w.ipa, w.pronunciation_hint, w.vietnamese_meaning, w.english_meaning, w.example_sentence_1, w.example_sentence_2, w.source_provider, w.source_metadata,
+	       w.ipa, w.pronunciation_hint, w.vietnamese_meaning, w.english_meaning, w.example_sentence_1, w.example_sentence_2, w.common_rate, w.source_provider, w.source_metadata,
 	       w.created_at, w.updated_at
 	FROM daily_learning_pool_items i
 	JOIN words w ON w.id = i.word_id

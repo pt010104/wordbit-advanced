@@ -235,10 +235,10 @@ Requirements:
 - Prefer practical academic or real-world vocabulary
 - Return strict JSON only
 
-Output format:
-{
-  "words": [
-    {
+	Output format:
+	{
+	  "words": [
+	    {
       "word": "string",
       "canonical_form": "string",
       "lemma": "string",
@@ -249,16 +249,22 @@ Output format:
       "topic": "string",
       "ipa": "string",
       "pronunciation_hint": "string",
-      "vietnamese_meaning": "string",
-      "english_meaning": "string",
-      "example_sentence_1": "string",
-      "example_sentence_2": "string"
-    }
-  ]
-}
+	      "vietnamese_meaning": "string",
+	      "english_meaning": "string",
+	      "example_sentence_1": "string",
+	      "example_sentence_2": "string",
+	      "common_rate": "common|formal|rare"
+	    }
+	  ]
+	}
 
-Exclude normalized words: %s
-Exclude lemmas: %s
+	Common-rate rubric:
+	- common: everyday or broadly useful vocabulary that appears often in normal speech and writing
+	- formal: more academic, professional, or formal-register vocabulary that is still useful but less everyday
+	- rare: uncommon or lower-frequency vocabulary that an advanced learner may still encounter
+
+	Exclude normalized words: %s
+	Exclude lemmas: %s
 Exclude confusable groups: %s
 `, input.RequestedCount, input.CEFRLevel, input.Topic, strings.Join(input.ExcludeWords, ", "), strings.Join(input.ExcludeLemmas, ", "), strings.Join(input.ExcludeGroupKeys, ", "))
 }

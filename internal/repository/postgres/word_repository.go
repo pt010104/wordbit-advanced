@@ -18,7 +18,7 @@ type WordRepository struct {
 func (r *WordRepository) GetByID(ctx context.Context, wordID uuid.UUID) (domain.Word, error) {
 	return scanWord(r.pool.QueryRow(ctx, `
 		SELECT id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, source_provider, source_metadata, created_at, updated_at
+		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
 		FROM words
 		WHERE id = $1
 	`, wordID))
@@ -29,17 +29,17 @@ func (r *WordRepository) UpsertWord(ctx context.Context, candidate domain.Candid
 		candidate.NormalizedForm = candidate.Word
 	}
 	query := `
-		INSERT INTO words (
-			word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level,
-			topic, ipa, pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2,
-			source_provider, source_metadata
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8,
-			$9, $10, $11, $12, $13, $14, $15,
-			$16, $17::jsonb
-		)
-		ON CONFLICT (normalized_form, part_of_speech) DO UPDATE SET
-			word = EXCLUDED.word,
+			INSERT INTO words (
+				word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level,
+				topic, ipa, pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2,
+				common_rate, source_provider, source_metadata
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8,
+				$9, $10, $11, $12, $13, $14, $15,
+				$16, $17, $18::jsonb
+			)
+			ON CONFLICT (normalized_form, part_of_speech) DO UPDATE SET
+				word = EXCLUDED.word,
 			canonical_form = EXCLUDED.canonical_form,
 			lemma = EXCLUDED.lemma,
 			word_family = EXCLUDED.word_family,
@@ -48,14 +48,15 @@ func (r *WordRepository) UpsertWord(ctx context.Context, candidate domain.Candid
 			topic = EXCLUDED.topic,
 			ipa = EXCLUDED.ipa,
 			pronunciation_hint = EXCLUDED.pronunciation_hint,
-			vietnamese_meaning = EXCLUDED.vietnamese_meaning,
-			english_meaning = EXCLUDED.english_meaning,
-			example_sentence_1 = EXCLUDED.example_sentence_1,
-			example_sentence_2 = EXCLUDED.example_sentence_2,
-			source_provider = EXCLUDED.source_provider,
-			source_metadata = EXCLUDED.source_metadata
-		RETURNING id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-		          pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, source_provider, source_metadata, created_at, updated_at
+				vietnamese_meaning = EXCLUDED.vietnamese_meaning,
+				english_meaning = EXCLUDED.english_meaning,
+				example_sentence_1 = EXCLUDED.example_sentence_1,
+				example_sentence_2 = EXCLUDED.example_sentence_2,
+				common_rate = COALESCE(EXCLUDED.common_rate, words.common_rate),
+				source_provider = EXCLUDED.source_provider,
+				source_metadata = EXCLUDED.source_metadata
+			RETURNING id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
+			          pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
 	`
 	return scanWord(r.pool.QueryRow(ctx, query,
 		candidate.Word,
@@ -73,6 +74,7 @@ func (r *WordRepository) UpsertWord(ctx context.Context, candidate domain.Candid
 		candidate.EnglishMeaning,
 		candidate.ExampleSentence1,
 		candidate.ExampleSentence2,
+		nullableCommonRateValue(candidate.CommonRate),
 		candidate.SourceProvider,
 		fromJSONMap(candidate.SourceMetadata),
 	))
@@ -99,11 +101,12 @@ func (r *WordRepository) UpdateWord(ctx context.Context, wordID uuid.UUID, candi
 		    english_meaning = $14,
 		    example_sentence_1 = $15,
 		    example_sentence_2 = $16,
-		    source_provider = $17,
-		    source_metadata = $18::jsonb
+		    common_rate = COALESCE($17, common_rate),
+		    source_provider = $18,
+		    source_metadata = $19::jsonb
 		WHERE id = $1
 		RETURNING id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-		          pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, source_provider, source_metadata, created_at, updated_at
+		          pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
 	`
 	return scanWord(r.pool.QueryRow(ctx, query,
 		wordID,
@@ -122,6 +125,7 @@ func (r *WordRepository) UpdateWord(ctx context.Context, wordID uuid.UUID, candi
 		candidate.EnglishMeaning,
 		candidate.ExampleSentence1,
 		candidate.ExampleSentence2,
+		nullableCommonRateValue(candidate.CommonRate),
 		candidate.SourceProvider,
 		fromJSONMap(candidate.SourceMetadata),
 	))
@@ -156,10 +160,10 @@ func (r *WordRepository) ListBankWords(ctx context.Context, userID uuid.UUID, le
 		return []domain.Word{}, nil
 	}
 	query := `
-		SELECT id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, source_provider, source_metadata, created_at, updated_at
-		FROM words w
-		WHERE w.level = $2
+			SELECT id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
+			       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
+			FROM words w
+			WHERE w.level = $2
 		  AND w.topic = $3
 		  AND NOT EXISTS (
 			SELECT 1
@@ -199,7 +203,7 @@ func (r *WordRepository) ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([
 	}
 	query := fmt.Sprintf(`
 		SELECT id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, source_provider, source_metadata, created_at, updated_at
+		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
 		FROM words
 		WHERE id IN (%s)
 	`, joinPlaceholders(1, len(ids)))

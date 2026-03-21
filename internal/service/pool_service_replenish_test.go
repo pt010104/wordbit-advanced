@@ -53,6 +53,7 @@ func (r *replenishWordRepo) UpsertWord(ctx context.Context, candidate domain.Can
 		Topic:             candidate.Topic,
 		EnglishMeaning:    candidate.EnglishMeaning,
 		VietnameseMeaning: candidate.VietnameseMeaning,
+		CommonRate:        candidate.CommonRate,
 	}
 	r.words[word.ID] = word
 	r.bankWordIDs = append(r.bankWordIDs, word.ID)
@@ -72,6 +73,7 @@ func (r *replenishWordRepo) UpdateWord(ctx context.Context, wordID uuid.UUID, ca
 	word.Topic = candidate.Topic
 	word.EnglishMeaning = candidate.EnglishMeaning
 	word.VietnameseMeaning = candidate.VietnameseMeaning
+	word.CommonRate = candidate.CommonRate
 	r.words[wordID] = word
 	return word, nil
 }

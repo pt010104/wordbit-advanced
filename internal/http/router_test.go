@@ -92,6 +92,7 @@ func (m *memoryWordRepo) UpsertWord(ctx context.Context, candidate domain.Candid
 		Topic:              candidate.Topic,
 		VietnameseMeaning:  candidate.VietnameseMeaning,
 		EnglishMeaning:     candidate.EnglishMeaning,
+		CommonRate:         candidate.CommonRate,
 		CreatedAt:          time.Now().UTC(),
 		UpdatedAt:          time.Now().UTC(),
 	}
@@ -118,6 +119,7 @@ func (m *memoryWordRepo) UpdateWord(ctx context.Context, wordID uuid.UUID, candi
 	word.EnglishMeaning = candidate.EnglishMeaning
 	word.ExampleSentence1 = candidate.ExampleSentence1
 	word.ExampleSentence2 = candidate.ExampleSentence2
+	word.CommonRate = candidate.CommonRate
 	word.UpdatedAt = time.Now().UTC()
 	m.byID[wordID] = word
 	return word, nil
@@ -287,6 +289,7 @@ func (g *staticGenerator) GenerateCandidates(ctx context.Context, input service.
 	}
 	candidates := make([]domain.CandidateWord, 0, min(input.RequestedCount, len(base)))
 	for _, item := range base {
+		rate := domain.WordCommonRateCommon
 		candidates = append(candidates, domain.CandidateWord{
 			Word:              item.word,
 			CanonicalForm:     item.word,
@@ -295,6 +298,7 @@ func (g *staticGenerator) GenerateCandidates(ctx context.Context, input service.
 			Topic:             input.Topic,
 			EnglishMeaning:    item.en,
 			VietnameseMeaning: item.vi,
+			CommonRate:        &rate,
 		})
 		if len(candidates) >= input.RequestedCount {
 			break
@@ -357,13 +361,20 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 		Pool struct {
 			NewCount int `json:"new_count"`
 		} `json:"pool"`
-		Items []json.RawMessage `json:"items"`
+		Items []struct {
+			Word struct {
+				CommonRate *string `json:"common_rate"`
+			} `json:"word"`
+		} `json:"items"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode daily pool response: %v", err)
 	}
 	if payload.Pool.NewCount == 0 || len(payload.Items) == 0 {
 		t.Fatalf("expected generated new words in pool, got %+v", payload.Pool)
+	}
+	if payload.Items[0].Word.CommonRate == nil || *payload.Items[0].Word.CommonRate != "common" {
+		t.Fatalf("expected generated word common_rate=common, got %+v", payload.Items[0].Word.CommonRate)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/me/daily-pool/more-words", bytes.NewBufferString(`{"topic":"Society"}`))

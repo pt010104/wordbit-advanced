@@ -138,26 +138,27 @@ type UserSettings struct {
 }
 
 type Word struct {
-	ID                 uuid.UUID `json:"id"`
-	Word               string    `json:"word"`
-	NormalizedForm     string    `json:"normalized_form"`
-	CanonicalForm      string    `json:"canonical_form"`
-	Lemma              string    `json:"lemma"`
-	WordFamily         string    `json:"word_family,omitempty"`
-	ConfusableGroupKey string    `json:"confusable_group_key,omitempty"`
-	PartOfSpeech       string    `json:"part_of_speech,omitempty"`
-	Level              CEFRLevel `json:"level"`
-	Topic              string    `json:"topic"`
-	IPA                string    `json:"ipa,omitempty"`
-	PronunciationHint  string    `json:"pronunciation_hint,omitempty"`
-	VietnameseMeaning  string    `json:"vietnamese_meaning"`
-	EnglishMeaning     string    `json:"english_meaning"`
-	ExampleSentence1   string    `json:"example_sentence_1,omitempty"`
-	ExampleSentence2   string    `json:"example_sentence_2,omitempty"`
-	SourceProvider     string    `json:"source_provider,omitempty"`
-	SourceMetadata     JSONMap   `json:"source_metadata,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                 uuid.UUID       `json:"id"`
+	Word               string          `json:"word"`
+	NormalizedForm     string          `json:"normalized_form"`
+	CanonicalForm      string          `json:"canonical_form"`
+	Lemma              string          `json:"lemma"`
+	WordFamily         string          `json:"word_family,omitempty"`
+	ConfusableGroupKey string          `json:"confusable_group_key,omitempty"`
+	PartOfSpeech       string          `json:"part_of_speech,omitempty"`
+	Level              CEFRLevel       `json:"level"`
+	Topic              string          `json:"topic"`
+	IPA                string          `json:"ipa,omitempty"`
+	PronunciationHint  string          `json:"pronunciation_hint,omitempty"`
+	VietnameseMeaning  string          `json:"vietnamese_meaning"`
+	EnglishMeaning     string          `json:"english_meaning"`
+	ExampleSentence1   string          `json:"example_sentence_1,omitempty"`
+	ExampleSentence2   string          `json:"example_sentence_2,omitempty"`
+	CommonRate         *WordCommonRate `json:"common_rate,omitempty"`
+	SourceProvider     string          `json:"source_provider,omitempty"`
+	SourceMetadata     JSONMap         `json:"source_metadata,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 type UserWordState struct {
@@ -260,25 +261,26 @@ type LLMGenerationRun struct {
 }
 
 type CandidateWord struct {
-	Word               string    `json:"word"`
-	CanonicalForm      string    `json:"canonical_form"`
-	Lemma              string    `json:"lemma"`
-	WordFamily         string    `json:"word_family,omitempty"`
-	ConfusableGroupKey string    `json:"confusable_group_key,omitempty"`
-	PartOfSpeech       string    `json:"part_of_speech,omitempty"`
-	Level              CEFRLevel `json:"level"`
-	Topic              string    `json:"topic"`
-	IPA                string    `json:"ipa,omitempty"`
-	PronunciationHint  string    `json:"pronunciation_hint,omitempty"`
-	VietnameseMeaning  string    `json:"vietnamese_meaning"`
-	EnglishMeaning     string    `json:"english_meaning"`
-	ExampleSentence1   string    `json:"example_sentence_1,omitempty"`
-	ExampleSentence2   string    `json:"example_sentence_2,omitempty"`
-	SourceProvider     string    `json:"source_provider,omitempty"`
-	SourceMetadata     JSONMap   `json:"source_metadata,omitempty"`
-	NormalizedForm     string    `json:"normalized_form"`
-	RankingScore       float64   `json:"ranking_score"`
-	ValidationIssues   []string  `json:"validation_issues,omitempty"`
+	Word               string          `json:"word"`
+	CanonicalForm      string          `json:"canonical_form"`
+	Lemma              string          `json:"lemma"`
+	WordFamily         string          `json:"word_family,omitempty"`
+	ConfusableGroupKey string          `json:"confusable_group_key,omitempty"`
+	PartOfSpeech       string          `json:"part_of_speech,omitempty"`
+	Level              CEFRLevel       `json:"level"`
+	Topic              string          `json:"topic"`
+	IPA                string          `json:"ipa,omitempty"`
+	PronunciationHint  string          `json:"pronunciation_hint,omitempty"`
+	VietnameseMeaning  string          `json:"vietnamese_meaning"`
+	EnglishMeaning     string          `json:"english_meaning"`
+	ExampleSentence1   string          `json:"example_sentence_1,omitempty"`
+	ExampleSentence2   string          `json:"example_sentence_2,omitempty"`
+	CommonRate         *WordCommonRate `json:"common_rate,omitempty"`
+	SourceProvider     string          `json:"source_provider,omitempty"`
+	SourceMetadata     JSONMap         `json:"source_metadata,omitempty"`
+	NormalizedForm     string          `json:"normalized_form"`
+	RankingScore       float64         `json:"ranking_score"`
+	ValidationIssues   []string        `json:"validation_issues,omitempty"`
 }
 
 type PoolGenerationCounts struct {

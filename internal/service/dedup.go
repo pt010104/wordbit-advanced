@@ -37,6 +37,11 @@ func ValidateCandidate(candidate domain.CandidateWord) []string {
 	if candidate.NormalizedForm == "" {
 		issues = append(issues, "empty normalized form")
 	}
+	if candidate.CommonRate != nil {
+		if _, ok := domain.ParseWordCommonRate(string(*candidate.CommonRate)); !ok {
+			issues = append(issues, "invalid common rate")
+		}
+	}
 	return issues
 }
 
@@ -90,6 +95,14 @@ func FilterCandidates(
 	localLemmas := map[string]struct{}{}
 
 	for _, candidate := range candidates {
+		if candidate.CommonRate != nil {
+			trimmed := strings.TrimSpace(string(*candidate.CommonRate))
+			if trimmed == "" {
+				candidate.CommonRate = nil
+			} else if normalized, ok := domain.ParseWordCommonRate(trimmed); ok {
+				candidate.CommonRate = &normalized
+			}
+		}
 		reasons := ValidateCandidate(candidate)
 		normalized := NormalizeWord(candidate.Word)
 		candidate.NormalizedForm = normalized

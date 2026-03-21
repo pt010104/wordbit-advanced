@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,6 +110,21 @@ func joinPlaceholders(offset int, count int) string {
 	return strings.Join(parts, ", ")
 }
 
+func nullableCommonRateValue(value *domain.WordCommonRate) any {
+	if value == nil {
+		return nil
+	}
+	return string(*value)
+}
+
+func nullableCommonRatePointer(value sql.NullString) *domain.WordCommonRate {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return nil
+	}
+	rate := domain.WordCommonRate(value.String)
+	return &rate
+}
+
 func scanUser(row pgx.Row) (domain.User, error) {
 	var user domain.User
 	err := row.Scan(
@@ -140,6 +156,7 @@ func scanSettings(row pgx.Row) (domain.UserSettings, error) {
 
 func scanWord(row pgx.Row) (domain.Word, error) {
 	var word domain.Word
+	var commonRate sql.NullString
 	var metadata []byte
 	err := row.Scan(
 		&word.ID,
@@ -158,11 +175,13 @@ func scanWord(row pgx.Row) (domain.Word, error) {
 		&word.EnglishMeaning,
 		&word.ExampleSentence1,
 		&word.ExampleSentence2,
+		&commonRate,
 		&word.SourceProvider,
 		&metadata,
 		&word.CreatedAt,
 		&word.UpdatedAt,
 	)
+	word.CommonRate = nullableCommonRatePointer(commonRate)
 	word.SourceMetadata = toJSONMap(metadata)
 	return word, mapError(err)
 }
@@ -228,6 +247,7 @@ func scanPoolItem(row pgx.Row) (domain.DailyLearningPoolItem, error) {
 	var item domain.DailyLearningPoolItem
 	var metadata []byte
 	var word domain.Word
+	var commonRate sql.NullString
 	var wordMetadata []byte
 	err := row.Scan(
 		&item.ID,
@@ -263,6 +283,7 @@ func scanPoolItem(row pgx.Row) (domain.DailyLearningPoolItem, error) {
 		&word.EnglishMeaning,
 		&word.ExampleSentence1,
 		&word.ExampleSentence2,
+		&commonRate,
 		&word.SourceProvider,
 		&wordMetadata,
 		&word.CreatedAt,
@@ -272,6 +293,7 @@ func scanPoolItem(row pgx.Row) (domain.DailyLearningPoolItem, error) {
 	if rawBonus, ok := item.Metadata["bonus_practice"].(bool); ok {
 		item.BonusPractice = rawBonus
 	}
+	word.CommonRate = nullableCommonRatePointer(commonRate)
 	word.SourceMetadata = toJSONMap(wordMetadata)
 	if word.ID != uuid.Nil {
 		item.Word = &word
@@ -333,6 +355,7 @@ func scanRun(row pgx.Row) (domain.LLMGenerationRun, error) {
 
 func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {
 	var entry domain.DictionaryEntry
+	var commonRate sql.NullString
 	var metadata []byte
 	var listStatus string
 	err := row.Scan(
@@ -352,6 +375,7 @@ func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {
 		&entry.Word.EnglishMeaning,
 		&entry.Word.ExampleSentence1,
 		&entry.Word.ExampleSentence2,
+		&commonRate,
 		&entry.Word.SourceProvider,
 		&metadata,
 		&entry.Word.CreatedAt,
@@ -366,6 +390,7 @@ func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {
 		&entry.WeaknessScore,
 		&entry.UpdatedAt,
 	)
+	entry.Word.CommonRate = nullableCommonRatePointer(commonRate)
 	entry.Word.SourceMetadata = toJSONMap(metadata)
 	entry.ListStatus = domain.DictionaryListStatus(listStatus)
 	return entry, mapError(err)
