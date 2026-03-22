@@ -7,6 +7,15 @@ import (
 	"wordbit-advanced-app/backend/internal/domain"
 )
 
+const (
+	transitionMode2DifficultyThreshold  = 0.55
+	transitionMode2WeaknessThreshold    = 0.9
+	standardMode2DifficultyThreshold    = 0.70
+	standardMode2WeaknessThreshold      = 1.4
+	standardMode2WrongCountThreshold    = 2
+	standardMode2MeaningRevealThreshold = 2
+)
+
 func ComputeWeakSlots(dailyLimit int) int {
 	if dailyLimit <= 0 {
 		return 0
@@ -26,20 +35,39 @@ func ComputeNewWordQuota(dailyLimit int, dueReview int, shortTerm int, weakSlots
 }
 
 func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) domain.ReviewMode {
-	if state.LearningStage > 0 || state.Stability < 0.9 {
+	switch state.LearningStage {
+	case 1, 2:
 		return domain.ReviewModeReveal
+	case 3:
+		if state.Difficulty >= transitionMode2DifficultyThreshold ||
+			state.WeaknessScore >= transitionMode2WeaknessThreshold ||
+			state.LastRating == domain.RatingHard {
+			return domain.ReviewModeMultipleChoice
+		}
+		if memoryCauseBiasEnabled && state.LastMemoryCause == domain.MemoryCauseMixedUpWord {
+			return domain.ReviewModeMultipleChoice
+		}
+		return domain.ReviewModeFillBlank
+	default:
+		if state.LearningStage > 0 {
+			return domain.ReviewModeReveal
+		}
 	}
+
 	if memoryCauseBiasEnabled {
 		switch state.LastMemoryCause {
 		case domain.MemoryCauseForgotMeaning:
 			return domain.ReviewModeReveal
-		case domain.MemoryCauseSpellingIssue:
-			return domain.ReviewModeFillBlank
 		case domain.MemoryCauseMixedUpWord:
 			return domain.ReviewModeMultipleChoice
+		case domain.MemoryCauseSpellingIssue:
+			return domain.ReviewModeFillBlank
 		}
 	}
-	if state.Difficulty >= 0.65 || state.WeaknessScore >= 1.2 {
+	if state.Difficulty >= standardMode2DifficultyThreshold ||
+		state.WeaknessScore >= standardMode2WeaknessThreshold ||
+		state.WrongCount >= standardMode2WrongCountThreshold ||
+		state.RevealMeaningCount >= standardMode2MeaningRevealThreshold {
 		return domain.ReviewModeMultipleChoice
 	}
 	return domain.ReviewModeFillBlank

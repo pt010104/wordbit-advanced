@@ -99,35 +99,119 @@ func TestApplyReviewOutcomeUsesShorterStandardIntervals(t *testing.T) {
 func TestSelectReviewMode(t *testing.T) {
 	t.Parallel()
 
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 1, Stability: 0.7}, true); mode != domain.ReviewModeReveal {
-		t.Fatalf("expected reveal mode, got %s", mode)
+	tests := []struct {
+		name                   string
+		state                  domain.UserWordState
+		memoryCauseBiasEnabled bool
+		want                   domain.ReviewMode
+	}{
+		{
+			name:                   "learning stage 1 stays reveal",
+			state:                  domain.UserWordState{LearningStage: 1, Difficulty: 0.9, WeaknessScore: 2.5},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeReveal,
+		},
+		{
+			name:                   "learning stage 2 stays reveal",
+			state:                  domain.UserWordState{LearningStage: 2, Difficulty: 0.9, WeaknessScore: 2.5},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeReveal,
+		},
+		{
+			name:                   "transition stage low weakness uses fill blank",
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeFillBlank,
+		},
+		{
+			name:                   "transition stage higher difficulty uses multiple choice",
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.55, WeaknessScore: 0.2},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeMultipleChoice,
+		},
+		{
+			name:                   "transition stage harder previous answer uses multiple choice",
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastRating: domain.RatingHard},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeMultipleChoice,
+		},
+		{
+			name:                   "transition stage mixed up cause uses multiple choice when enabled",
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeMultipleChoice,
+		},
+		{
+			name:                   "transition stage ignores mixed up cause when bias disabled",
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord},
+			memoryCauseBiasEnabled: false,
+			want:                   domain.ReviewModeFillBlank,
+		},
+		{
+			name:                   "standard review forgot meaning returns reveal",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, LastMemoryCause: domain.MemoryCauseForgotMeaning},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeReveal,
+		},
+		{
+			name:                   "standard review mixed up cause returns multiple choice",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, LastMemoryCause: domain.MemoryCauseMixedUpWord},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeMultipleChoice,
+		},
+		{
+			name:                   "standard review spelling issue returns fill blank",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.8, LastMemoryCause: domain.MemoryCauseSpellingIssue},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeFillBlank,
+		},
+		{
+			name:                   "standard review high difficulty returns multiple choice",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.70, WeaknessScore: 0.2},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeMultipleChoice,
+		},
+		{
+			name:                   "standard review high weakness returns multiple choice",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 1.4},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeMultipleChoice,
+		},
+		{
+			name:                   "standard review wrong history returns multiple choice",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, WrongCount: 2},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeMultipleChoice,
+		},
+		{
+			name:                   "standard review meaning reveal history returns multiple choice",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, RevealMeaningCount: 2},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeMultipleChoice,
+		},
+		{
+			name:                   "standard review clean history returns fill blank",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2},
+			memoryCauseBiasEnabled: true,
+			want:                   domain.ReviewModeFillBlank,
+		},
+		{
+			name:                   "standard review ignores mixed up cause when bias disabled",
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord},
+			memoryCauseBiasEnabled: false,
+			want:                   domain.ReviewModeFillBlank,
+		},
 	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 0.85, Difficulty: 0.8}, true); mode != domain.ReviewModeReveal {
-		t.Fatalf("expected low-stability review to stay in reveal mode, got %s", mode)
-	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.8}, true); mode != domain.ReviewModeMultipleChoice {
-		t.Fatalf("expected multiple choice mode, got %s", mode)
-	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 1.0, Difficulty: 0.68}, true); mode != domain.ReviewModeMultipleChoice {
-		t.Fatalf("expected stable review with moderate difficulty to use multiple choice, got %s", mode)
-	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 1.0, Difficulty: 0.35, WeaknessScore: 0.6}, true); mode != domain.ReviewModeFillBlank {
-		t.Fatalf("expected stable low-weakness review to use fill-in-blank, got %s", mode)
-	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 3.0, Difficulty: 0.3}, true); mode != domain.ReviewModeFillBlank {
-		t.Fatalf("expected fill-in-blank mode, got %s", mode)
-	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.8, LastMemoryCause: domain.MemoryCauseSpellingIssue}, true); mode != domain.ReviewModeFillBlank {
-		t.Fatalf("expected spelling issue to bias toward fill-in-blank, got %s", mode)
-	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.3, LastMemoryCause: domain.MemoryCauseMixedUpWord}, true); mode != domain.ReviewModeMultipleChoice {
-		t.Fatalf("expected mixed up cause to bias toward multiple choice, got %s", mode)
-	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.3, LastMemoryCause: domain.MemoryCauseForgotMeaning}, true); mode != domain.ReviewModeReveal {
-		t.Fatalf("expected forgot meaning cause to bias toward reveal, got %s", mode)
-	}
-	if mode := SelectReviewMode(domain.UserWordState{LearningStage: 0, Stability: 2.0, Difficulty: 0.3, LastMemoryCause: domain.MemoryCauseMixedUpWord}, false); mode != domain.ReviewModeFillBlank {
-		t.Fatalf("expected bias-disabled mode selection to ignore memory cause, got %s", mode)
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if mode := SelectReviewMode(tc.state, tc.memoryCauseBiasEnabled); mode != tc.want {
+				t.Fatalf("expected %s, got %s", tc.want, mode)
+			}
+		})
 	}
 }
 
