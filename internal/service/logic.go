@@ -39,13 +39,13 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 	case 1, 2:
 		return domain.ReviewModeReveal
 	case 3:
+		if memoryCauseBiasEnabled && state.LastMemoryCause == domain.MemoryCauseMixedUpWord {
+			return domain.ReviewModeMultipleChoice
+		}
 		if state.Difficulty >= transitionMode2DifficultyThreshold ||
 			state.WeaknessScore >= transitionMode2WeaknessThreshold ||
 			state.LastRating == domain.RatingHard {
-			return domain.ReviewModeMultipleChoice
-		}
-		if memoryCauseBiasEnabled && state.LastMemoryCause == domain.MemoryCauseMixedUpWord {
-			return domain.ReviewModeMultipleChoice
+			return alternatingMode2Reveal(state)
 		}
 		return domain.ReviewModeFillBlank
 	default:
@@ -64,13 +64,22 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 			return domain.ReviewModeFillBlank
 		}
 	}
-	if state.Difficulty >= standardMode2DifficultyThreshold ||
-		state.WeaknessScore >= standardMode2WeaknessThreshold ||
-		state.WrongCount >= standardMode2WrongCountThreshold ||
+	if state.WrongCount >= standardMode2WrongCountThreshold ||
 		state.RevealMeaningCount >= standardMode2MeaningRevealThreshold {
 		return domain.ReviewModeMultipleChoice
 	}
+	if state.Difficulty >= standardMode2DifficultyThreshold ||
+		state.WeaknessScore >= standardMode2WeaknessThreshold {
+		return alternatingMode2Reveal(state)
+	}
 	return domain.ReviewModeFillBlank
+}
+
+func alternatingMode2Reveal(state domain.UserWordState) domain.ReviewMode {
+	if state.LastMode == domain.ReviewModeMultipleChoice {
+		return domain.ReviewModeReveal
+	}
+	return domain.ReviewModeMultipleChoice
 }
 
 func UpdateAvgResponseTime(current int64, count int, value int) int64 {
