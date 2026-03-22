@@ -38,7 +38,7 @@ func TestBuildReviewItemsAppliesProgressiveModeSelection(t *testing.T) {
 			Status:             domain.WordStatusReview,
 			Difficulty:         0.3,
 			WeaknessScore:      0.2,
-			RevealMeaningCount: 2,
+			RevealMeaningCount: 3,
 		},
 		{
 			UserID:          userID,

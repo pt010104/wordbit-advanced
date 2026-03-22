@@ -8,12 +8,12 @@ import (
 )
 
 const (
-	transitionMode2DifficultyThreshold  = 0.55
-	transitionMode2WeaknessThreshold    = 0.9
-	standardMode2DifficultyThreshold    = 0.70
-	standardMode2WeaknessThreshold      = 1.4
+	transitionMode2DifficultyThreshold  = 0.60
+	transitionMode2WeaknessThreshold    = 1.05
+	standardMode2DifficultyThreshold    = 0.75
+	standardMode2WeaknessThreshold      = 1.6
 	standardMode2WrongCountThreshold    = 2
-	standardMode2MeaningRevealThreshold = 2
+	standardMode2MeaningRevealThreshold = 3
 )
 
 func ComputeWeakSlots(dailyLimit int) int {
