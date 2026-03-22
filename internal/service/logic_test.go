@@ -124,10 +124,10 @@ func TestSelectReviewMode(t *testing.T) {
 			want:                   domain.ReviewModeFillBlank,
 		},
 		{
-			name:                   "transition stage previous threshold now stays fill blank",
+			name:                   "transition stage threshold now uses multiple choice",
 			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.60, WeaknessScore: 1.05},
 			memoryCauseBiasEnabled: true,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "transition stage higher difficulty uses multiple choice",
@@ -184,10 +184,10 @@ func TestSelectReviewMode(t *testing.T) {
 			want:                   domain.ReviewModeFillBlank,
 		},
 		{
-			name:                   "standard review previous difficulty threshold now stays fill blank",
+			name:                   "standard review difficulty threshold uses multiple choice",
 			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.75, WeaknessScore: 0.2},
 			memoryCauseBiasEnabled: true,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review high difficulty returns multiple choice",
@@ -196,10 +196,10 @@ func TestSelectReviewMode(t *testing.T) {
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
-			name:                   "standard review previous weakness threshold now stays fill blank",
+			name:                   "standard review weakness threshold uses multiple choice",
 			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 1.6},
 			memoryCauseBiasEnabled: true,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review high weakness returns multiple choice",
@@ -220,10 +220,10 @@ func TestSelectReviewMode(t *testing.T) {
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
-			name:                   "standard review two meaning reveals now stay fill blank",
+			name:                   "standard review meaning reveal threshold uses multiple choice",
 			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, RevealMeaningCount: 3},
 			memoryCauseBiasEnabled: true,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review meaning reveal history returns multiple choice",

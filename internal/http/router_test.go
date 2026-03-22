@@ -157,7 +157,9 @@ func (m *memoryWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([
 	return words, nil
 }
 
-type memoryStateRepo struct{}
+type memoryStateRepo struct {
+	weakCandidates []domain.UserWordState
+}
 
 func (m *memoryStateRepo) Get(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) (domain.UserWordState, error) {
 	return domain.UserWordState{}, domain.ErrNotFound
@@ -166,7 +168,10 @@ func (m *memoryStateRepo) ListDueWithinWindow(ctx context.Context, userID uuid.U
 	return []domain.UserWordState{}, nil
 }
 func (m *memoryStateRepo) ListWeakCandidates(ctx context.Context, userID uuid.UUID, excludeWordIDs []uuid.UUID, limit int) ([]domain.UserWordState, error) {
-	return []domain.UserWordState{}, nil
+	if limit <= 0 || limit >= len(m.weakCandidates) {
+		return append([]domain.UserWordState(nil), m.weakCandidates...), nil
+	}
+	return append([]domain.UserWordState(nil), m.weakCandidates[:limit]...), nil
 }
 func (m *memoryStateRepo) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
 	return []domain.UserWordState{}, nil
@@ -266,8 +271,70 @@ func (m *memoryEventRepo) ListRecentByPoolItem(ctx context.Context, itemID uuid.
 type memoryLLMRepo struct{}
 
 func (m *memoryLLMRepo) Insert(ctx context.Context, run domain.LLMGenerationRun) error { return nil }
+func (m *memoryLLMRepo) InsertReturning(ctx context.Context, run domain.LLMGenerationRun) (domain.LLMGenerationRun, error) {
+	if run.ID == uuid.Nil {
+		run.ID = uuid.New()
+	}
+	return run, nil
+}
+func (m *memoryLLMRepo) CountByUserLocalDateAndPrompt(ctx context.Context, userID uuid.UUID, localDate string, prompt string) (int, error) {
+	return 0, nil
+}
 func (m *memoryLLMRepo) ListRecentByUser(ctx context.Context, userID uuid.UUID, limit int) ([]domain.LLMGenerationRun, error) {
 	return nil, nil
+}
+
+type memoryExercisePackRepo struct {
+	byCluster map[string]domain.ContextExercisePack
+}
+
+func (m *memoryExercisePackRepo) GetByClusterHash(ctx context.Context, userID uuid.UUID, localDate string, clusterHash string, packType domain.ExercisePackType) (domain.ContextExercisePack, error) {
+	pack, ok := m.byCluster[userID.String()+"|"+localDate+"|"+clusterHash]
+	if !ok {
+		return domain.ContextExercisePack{}, domain.ErrNotFound
+	}
+	return pack, nil
+}
+
+func (m *memoryExercisePackRepo) GetLatestReadyByLocalDate(ctx context.Context, userID uuid.UUID, localDate string, packType domain.ExercisePackType) (domain.ContextExercisePack, error) {
+	return domain.ContextExercisePack{}, domain.ErrNotFound
+}
+
+func (m *memoryExercisePackRepo) Create(ctx context.Context, pack domain.ContextExercisePack) (domain.ContextExercisePack, error) {
+	if m.byCluster == nil {
+		m.byCluster = map[string]domain.ContextExercisePack{}
+	}
+	m.byCluster[pack.UserID.String()+"|"+pack.LocalDate+"|"+pack.ClusterHash] = pack
+	return pack, nil
+}
+
+type staticExerciseGenerator struct{}
+
+func (g *staticExerciseGenerator) GenerateContextExercisePack(ctx context.Context, input service.ExercisePackGenerationInput) (domain.ContextExercisePayload, string, error) {
+	clusterWords := make([]string, 0, len(input.ClusterWords))
+	questions := make([]domain.ContextExerciseQuestion, 0, len(input.ClusterWords))
+	for _, word := range input.ClusterWords {
+		clusterWords = append(clusterWords, word.Word)
+		questions = append(questions, domain.ContextExerciseQuestion{
+			ID:          "q-" + word.NormalizedForm,
+			Type:        domain.ExerciseQuestionTypeBestFit,
+			TargetWord:  word.Word,
+			Prompt:      "Choose the best word for " + word.Word,
+			Options:     []string{word.Word, "alpha", "beta", "gamma"},
+			Answer:      word.Word,
+			Explanation: word.Word + " is the correct answer.",
+		})
+	}
+	return domain.ContextExercisePayload{
+		Topic:        input.Topic,
+		CEFRLevel:    input.CEFRLevel,
+		PackType:     domain.ExercisePackTypeContextClusterChallenge,
+		ClusterWords: clusterWords,
+		Title:        input.Topic + " Challenge",
+		Passage:      "A coherent passage for the exercise pack.",
+		Questions:    questions,
+		SummaryTip:   "Review the cluster in one scenario.",
+	}, "{}", nil
 }
 
 type staticGenerator struct{}
@@ -331,9 +398,10 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
+	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -422,14 +490,122 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &failingGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
+	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/daily-pool", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 	if resp.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 for empty initial pool generation, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestExerciseStartReturnsReadyPack(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	userRepo := &memoryUserRepo{}
+	settingsRepo := &memorySettingsRepo{}
+	wordRepo := &memoryWordRepo{byID: map[uuid.UUID]domain.Word{}}
+	stateRepo := &memoryStateRepo{}
+	poolRepo := &memoryPoolRepo{}
+	eventRepo := &memoryEventRepo{}
+	llmRepo := &memoryLLMRepo{}
+	clock := service.RealClock{}
+
+	user, _ := userRepo.GetOrCreateByExternalSubject(context.Background(), "dev-user", "dev@example.com")
+	settingsRepo.values = map[uuid.UUID]domain.UserSettings{
+		user.ID: {
+			UserID:                   user.ID,
+			CEFRLevel:                domain.CEFRB2,
+			DailyNewWordLimit:        10,
+			PreferredMeaningLanguage: domain.MeaningLanguageVietnamese,
+			Timezone:                 "Asia/Ho_Chi_Minh",
+			PronunciationEnabled:     true,
+			LockScreenEnabled:        false,
+		},
+	}
+
+	baseTime := time.Now().UTC().Add(-24 * time.Hour)
+	for _, wordText := range []string{"allocate", "forecast", "revenue", "strategy"} {
+		wordID := uuid.New()
+		wordRepo.byID[wordID] = domain.Word{
+			ID:                wordID,
+			Word:              wordText,
+			NormalizedForm:    service.NormalizeWord(wordText),
+			CanonicalForm:     wordText,
+			Lemma:             wordText,
+			PartOfSpeech:      "noun",
+			Level:             domain.CEFRB2,
+			Topic:             "Business",
+			VietnameseMeaning: wordText + " vi",
+			EnglishMeaning:    wordText + " en",
+			ExampleSentence1:  "Example one for " + wordText,
+			ExampleSentence2:  "Example two for " + wordText,
+		}
+		lastSeen := baseTime
+		stateRepo.weakCandidates = append(stateRepo.weakCandidates, domain.UserWordState{
+			UserID:        user.ID,
+			WordID:        wordID,
+			Status:        domain.WordStatusReview,
+			WeaknessScore: 2.0,
+			LastSeenAt:    &lastSeen,
+			CreatedAt:     baseTime.Add(-24 * time.Hour),
+		})
+		baseTime = baseTime.Add(time.Hour)
+	}
+
+	identity := service.NewIdentityService(userRepo, clock)
+	settingsService := service.NewSettingsService(settingsRepo)
+	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
+	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
+	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
+	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
+	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
+
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, llmRepo, BuildInfo{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/me/exercise/start", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200 for exercise start, got %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var payload struct {
+		State   string `json:"state"`
+		Message string `json:"message"`
+		Session struct {
+			GeneratedNow bool     `json:"generated_now"`
+			ClusterWords []string `json:"cluster_words"`
+		} `json:"session"`
+		Pack struct {
+			PackType  string `json:"pack_type"`
+			Topic     string `json:"topic"`
+			Questions []struct {
+				ID string `json:"id"`
+			} `json:"questions"`
+		} `json:"pack"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode exercise response: %v", err)
+	}
+	if payload.State != "ready" {
+		t.Fatalf("expected ready state, got %q", payload.State)
+	}
+	if !payload.Session.GeneratedNow {
+		t.Fatalf("expected generated_now=true, got %+v", payload.Session)
+	}
+	if payload.Pack.PackType != "context_cluster_challenge" {
+		t.Fatalf("expected context pack type, got %q", payload.Pack.PackType)
+	}
+	if payload.Pack.Topic != "Business" {
+		t.Fatalf("expected Business topic, got %q", payload.Pack.Topic)
+	}
+	if len(payload.Session.ClusterWords) != 4 || len(payload.Pack.Questions) != 4 {
+		t.Fatalf("expected 4 cluster words and 4 questions, got words=%d questions=%d", len(payload.Session.ClusterWords), len(payload.Pack.Questions))
 	}
 }

@@ -184,6 +184,20 @@ func (h *Handler) AppendMoreWords(w nethttp.ResponseWriter, r *nethttp.Request) 
 	writeJSON(w, nethttp.StatusOK, view)
 }
 
+func (h *Handler) StartExercise(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response, err := h.exercise.StartSession(r.Context(), user)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, response)
+}
+
 func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)
 	if err != nil {

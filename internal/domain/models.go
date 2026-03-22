@@ -134,6 +134,37 @@ const (
 	LLMRunStatusPartial LLMRunStatus = "partial"
 )
 
+type ExerciseSessionState string
+
+const (
+	ExerciseSessionStateReady             ExerciseSessionState = "ready"
+	ExerciseSessionStateInsufficientWords ExerciseSessionState = "insufficient_words"
+	ExerciseSessionStateUnavailable       ExerciseSessionState = "unavailable"
+)
+
+type ExercisePackType string
+
+const (
+	ExercisePackTypeContextClusterChallenge ExercisePackType = "context_cluster_challenge"
+)
+
+type ExercisePackStatus string
+
+const (
+	ExercisePackStatusReady ExercisePackStatus = "ready"
+)
+
+type ExerciseQuestionType string
+
+const (
+	ExerciseQuestionTypeBestFit              ExerciseQuestionType = "best_fit"
+	ExerciseQuestionTypeMeaningMatch         ExerciseQuestionType = "meaning_match"
+	ExerciseQuestionTypeDefinitionMatch      ExerciseQuestionType = "definition_match"
+	ExerciseQuestionTypeSentenceUsage        ExerciseQuestionType = "sentence_usage"
+	ExerciseQuestionTypePassageUnderstanding ExerciseQuestionType = "passage_understanding"
+	ExerciseQuestionTypeConfusableChoice     ExerciseQuestionType = "confusable_choice"
+)
+
 type User struct {
 	ID              uuid.UUID `json:"id"`
 	ExternalSubject string    `json:"external_subject"`
@@ -307,6 +338,72 @@ type CandidateWord struct {
 	NormalizedForm     string          `json:"normalized_form"`
 	RankingScore       float64         `json:"ranking_score"`
 	ValidationIssues   []string        `json:"validation_issues,omitempty"`
+}
+
+type ContextExerciseQuestion struct {
+	ID          string               `json:"id"`
+	Type        ExerciseQuestionType `json:"type"`
+	TargetWord  string               `json:"target_word"`
+	Prompt      string               `json:"prompt"`
+	Options     []string             `json:"options"`
+	Answer      string               `json:"answer"`
+	Explanation string               `json:"explanation"`
+}
+
+type ContextExercisePayload struct {
+	PackID       string                    `json:"pack_id"`
+	Topic        string                    `json:"topic"`
+	CEFRLevel    CEFRLevel                 `json:"cefr_level"`
+	PackType     ExercisePackType          `json:"pack_type"`
+	ClusterWords []string                  `json:"cluster_words"`
+	Title        string                    `json:"title"`
+	Passage      string                    `json:"passage"`
+	Questions    []ContextExerciseQuestion `json:"questions"`
+	SummaryTip   string                    `json:"summary_tip"`
+}
+
+type ContextExerciseSourceWord struct {
+	WordID         uuid.UUID `json:"word_id"`
+	Word           string    `json:"word"`
+	NormalizedForm string    `json:"normalized_form"`
+	Topic          string    `json:"topic"`
+	Level          CEFRLevel `json:"level"`
+	WeaknessScore  float64   `json:"weakness_score"`
+}
+
+type ContextExercisePack struct {
+	ID          uuid.UUID                   `json:"id"`
+	UserID      *uuid.UUID                  `json:"user_id,omitempty"`
+	LocalDate   string                      `json:"local_date"`
+	Topic       string                      `json:"topic"`
+	CEFRLevel   CEFRLevel                   `json:"cefr_level"`
+	PackType    ExercisePackType            `json:"pack_type"`
+	ClusterHash string                      `json:"cluster_hash"`
+	SourceWords []ContextExerciseSourceWord `json:"source_words"`
+	Payload     ContextExercisePayload      `json:"payload"`
+	Status      ExercisePackStatus          `json:"status"`
+	LLMRunID    *uuid.UUID                  `json:"llm_run_id,omitempty"`
+	CreatedAt   time.Time                   `json:"created_at"`
+	UpdatedAt   time.Time                   `json:"updated_at"`
+}
+
+type ExerciseSession struct {
+	SessionID    string           `json:"session_id"`
+	LocalDate    string           `json:"local_date"`
+	GeneratedNow bool             `json:"generated_now"`
+	Reused       bool             `json:"reused"`
+	ClusterHash  string           `json:"cluster_hash"`
+	ClusterWords []string         `json:"cluster_words"`
+	PackType     ExercisePackType `json:"pack_type"`
+	Topic        string           `json:"topic"`
+	CEFRLevel    CEFRLevel        `json:"cefr_level"`
+}
+
+type ExerciseSessionResponse struct {
+	State   ExerciseSessionState    `json:"state"`
+	Message string                  `json:"message"`
+	Session *ExerciseSession        `json:"session,omitempty"`
+	Pack    *ContextExercisePayload `json:"pack,omitempty"`
 }
 
 type PoolGenerationCounts struct {

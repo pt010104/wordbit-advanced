@@ -24,24 +24,26 @@ type dbtx interface {
 }
 
 type Repositories struct {
-	Users    *UserRepository
-	Settings *SettingsRepository
-	Words    *WordRepository
-	States   *WordStateRepository
-	Pools    *PoolRepository
-	Events   *LearningEventRepository
-	LLMRuns  *LLMRunRepository
+	Users         *UserRepository
+	Settings      *SettingsRepository
+	Words         *WordRepository
+	States        *WordStateRepository
+	Pools         *PoolRepository
+	Events        *LearningEventRepository
+	LLMRuns       *LLMRunRepository
+	ExercisePacks *ExercisePackRepository
 }
 
 func NewRepositories(pool *pgxpool.Pool) *Repositories {
 	return &Repositories{
-		Users:    &UserRepository{pool: pool},
-		Settings: &SettingsRepository{pool: pool},
-		Words:    &WordRepository{pool: pool},
-		States:   &WordStateRepository{pool: pool},
-		Pools:    &PoolRepository{pool: pool},
-		Events:   &LearningEventRepository{pool: pool},
-		LLMRuns:  &LLMRunRepository{pool: pool},
+		Users:         &UserRepository{pool: pool},
+		Settings:      &SettingsRepository{pool: pool},
+		Words:         &WordRepository{pool: pool},
+		States:        &WordStateRepository{pool: pool},
+		Pools:         &PoolRepository{pool: pool},
+		Events:        &LearningEventRepository{pool: pool},
+		LLMRuns:       &LLMRunRepository{pool: pool},
+		ExercisePacks: &ExercisePackRepository{pool: pool},
 	}
 }
 
@@ -79,6 +81,14 @@ func fromJSONMap(value domain.JSONMap) []byte {
 	bytes, err := json.Marshal(value)
 	if err != nil {
 		return []byte("{}")
+	}
+	return bytes
+}
+
+func marshalJSONValue(value any, fallback string) []byte {
+	bytes, err := json.Marshal(value)
+	if err != nil {
+		return []byte(fallback)
 	}
 	return bytes
 }
@@ -392,6 +402,48 @@ func scanRun(row pgx.Row) (domain.LLMGenerationRun, error) {
 	run.RawResponse = toJSONMap(rawResponse)
 	run.RejectionSummary = toJSONMap(rejectionSummary)
 	return run, mapError(err)
+}
+
+func scanContextExercisePack(row pgx.Row) (domain.ContextExercisePack, error) {
+	var pack domain.ContextExercisePack
+	var localDate time.Time
+	var userID uuid.NullUUID
+	var llmRunID uuid.NullUUID
+	var sourceWordsJSON []byte
+	var payloadJSON []byte
+	err := row.Scan(
+		&pack.ID,
+		&userID,
+		&localDate,
+		&pack.Topic,
+		&pack.CEFRLevel,
+		&pack.PackType,
+		&pack.ClusterHash,
+		&sourceWordsJSON,
+		&payloadJSON,
+		&pack.Status,
+		&llmRunID,
+		&pack.CreatedAt,
+		&pack.UpdatedAt,
+	)
+	if userID.Valid {
+		pack.UserID = &userID.UUID
+	}
+	if llmRunID.Valid {
+		pack.LLMRunID = &llmRunID.UUID
+	}
+	pack.LocalDate = localDate.Format("2006-01-02")
+	if len(sourceWordsJSON) > 0 {
+		if err := json.Unmarshal(sourceWordsJSON, &pack.SourceWords); err != nil {
+			return domain.ContextExercisePack{}, mapError(err)
+		}
+	}
+	if len(payloadJSON) > 0 {
+		if err := json.Unmarshal(payloadJSON, &pack.Payload); err != nil {
+			return domain.ContextExercisePack{}, mapError(err)
+		}
+	}
+	return pack, mapError(err)
 }
 
 func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {

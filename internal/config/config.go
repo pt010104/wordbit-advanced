@@ -69,7 +69,7 @@ func Load() (Config, error) {
 		AutoMigrate:                 envBool("AUTO_MIGRATE", true),
 		MemoryCauseInferenceEnabled: envBool("MEMORY_CAUSE_INFERENCE_ENABLED", true),
 		HTTPReadTimeout:             envDuration("HTTP_READ_TIMEOUT", 10*time.Second),
-		HTTPWriteTimeout:            envDuration("HTTP_WRITE_TIMEOUT", 15*time.Second),
+		HTTPWriteTimeout:            envDuration("HTTP_WRITE_TIMEOUT", 45*time.Second),
 		HTTPIdleTimeout:             envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		Gemini: GeminiConfig{
 			BaseURL:         envString("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),

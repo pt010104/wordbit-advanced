@@ -30,10 +30,11 @@ type Handler struct {
 	dictionary *service.DictionaryService
 	pools      *service.PoolService
 	learning   *service.LearningService
+	exercise   *service.ExerciseService
 	llmRuns    service.LLMRunRepository
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, llmRuns service.LLMRunRepository, build BuildInfo) nethttp.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, exercise *service.ExerciseService, llmRuns service.LLMRunRepository, build BuildInfo) nethttp.Handler {
 	mw := NewMiddleware(logger, verifier, identity, cfg.AdminToken)
 	h := &Handler{
 		logger:     logger,
@@ -43,6 +44,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 		dictionary: dictionary,
 		pools:      pools,
 		learning:   learning,
+		exercise:   exercise,
 		llmRuns:    llmRuns,
 	}
 
@@ -65,6 +67,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Delete("/me/dictionary/words/{wordID}", h.DeleteDictionaryWord)
 			r.Get("/me/daily-pool", h.GetDailyPool)
 			r.Post("/me/daily-pool/more-words", h.AppendMoreWords)
+			r.Post("/me/exercise/start", h.StartExercise)
 			r.Get("/me/cards/next", h.GetNextCard)
 			r.Post("/me/cards/{poolItemID}/first-exposure", h.SubmitFirstExposure)
 			r.Post("/me/cards/{poolItemID}/review", h.SubmitReview)

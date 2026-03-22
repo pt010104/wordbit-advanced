@@ -47,9 +47,10 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	geminiClient := gemini.NewClient(cfg.Gemini, logger)
 	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, geminiClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
+	exerciseService := service.NewExerciseService(repos.Settings, repos.Words, repos.States, repos.ExercisePacks, repos.LLMRuns, geminiClient, clock, logger)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
-	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, repos.LLMRuns, apihttp.BuildInfo{
+	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, exerciseService, repos.LLMRuns, apihttp.BuildInfo{
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,

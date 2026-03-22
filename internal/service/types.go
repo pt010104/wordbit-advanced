@@ -19,6 +19,14 @@ type GenerationInput struct {
 	ExcludeGroupKeys  []string
 }
 
+type ExercisePackGenerationInput struct {
+	UserID       uuid.UUID
+	LocalDate    string
+	Topic        string
+	CEFRLevel    domain.CEFRLevel
+	ClusterWords []domain.Word
+}
+
 type DailyPoolView struct {
 	Pool        domain.DailyLearningPool       `json:"pool"`
 	Items       []domain.DailyLearningPoolItem `json:"items"`

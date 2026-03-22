@@ -66,11 +66,23 @@ type LearningEventRepository interface {
 
 type LLMRunRepository interface {
 	Insert(ctx context.Context, run domain.LLMGenerationRun) error
+	InsertReturning(ctx context.Context, run domain.LLMGenerationRun) (domain.LLMGenerationRun, error)
+	CountByUserLocalDateAndPrompt(ctx context.Context, userID uuid.UUID, localDate string, prompt string) (int, error)
 	ListRecentByUser(ctx context.Context, userID uuid.UUID, limit int) ([]domain.LLMGenerationRun, error)
 }
 
 type CandidateGenerator interface {
 	GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error)
+}
+
+type ExercisePackRepository interface {
+	GetByClusterHash(ctx context.Context, userID uuid.UUID, localDate string, clusterHash string, packType domain.ExercisePackType) (domain.ContextExercisePack, error)
+	GetLatestReadyByLocalDate(ctx context.Context, userID uuid.UUID, localDate string, packType domain.ExercisePackType) (domain.ContextExercisePack, error)
+	Create(ctx context.Context, pack domain.ContextExercisePack) (domain.ContextExercisePack, error)
+}
+
+type ExercisePackGenerator interface {
+	GenerateContextExercisePack(ctx context.Context, input ExercisePackGenerationInput) (domain.ContextExercisePayload, string, error)
 }
 
 type UnknownDailyQuotaManager interface {

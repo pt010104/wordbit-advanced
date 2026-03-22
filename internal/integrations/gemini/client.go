@@ -215,6 +215,142 @@ func (c *Client) GenerateCandidates(ctx context.Context, input service.Generatio
 	return nil, "", lastErr
 }
 
+func (c *Client) GenerateContextExercisePack(ctx context.Context, input service.ExercisePackGenerationInput) (domain.ContextExercisePayload, string, error) {
+	body := generateRequest{
+		SystemInstruction: contentBlock{
+			Parts: []part{{Text: exerciseSystemInstruction}},
+		},
+		Contents: []contentBlock{{
+			Role:  "user",
+			Parts: []part{{Text: buildExercisePrompt(input)}},
+		}},
+		GenerationConfig: generationConfig{
+			Temperature:      c.temperature,
+			ResponseMimeType: "application/json",
+			MaxOutputTokens:  c.maxOutputTokens,
+		},
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return domain.ContextExercisePayload{}, "", fmt.Errorf("marshal gemini exercise request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
+	var lastErr error
+	for attempt := 1; attempt <= maxInt(c.maxRetries, 1); attempt++ {
+		start := time.Now()
+		c.logger.Info("gemini exercise generate request",
+			"model", c.model,
+			"attempt", attempt,
+			"cluster_size", len(input.ClusterWords),
+			"topic", input.Topic,
+			"timeout_ms", c.timeout.Milliseconds(),
+			"payload_size", len(payload),
+		)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return domain.ContextExercisePayload{}, "", fmt.Errorf("create gemini exercise request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("gemini exercise request failed: %w", err)
+			c.logger.Warn("gemini exercise generate request failed",
+				"model", c.model,
+				"attempt", attempt,
+				"cluster_size", len(input.ClusterWords),
+				"topic", input.Topic,
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"error", err,
+			)
+			c.backoff(attempt)
+			continue
+		}
+
+		rawBytes, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read gemini exercise response: %w", readErr)
+			c.logger.Warn("gemini exercise response read failed",
+				"model", c.model,
+				"attempt", attempt,
+				"cluster_size", len(input.ClusterWords),
+				"topic", input.Topic,
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"error", readErr,
+			)
+			c.backoff(attempt)
+			continue
+		}
+		raw := string(rawBytes)
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("gemini exercise server error: status=%d body=%s", resp.StatusCode, raw)
+			c.logger.Warn("gemini exercise generate server error",
+				"model", c.model,
+				"attempt", attempt,
+				"cluster_size", len(input.ClusterWords),
+				"topic", input.Topic,
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+			)
+			c.backoff(attempt)
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			c.logger.Warn("gemini exercise generate client error",
+				"model", c.model,
+				"attempt", attempt,
+				"cluster_size", len(input.ClusterWords),
+				"topic", input.Topic,
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+			)
+			return domain.ContextExercisePayload{}, raw, fmt.Errorf("gemini exercise error: status=%d body=%s", resp.StatusCode, raw)
+		}
+
+		parsed, text, err := parseExerciseGenerateResponse(rawBytes)
+		if err != nil {
+			lastErr = fmt.Errorf("parse gemini exercise response: %w", err)
+			c.logger.Warn("gemini exercise generate parse failed",
+				"model", c.model,
+				"attempt", attempt,
+				"cluster_size", len(input.ClusterWords),
+				"topic", input.Topic,
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+				"error", err,
+			)
+			c.backoff(attempt)
+			continue
+		}
+		c.logger.Info("gemini exercise generate response",
+			"model", c.model,
+			"attempt", attempt,
+			"cluster_size", len(input.ClusterWords),
+			"topic", input.Topic,
+			"timeout_ms", c.timeout.Milliseconds(),
+			"duration_ms", time.Since(start).Milliseconds(),
+			"status_code", resp.StatusCode,
+			"response_size", len(rawBytes),
+			"question_count", len(parsed.Questions),
+			"text_size", len(text),
+		)
+		return parsed, text, nil
+	}
+	return domain.ContextExercisePayload{}, "", lastErr
+}
+
 func (c *Client) backoff(attempt int) {
 	if attempt >= c.maxRetries {
 		return
@@ -274,6 +410,75 @@ You generate backend-ingestable English vocabulary data for a production vocabul
 Always return valid JSON.
 Do not wrap the JSON in markdown fences.
 `
+
+const exerciseSystemInstruction = `
+You generate reusable context-cluster vocabulary exercise packs for a production vocabulary learning service.
+Always return valid JSON only.
+Do not wrap the JSON in markdown fences.
+Do not ask follow-up questions.
+`
+
+func buildExercisePrompt(input service.ExercisePackGenerationInput) string {
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf(`
+Generate one reusable English vocabulary exercise pack for weak-word review.
+
+Requirements:
+- pack_type must be "context_cluster_challenge"
+- topic should stay coherent and realistic
+- CEFR level should be %s
+- use all selected cluster words exactly as study targets
+- produce exactly %d questions
+- every selected word must be targeted by at least one question
+- use only closed-form questions
+- allowed question types: best_fit, meaning_match, definition_match, sentence_usage, passage_understanding, confusable_choice
+- every question must have exactly 4 options
+- every question must have exactly 1 correct answer and it must match one of the options exactly
+- keep the passage and explanations natural and CEFR-appropriate
+- return strict JSON only
+
+Output format:
+{
+  "pack_id": "",
+  "topic": "string",
+  "cefr_level": "B1|B2|C1|C2",
+  "pack_type": "context_cluster_challenge",
+  "cluster_words": ["word1", "word2"],
+  "title": "string",
+  "passage": "string",
+  "questions": [
+    {
+      "id": "q1",
+      "type": "best_fit|meaning_match|definition_match|sentence_usage|passage_understanding|confusable_choice",
+      "target_word": "string",
+      "prompt": "string",
+      "options": ["a", "b", "c", "d"],
+      "answer": "string",
+      "explanation": "string"
+    }
+  ],
+  "summary_tip": "string"
+}
+
+Selected weak words:
+`, input.CEFRLevel, len(input.ClusterWords)))
+	for index, word := range input.ClusterWords {
+		builder.WriteString(fmt.Sprintf(`
+%d. word="%s"
+   normalized_form="%s"
+   canonical_form="%s"
+   lemma="%s"
+   part_of_speech="%s"
+   topic="%s"
+   level="%s"
+   english_meaning="%s"
+   vietnamese_meaning="%s"
+   example_sentence_1="%s"
+   example_sentence_2="%s"
+`, index+1, word.Word, word.NormalizedForm, word.CanonicalForm, word.Lemma, word.PartOfSpeech, word.Topic, word.Level, word.EnglishMeaning, word.VietnameseMeaning, word.ExampleSentence1, word.ExampleSentence2))
+	}
+	return builder.String()
+}
 
 func maxInt(a int, b int) int {
 	if a > b {

@@ -398,6 +398,15 @@ func (r *replenishEventRepo) ListRecentByPoolItem(ctx context.Context, itemID uu
 type replenishLLMRepo struct{}
 
 func (r *replenishLLMRepo) Insert(ctx context.Context, run domain.LLMGenerationRun) error { return nil }
+func (r *replenishLLMRepo) InsertReturning(ctx context.Context, run domain.LLMGenerationRun) (domain.LLMGenerationRun, error) {
+	if run.ID == uuid.Nil {
+		run.ID = uuid.New()
+	}
+	return run, nil
+}
+func (r *replenishLLMRepo) CountByUserLocalDateAndPrompt(ctx context.Context, userID uuid.UUID, localDate string, prompt string) (int, error) {
+	return 0, nil
+}
 func (r *replenishLLMRepo) ListRecentByUser(ctx context.Context, userID uuid.UUID, limit int) ([]domain.LLMGenerationRun, error) {
 	return nil, nil
 }
