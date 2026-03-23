@@ -52,6 +52,7 @@ type PoolRepository interface {
 	UpdatePoolItemReveal(ctx context.Context, itemID uuid.UUID, kind domain.RevealKind) error
 	AppendPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) (domain.DailyLearningPoolItem, error)
 	GetLastOrdinal(ctx context.Context, poolID uuid.UUID) (int, error)
+	IncrementScheduledCounts(ctx context.Context, poolID uuid.UUID, dueReviewDelta int, shortTermDelta int) error
 	IncrementNewCount(ctx context.Context, poolID uuid.UUID, delta int) error
 	IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error
 	DeletePoolItems(ctx context.Context, userID uuid.UUID, itemIDs []uuid.UUID) error
@@ -83,6 +84,15 @@ type ExercisePackRepository interface {
 
 type ExercisePackGenerator interface {
 	GenerateContextExercisePack(ctx context.Context, input ExercisePackGenerationInput) (domain.ContextExercisePayload, string, error)
+}
+
+type DynamicReviewPromptRepository interface {
+	ListByLocalDate(ctx context.Context, userID uuid.UUID, localDate string) ([]domain.DailyDynamicReviewPrompt, error)
+	UpsertBatch(ctx context.Context, prompts []domain.DailyDynamicReviewPrompt) ([]domain.DailyDynamicReviewPrompt, error)
+}
+
+type DynamicReviewPromptGenerator interface {
+	GenerateDynamicReviewPrompts(ctx context.Context, input DynamicReviewPromptGenerationInput) (domain.DynamicReviewPromptBatchPayload, string, error)
 }
 
 type UnknownDailyQuotaManager interface {

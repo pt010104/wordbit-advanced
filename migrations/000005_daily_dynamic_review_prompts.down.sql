@@ -1,0 +1,2 @@
+DROP TRIGGER IF EXISTS trg_daily_dynamic_review_prompts_updated_at ON daily_dynamic_review_prompts;
+DROP TABLE IF EXISTS daily_dynamic_review_prompts;

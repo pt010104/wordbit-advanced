@@ -371,6 +371,34 @@ type ContextExerciseSourceWord struct {
 	WeaknessScore  float64   `json:"weakness_score"`
 }
 
+type DynamicReviewPromptPayload struct {
+	PromptText  string `json:"prompt_text"`
+	Source      string `json:"source"`
+	GeneratedAt string `json:"generated_at"`
+}
+
+type DynamicReviewPromptBatchItem struct {
+	WordID     uuid.UUID  `json:"word_id"`
+	ReviewMode ReviewMode `json:"review_mode"`
+	PromptText string     `json:"prompt_text"`
+}
+
+type DynamicReviewPromptBatchPayload struct {
+	Items []DynamicReviewPromptBatchItem `json:"items"`
+}
+
+type DailyDynamicReviewPrompt struct {
+	ID         uuid.UUID                  `json:"id"`
+	UserID     uuid.UUID                  `json:"user_id"`
+	LocalDate  string                     `json:"local_date"`
+	WordID     uuid.UUID                  `json:"word_id"`
+	ReviewMode ReviewMode                 `json:"review_mode"`
+	Payload    DynamicReviewPromptPayload `json:"payload"`
+	LLMRunID   *uuid.UUID                 `json:"llm_run_id,omitempty"`
+	CreatedAt  time.Time                  `json:"created_at"`
+	UpdatedAt  time.Time                  `json:"updated_at"`
+}
+
 type ContextExercisePack struct {
 	ID          uuid.UUID                   `json:"id"`
 	UserID      *uuid.UUID                  `json:"user_id,omitempty"`

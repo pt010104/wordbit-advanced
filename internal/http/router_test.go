@@ -241,6 +241,11 @@ func (m *memoryPoolRepo) AppendPoolItem(ctx context.Context, item domain.DailyLe
 func (m *memoryPoolRepo) GetLastOrdinal(ctx context.Context, poolID uuid.UUID) (int, error) {
 	return len(m.items), nil
 }
+func (m *memoryPoolRepo) IncrementScheduledCounts(ctx context.Context, poolID uuid.UUID, dueReviewDelta int, shortTermDelta int) error {
+	m.pool.DueReviewCount += dueReviewDelta
+	m.pool.ShortTermCount += shortTermDelta
+	return nil
+}
 func (m *memoryPoolRepo) IncrementNewCount(ctx context.Context, poolID uuid.UUID, delta int) error {
 	m.pool.NewCount += delta
 	return nil
@@ -380,6 +385,55 @@ func (g *failingGenerator) GenerateCandidates(ctx context.Context, input service
 	return nil, "", errors.New("gemini unavailable")
 }
 
+type memoryDynamicReviewPromptRepo struct {
+	prompts []domain.DailyDynamicReviewPrompt
+}
+
+func (m *memoryDynamicReviewPromptRepo) ListByLocalDate(ctx context.Context, userID uuid.UUID, localDate string) ([]domain.DailyDynamicReviewPrompt, error) {
+	out := make([]domain.DailyDynamicReviewPrompt, 0, len(m.prompts))
+	for _, prompt := range m.prompts {
+		if prompt.UserID == userID && prompt.LocalDate == localDate {
+			out = append(out, prompt)
+		}
+	}
+	return out, nil
+}
+
+func (m *memoryDynamicReviewPromptRepo) UpsertBatch(ctx context.Context, prompts []domain.DailyDynamicReviewPrompt) ([]domain.DailyDynamicReviewPrompt, error) {
+	for _, prompt := range prompts {
+		replaced := false
+		for idx := range m.prompts {
+			if m.prompts[idx].UserID == prompt.UserID && m.prompts[idx].LocalDate == prompt.LocalDate && m.prompts[idx].WordID == prompt.WordID && m.prompts[idx].ReviewMode == prompt.ReviewMode {
+				m.prompts[idx] = prompt
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			m.prompts = append(m.prompts, prompt)
+		}
+	}
+	return prompts, nil
+}
+
+type staticDynamicReviewGenerator struct{}
+
+func (g *staticDynamicReviewGenerator) GenerateDynamicReviewPrompts(ctx context.Context, input service.DynamicReviewPromptGenerationInput) (domain.DynamicReviewPromptBatchPayload, string, error) {
+	items := make([]domain.DynamicReviewPromptBatchItem, 0, len(input.Items))
+	for _, item := range input.Items {
+		promptText := "Choose the best word for this context."
+		if item.ReviewMode == domain.ReviewModeFillBlank {
+			promptText = "The company used _____ to enter a more complex market."
+		}
+		items = append(items, domain.DynamicReviewPromptBatchItem{
+			WordID:     item.WordID,
+			ReviewMode: item.ReviewMode,
+			PromptText: promptText,
+		})
+	}
+	return domain.DynamicReviewPromptBatchPayload{Items: items}, "{}", nil
+}
+
 func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	t.Parallel()
 
@@ -399,9 +453,10 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, dynamicReviewService, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -491,9 +546,10 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &failingGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, dynamicReviewService, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/daily-pool", nil)
 	resp := httptest.NewRecorder()
@@ -564,9 +620,10 @@ func TestExerciseStartReturnsReadyPack(t *testing.T) {
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, dynamicReviewService, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/me/exercise/start", nil)
 	resp := httptest.NewRecorder()

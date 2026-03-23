@@ -24,26 +24,28 @@ type dbtx interface {
 }
 
 type Repositories struct {
-	Users         *UserRepository
-	Settings      *SettingsRepository
-	Words         *WordRepository
-	States        *WordStateRepository
-	Pools         *PoolRepository
-	Events        *LearningEventRepository
-	LLMRuns       *LLMRunRepository
-	ExercisePacks *ExercisePackRepository
+	Users                *UserRepository
+	Settings             *SettingsRepository
+	Words                *WordRepository
+	States               *WordStateRepository
+	Pools                *PoolRepository
+	Events               *LearningEventRepository
+	LLMRuns              *LLMRunRepository
+	ExercisePacks        *ExercisePackRepository
+	DynamicReviewPrompts *DynamicReviewPromptRepository
 }
 
 func NewRepositories(pool *pgxpool.Pool) *Repositories {
 	return &Repositories{
-		Users:         &UserRepository{pool: pool},
-		Settings:      &SettingsRepository{pool: pool},
-		Words:         &WordRepository{pool: pool},
-		States:        &WordStateRepository{pool: pool},
-		Pools:         &PoolRepository{pool: pool},
-		Events:        &LearningEventRepository{pool: pool},
-		LLMRuns:       &LLMRunRepository{pool: pool},
-		ExercisePacks: &ExercisePackRepository{pool: pool},
+		Users:                &UserRepository{pool: pool},
+		Settings:             &SettingsRepository{pool: pool},
+		Words:                &WordRepository{pool: pool},
+		States:               &WordStateRepository{pool: pool},
+		Pools:                &PoolRepository{pool: pool},
+		Events:               &LearningEventRepository{pool: pool},
+		LLMRuns:              &LLMRunRepository{pool: pool},
+		ExercisePacks:        &ExercisePackRepository{pool: pool},
+		DynamicReviewPrompts: &DynamicReviewPromptRepository{pool: pool},
 	}
 }
 
@@ -444,6 +446,34 @@ func scanContextExercisePack(row pgx.Row) (domain.ContextExercisePack, error) {
 		}
 	}
 	return pack, mapError(err)
+}
+
+func scanDynamicReviewPrompt(row pgx.Row) (domain.DailyDynamicReviewPrompt, error) {
+	var prompt domain.DailyDynamicReviewPrompt
+	var localDate time.Time
+	var payloadJSON []byte
+	var llmRunID uuid.NullUUID
+	err := row.Scan(
+		&prompt.ID,
+		&prompt.UserID,
+		&localDate,
+		&prompt.WordID,
+		&prompt.ReviewMode,
+		&payloadJSON,
+		&llmRunID,
+		&prompt.CreatedAt,
+		&prompt.UpdatedAt,
+	)
+	if llmRunID.Valid {
+		prompt.LLMRunID = &llmRunID.UUID
+	}
+	prompt.LocalDate = localDate.Format("2006-01-02")
+	if len(payloadJSON) > 0 {
+		if err := json.Unmarshal(payloadJSON, &prompt.Payload); err != nil {
+			return domain.DailyDynamicReviewPrompt{}, mapError(err)
+		}
+	}
+	return prompt, mapError(err)
 }
 
 func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {

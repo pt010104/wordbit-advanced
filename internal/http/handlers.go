@@ -158,6 +158,13 @@ func (h *Handler) GetDailyPool(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeError(w, err)
 		return
 	}
+	if h.dynamicReview != nil {
+		if items, overlayErr := h.dynamicReview.OverlayPoolItems(r.Context(), user.ID, view.Pool.LocalDate, view.Items); overlayErr != nil {
+			h.logger.Warn("overlay dynamic review prompts on daily pool", "user_id", user.ID, "local_date", view.Pool.LocalDate, "error", overlayErr)
+		} else {
+			view.Items = items
+		}
+	}
 	writeJSON(w, nethttp.StatusOK, view)
 }
 
@@ -208,6 +215,25 @@ func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if h.dynamicReview != nil && card.PoolItem != nil {
+		enriched, hasPrompt, overlayErr := h.dynamicReview.OverlayCardOnly(r.Context(), user.ID, card.LocalDate, *card.PoolItem)
+		if overlayErr != nil {
+			h.logger.Warn("overlay dynamic review prompt on next card", "user_id", user.ID, "local_date", card.LocalDate, "word_id", card.PoolItem.WordID, "error", overlayErr)
+		} else {
+			card.PoolItem = &enriched
+		}
+		if !hasPrompt && (card.PoolItem.ReviewMode == domain.ReviewModeMultipleChoice || card.PoolItem.ReviewMode == domain.ReviewModeFillBlank) {
+			if view, viewErr := h.pools.GetOrCreateDailyPool(r.Context(), user); viewErr != nil {
+				h.logger.Warn("load daily pool for dynamic review backfill", "user_id", user.ID, "local_date", card.LocalDate, "error", viewErr)
+			} else if backfillErr := h.dynamicReview.BackfillForCurrentCard(r.Context(), user.ID, view.Pool.LocalDate, view.Items, *card.PoolItem); backfillErr != nil {
+				h.logger.Warn("backfill dynamic review prompt for next card", "user_id", user.ID, "local_date", view.Pool.LocalDate, "word_id", card.PoolItem.WordID, "error", backfillErr)
+			} else if enriched, applied, overlayErr := h.dynamicReview.OverlayCardOnly(r.Context(), user.ID, card.LocalDate, *card.PoolItem); overlayErr != nil {
+				h.logger.Warn("overlay dynamic review prompt after backfill", "user_id", user.ID, "local_date", card.LocalDate, "word_id", card.PoolItem.WordID, "error", overlayErr)
+			} else if applied {
+				card.PoolItem = &enriched
+			}
+		}
 	}
 	writeJSON(w, nethttp.StatusOK, card)
 }
@@ -327,6 +353,13 @@ func (h *Handler) UndoLastAnswer(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	for idx := range view.Items {
 		if view.Items[idx].ID == itemID {
+			if h.dynamicReview != nil {
+				if enriched, _, overlayErr := h.dynamicReview.OverlayCardOnly(r.Context(), user.ID, view.Pool.LocalDate, view.Items[idx]); overlayErr != nil {
+					h.logger.Warn("overlay dynamic review prompt on undo", "user_id", user.ID, "local_date", view.Pool.LocalDate, "word_id", view.Items[idx].WordID, "error", overlayErr)
+				} else {
+					view.Items[idx] = enriched
+				}
+			}
 			card := service.CardResponse{
 				LocalDate: view.Pool.LocalDate,
 				PoolItem:  &view.Items[idx],

@@ -351,6 +351,135 @@ func (c *Client) GenerateContextExercisePack(ctx context.Context, input service.
 	return domain.ContextExercisePayload{}, "", lastErr
 }
 
+func (c *Client) GenerateDynamicReviewPrompts(ctx context.Context, input service.DynamicReviewPromptGenerationInput) (domain.DynamicReviewPromptBatchPayload, string, error) {
+	body := generateRequest{
+		SystemInstruction: contentBlock{
+			Parts: []part{{Text: dynamicReviewSystemInstruction}},
+		},
+		Contents: []contentBlock{{
+			Role:  "user",
+			Parts: []part{{Text: buildDynamicReviewPrompt(input)}},
+		}},
+		GenerationConfig: generationConfig{
+			Temperature:      c.temperature,
+			ResponseMimeType: "application/json",
+			MaxOutputTokens:  c.maxOutputTokens,
+		},
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return domain.DynamicReviewPromptBatchPayload{}, "", fmt.Errorf("marshal gemini dynamic review request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
+	var lastErr error
+	for attempt := 1; attempt <= maxInt(c.maxRetries, 1); attempt++ {
+		start := time.Now()
+		c.logger.Info("gemini dynamic review request",
+			"model", c.model,
+			"attempt", attempt,
+			"item_count", len(input.Items),
+			"timeout_ms", c.timeout.Milliseconds(),
+			"payload_size", len(payload),
+		)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return domain.DynamicReviewPromptBatchPayload{}, "", fmt.Errorf("create gemini dynamic review request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("gemini dynamic review request failed: %w", err)
+			c.logger.Warn("gemini dynamic review request failed",
+				"model", c.model,
+				"attempt", attempt,
+				"item_count", len(input.Items),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"error", err,
+			)
+			c.backoff(attempt)
+			continue
+		}
+
+		rawBytes, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read gemini dynamic review response: %w", readErr)
+			c.logger.Warn("gemini dynamic review response read failed",
+				"model", c.model,
+				"attempt", attempt,
+				"item_count", len(input.Items),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"error", readErr,
+			)
+			c.backoff(attempt)
+			continue
+		}
+		raw := string(rawBytes)
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("gemini dynamic review server error: status=%d body=%s", resp.StatusCode, raw)
+			c.logger.Warn("gemini dynamic review server error",
+				"model", c.model,
+				"attempt", attempt,
+				"item_count", len(input.Items),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+			)
+			c.backoff(attempt)
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			c.logger.Warn("gemini dynamic review client error",
+				"model", c.model,
+				"attempt", attempt,
+				"item_count", len(input.Items),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+			)
+			return domain.DynamicReviewPromptBatchPayload{}, raw, fmt.Errorf("gemini dynamic review error: status=%d body=%s", resp.StatusCode, raw)
+		}
+
+		parsed, text, err := parseDynamicReviewGenerateResponse(rawBytes)
+		if err != nil {
+			lastErr = fmt.Errorf("parse gemini dynamic review response: %w", err)
+			c.logger.Warn("gemini dynamic review parse failed",
+				"model", c.model,
+				"attempt", attempt,
+				"item_count", len(input.Items),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+				"error", err,
+			)
+			c.backoff(attempt)
+			continue
+		}
+		c.logger.Info("gemini dynamic review response",
+			"model", c.model,
+			"attempt", attempt,
+			"item_count", len(input.Items),
+			"timeout_ms", c.timeout.Milliseconds(),
+			"duration_ms", time.Since(start).Milliseconds(),
+			"status_code", resp.StatusCode,
+			"response_size", len(rawBytes),
+			"generated_items", len(parsed.Items),
+			"text_size", len(text),
+		)
+		return parsed, text, nil
+	}
+	return domain.DynamicReviewPromptBatchPayload{}, "", lastErr
+}
+
 func (c *Client) backoff(attempt int) {
 	if attempt >= c.maxRetries {
 		return
@@ -418,6 +547,14 @@ Do not wrap the JSON in markdown fences.
 Do not ask follow-up questions.
 `
 
+const dynamicReviewSystemInstruction = `
+You generate fresh prompt-only overrides for vocabulary review cards in a production learning service.
+Always return valid JSON only.
+Do not wrap the JSON in markdown fences.
+Do not reveal the answer word, canonical form, or lemma in the prompt.
+Do not ask follow-up questions.
+`
+
 func buildExercisePrompt(input service.ExercisePackGenerationInput) string {
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf(`
@@ -476,6 +613,60 @@ Selected weak words:
    example_sentence_1="%s"
    example_sentence_2="%s"
 `, index+1, word.Word, word.NormalizedForm, word.CanonicalForm, word.Lemma, word.PartOfSpeech, word.Topic, word.Level, word.EnglishMeaning, word.VietnameseMeaning, word.ExampleSentence1, word.ExampleSentence2))
+	}
+	return builder.String()
+}
+
+func buildDynamicReviewPrompt(input service.DynamicReviewPromptGenerationInput) string {
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf(`
+Generate exactly %d prompt overrides for vocabulary review cards.
+
+Requirements:
+- return exactly one item for every requested word_id + review_mode pair
+- keep word_id and review_mode exactly as provided
+- review_mode can only be "multiple_choice" or "fill_in_blank"
+- for multiple_choice:
+  - write one fresh question stem or semantic cue only
+  - do not include answer choices
+  - do not reveal the answer word, canonical form, or lemma
+- for fill_in_blank:
+  - write one natural sentence or short passage fragment with the target replaced by "_____"
+  - the prompt must contain "_____"
+  - do not reveal the answer word, canonical form, or lemma
+- do not copy the english meaning, vietnamese meaning, or example sentences verbatim
+- keep prompts concise and CEFR-appropriate
+- return strict JSON only
+
+Output format:
+{
+  "items": [
+    {
+      "word_id": "uuid",
+      "review_mode": "multiple_choice|fill_in_blank",
+      "prompt_text": "string"
+    }
+  ]
+}
+
+Requested review prompts:
+`, len(input.Items)))
+	for index, item := range input.Items {
+		builder.WriteString(fmt.Sprintf(`
+%d. word_id="%s"
+   review_mode="%s"
+   word="%s"
+   normalized_form="%s"
+   canonical_form="%s"
+   lemma="%s"
+   part_of_speech="%s"
+   level="%s"
+   topic="%s"
+   english_meaning="%s"
+   vietnamese_meaning="%s"
+   example_sentence_1="%s"
+   example_sentence_2="%s"
+`, index+1, item.WordID, item.ReviewMode, item.Word.Word, item.Word.NormalizedForm, item.Word.CanonicalForm, item.Word.Lemma, item.Word.PartOfSpeech, item.Word.Level, item.Word.Topic, item.Word.EnglishMeaning, item.Word.VietnameseMeaning, item.Word.ExampleSentence1, item.Word.ExampleSentence2))
 	}
 	return builder.String()
 }

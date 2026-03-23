@@ -123,8 +123,10 @@ func (r *replenishWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID)
 }
 
 type replenishStateRepo struct {
-	states         map[uuid.UUID]domain.UserWordState
-	weakCandidates []domain.UserWordState
+	states            map[uuid.UUID]domain.UserWordState
+	weakCandidates    []domain.UserWordState
+	dueLearningStates []domain.UserWordState
+	dueReviewStates   []domain.UserWordState
 }
 
 func (r *replenishStateRepo) Get(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) (domain.UserWordState, error) {
@@ -136,7 +138,10 @@ func (r *replenishStateRepo) Get(ctx context.Context, userID uuid.UUID, wordID u
 }
 
 func (r *replenishStateRepo) ListDueWithinWindow(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time, learningOnly bool) ([]domain.UserWordState, error) {
-	return nil, nil
+	if learningOnly {
+		return append([]domain.UserWordState(nil), r.dueLearningStates...), nil
+	}
+	return append([]domain.UserWordState(nil), r.dueReviewStates...), nil
 }
 
 func (r *replenishStateRepo) ListWeakCandidates(ctx context.Context, userID uuid.UUID, excludeWordIDs []uuid.UUID, limit int) ([]domain.UserWordState, error) {
@@ -206,7 +211,20 @@ func (r *replenishPoolRepo) GetByLocalDate(ctx context.Context, userID uuid.UUID
 }
 
 func (r *replenishPoolRepo) CreatePoolWithItems(ctx context.Context, pool domain.DailyLearningPool, items []domain.DailyLearningPoolItem) (domain.DailyLearningPool, []domain.DailyLearningPoolItem, error) {
-	return domain.DailyLearningPool{}, nil, domain.ErrNotFound
+	if pool.ID == uuid.Nil {
+		pool.ID = uuid.New()
+	}
+	stored := make([]domain.DailyLearningPoolItem, len(items))
+	for i, item := range items {
+		if item.ID == uuid.Nil {
+			item.ID = uuid.New()
+		}
+		item.PoolID = pool.ID
+		stored[i] = item
+	}
+	r.pool = pool
+	r.items = stored
+	return r.pool, append([]domain.DailyLearningPoolItem(nil), r.items...), nil
 }
 
 func (r *replenishPoolRepo) AcquireDailyPoolLock(ctx context.Context, userID uuid.UUID, localDate string) error {
@@ -309,6 +327,12 @@ func (r *replenishPoolRepo) GetLastOrdinal(ctx context.Context, poolID uuid.UUID
 		}
 	}
 	return maxOrdinal, nil
+}
+
+func (r *replenishPoolRepo) IncrementScheduledCounts(ctx context.Context, poolID uuid.UUID, dueReviewDelta int, shortTermDelta int) error {
+	r.pool.DueReviewCount += dueReviewDelta
+	r.pool.ShortTermCount += shortTermDelta
+	return nil
 }
 
 func (r *replenishPoolRepo) IncrementNewCount(ctx context.Context, poolID uuid.UUID, delta int) error {

@@ -116,3 +116,51 @@ func TestFindNextCardInItemsReturnsPendingBonusPracticeImmediately(t *testing.T)
 		t.Fatalf("expected nil next due when bonus practice is actionable, got %v", *nextDue)
 	}
 }
+
+func TestFindNextCardInItemsPrioritizesScheduledReviewOverWeakAndNew(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 23, 9, 0, 0, 0, time.UTC)
+	scheduledWordID := uuid.New()
+	weakWordID := uuid.New()
+	newWordID := uuid.New()
+	scheduledDue := now.Add(-15 * time.Minute)
+
+	item, nextDue := findNextCardInItems([]domain.DailyLearningPoolItem{
+		{
+			ID:       uuid.New(),
+			WordID:   weakWordID,
+			Ordinal:  1,
+			ItemType: domain.PoolItemTypeWeak,
+			Status:   domain.PoolItemStatusPending,
+			DueAt:    nil,
+			Metadata: domain.JSONMap{"bonus_practice": true},
+		},
+		{
+			ID:                    uuid.New(),
+			WordID:                newWordID,
+			Ordinal:               2,
+			ItemType:              domain.PoolItemTypeNew,
+			Status:                domain.PoolItemStatusPending,
+			FirstExposureRequired: true,
+		},
+		{
+			ID:       uuid.New(),
+			WordID:   scheduledWordID,
+			Ordinal:  99,
+			ItemType: domain.PoolItemTypeShortTerm,
+			Status:   domain.PoolItemStatusPending,
+			DueAt:    &scheduledDue,
+		},
+	}, now)
+
+	if item == nil {
+		t.Fatalf("expected scheduled short_term card, got nil")
+	}
+	if item.WordID != scheduledWordID {
+		t.Fatalf("expected scheduled word %s, got %s", scheduledWordID, item.WordID)
+	}
+	if nextDue != nil {
+		t.Fatalf("expected nil next due when an actionable scheduled card exists, got %v", *nextDue)
+	}
+}

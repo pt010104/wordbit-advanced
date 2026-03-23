@@ -18,19 +18,32 @@ type Scheduler struct {
 }
 
 type Dependencies struct {
-	Users           service.UserRepository
-	LearningService *service.LearningService
-	Clock           service.Clock
-	Lookback        time.Duration
+	Users                service.UserRepository
+	LearningService      *service.LearningService
+	PoolService          *service.PoolService
+	DynamicReviewService *service.DynamicReviewService
+	Clock                service.Clock
+	Lookback             time.Duration
 }
 
 func New(logger *slog.Logger, deps Dependencies, prewarmSpec string, weaknessSpec string) (*Scheduler, error) {
-	c := cron.New(cron.WithLocation(time.UTC))
+	location, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		return nil, err
+	}
+	c := cron.New(cron.WithLocation(location))
 	s := &Scheduler{
 		cron:   c,
 		logger: logger,
 	}
 
+	if _, err := c.AddFunc(prewarmSpec, func() {
+		s.run("prewarm_dynamic_review", func(ctx context.Context) error {
+			return prewarmDynamicReviewPrompts(ctx, deps, s.logger)
+		})
+	}); err != nil {
+		return nil, err
+	}
 	if _, err := c.AddFunc(weaknessSpec, func() {
 		s.run("refresh_weakness", func(ctx context.Context) error {
 			return refreshWeakness(ctx, deps)
@@ -75,6 +88,24 @@ func refreshWeakness(ctx context.Context, deps Dependencies) error {
 	for _, user := range users {
 		if err := deps.LearningService.RefreshWeaknessForActiveUser(ctx, user.ID); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func prewarmDynamicReviewPrompts(ctx context.Context, deps Dependencies, logger *slog.Logger) error {
+	users, err := deps.Users.ListActiveUsers(ctx, deps.Clock.Now().Add(-deps.Lookback))
+	if err != nil {
+		return err
+	}
+	for _, user := range users {
+		view, viewErr := deps.PoolService.GetOrCreateDailyPool(ctx, user)
+		if viewErr != nil {
+			logger.Warn("prewarm dynamic review skipped: load pool", "user_id", user.ID, "error", viewErr)
+			continue
+		}
+		if err := deps.DynamicReviewService.Prewarm(ctx, user.ID, view.Pool.LocalDate, view.Items); err != nil {
+			logger.Warn("prewarm dynamic review skipped: prepare prompts", "user_id", user.ID, "local_date", view.Pool.LocalDate, "error", err)
 		}
 	}
 	return nil

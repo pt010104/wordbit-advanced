@@ -27,6 +27,18 @@ type ExercisePackGenerationInput struct {
 	ClusterWords []domain.Word
 }
 
+type DynamicReviewPromptRequestItem struct {
+	WordID     uuid.UUID
+	ReviewMode domain.ReviewMode
+	Word       domain.Word
+}
+
+type DynamicReviewPromptGenerationInput struct {
+	UserID    uuid.UUID
+	LocalDate string
+	Items     []DynamicReviewPromptRequestItem
+}
+
 type DailyPoolView struct {
 	Pool        domain.DailyLearningPool       `json:"pool"`
 	Items       []domain.DailyLearningPoolItem `json:"items"`

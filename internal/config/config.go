@@ -90,7 +90,7 @@ func Load() (Config, error) {
 		},
 		Scheduler: SchedulerConfig{
 			Enabled:             envBool("CRON_ENABLED", true),
-			PrewarmCron:         envString("CRON_PREWARM_SCHEDULE", "5 0 * * *"),
+			PrewarmCron:         envString("CRON_PREWARM_SCHEDULE", "10 0 * * *"),
 			WeaknessRefreshCron: envString("CRON_WEAKNESS_SCHEDULE", "0 * * * *"),
 			ActiveUserLookback:  envDuration("ACTIVE_USER_LOOKBACK", 168*time.Hour),
 		},

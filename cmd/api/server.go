@@ -48,9 +48,10 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, geminiClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	exerciseService := service.NewExerciseService(repos.Settings, repos.Words, repos.States, repos.ExercisePacks, repos.LLMRuns, geminiClient, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, geminiClient, clock, logger)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
-	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, exerciseService, repos.LLMRuns, apihttp.BuildInfo{
+	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, exerciseService, dynamicReviewService, repos.LLMRuns, apihttp.BuildInfo{
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,
@@ -59,10 +60,12 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	var appScheduler *scheduler.Scheduler
 	if cfg.Scheduler.Enabled {
 		appScheduler, err = scheduler.New(logger, scheduler.Dependencies{
-			Users:           repos.Users,
-			LearningService: learningService,
-			Clock:           clock,
-			Lookback:        cfg.Scheduler.ActiveUserLookback,
+			Users:                repos.Users,
+			LearningService:      learningService,
+			PoolService:          poolService,
+			DynamicReviewService: dynamicReviewService,
+			Clock:                clock,
+			Lookback:             cfg.Scheduler.ActiveUserLookback,
 		}, cfg.Scheduler.PrewarmCron, cfg.Scheduler.WeaknessRefreshCron)
 		if err != nil {
 			return fmt.Errorf("create scheduler: %w", err)

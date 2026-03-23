@@ -288,6 +288,19 @@ func (r *PoolRepository) IncrementNewCount(ctx context.Context, poolID uuid.UUID
 	return mapError(err)
 }
 
+func (r *PoolRepository) IncrementScheduledCounts(ctx context.Context, poolID uuid.UUID, dueReviewDelta int, shortTermDelta int) error {
+	if dueReviewDelta == 0 && shortTermDelta == 0 {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE daily_learning_pools
+		SET due_review_count = due_review_count + $2,
+		    short_term_count = short_term_count + $3
+		WHERE id = $1
+	`, poolID, dueReviewDelta, shortTermDelta)
+	return mapError(err)
+}
+
 func (r *PoolRepository) IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error {
 	if delta == 0 {
 		return nil

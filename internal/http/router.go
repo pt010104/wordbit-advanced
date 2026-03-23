@@ -23,29 +23,31 @@ type BuildInfo struct {
 }
 
 type Handler struct {
-	logger     *slog.Logger
-	db         *pgxpool.Pool
-	build      BuildInfo
-	settings   *service.SettingsService
-	dictionary *service.DictionaryService
-	pools      *service.PoolService
-	learning   *service.LearningService
-	exercise   *service.ExerciseService
-	llmRuns    service.LLMRunRepository
+	logger        *slog.Logger
+	db            *pgxpool.Pool
+	build         BuildInfo
+	settings      *service.SettingsService
+	dictionary    *service.DictionaryService
+	pools         *service.PoolService
+	learning      *service.LearningService
+	exercise      *service.ExerciseService
+	dynamicReview *service.DynamicReviewService
+	llmRuns       service.LLMRunRepository
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, exercise *service.ExerciseService, llmRuns service.LLMRunRepository, build BuildInfo) nethttp.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, exercise *service.ExerciseService, dynamicReview *service.DynamicReviewService, llmRuns service.LLMRunRepository, build BuildInfo) nethttp.Handler {
 	mw := NewMiddleware(logger, verifier, identity, cfg.AdminToken)
 	h := &Handler{
-		logger:     logger,
-		db:         db,
-		build:      build,
-		settings:   settings,
-		dictionary: dictionary,
-		pools:      pools,
-		learning:   learning,
-		exercise:   exercise,
-		llmRuns:    llmRuns,
+		logger:        logger,
+		db:            db,
+		build:         build,
+		settings:      settings,
+		dictionary:    dictionary,
+		pools:         pools,
+		learning:      learning,
+		exercise:      exercise,
+		dynamicReview: dynamicReview,
+		llmRuns:       llmRuns,
 	}
 
 	r := chi.NewRouter()

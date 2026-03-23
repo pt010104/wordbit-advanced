@@ -62,13 +62,23 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 	}
 
 	now := s.clock.Now()
-	localDate, startUTC, endUTC, loc, err := domain.BoundsForLocalDate(now, settings.Timezone)
+	localDate, _, endUTC, loc, err := domain.BoundsForLocalDate(now, settings.Timezone)
 	if err != nil {
 		return DailyPoolView{}, err
 	}
 
 	pool, items, err := s.poolRepo.GetByLocalDate(ctx, user.ID, localDate)
 	if err == nil {
+		reconciled, recErr := s.reconcileScheduledPoolItems(ctx, user.ID, pool, items, endUTC)
+		if recErr != nil {
+			return DailyPoolView{}, recErr
+		}
+		if reconciled {
+			pool, items, err = s.poolRepo.GetByLocalDate(ctx, user.ID, localDate)
+			if err != nil {
+				return DailyPoolView{}, err
+			}
+		}
 		return DailyPoolView{
 			Pool:  pool,
 			Items: items,
@@ -104,11 +114,7 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 		return DailyPoolView{}, err
 	}
 
-	shortTermStates, err := s.stateRepo.ListDueWithinWindow(ctx, user.ID, startUTC, endUTC, true)
-	if err != nil {
-		return DailyPoolView{}, err
-	}
-	reviewStates, err := s.stateRepo.ListDueWithinWindow(ctx, user.ID, startUTC, endUTC, false)
+	shortTermStates, reviewStates, err := s.listScheduledDueStates(ctx, user.ID, endUTC)
 	if err != nil {
 		return DailyPoolView{}, err
 	}
@@ -507,6 +513,8 @@ func (s *PoolService) computeUnknownDailyNeed(
 
 func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*domain.DailyLearningPoolItem, *time.Time) {
 	var nextDue *time.Time
+	var selected *domain.DailyLearningPoolItem
+	selectedPriority := 0
 	for i := range items {
 		item := items[i]
 		if item.Status != domain.PoolItemStatusPending {
@@ -518,10 +526,136 @@ func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*
 			}
 			continue
 		}
-		copyItem := item
-		return &copyItem, nil
+
+		priority := poolItemPriority(item.ItemType)
+		if selected == nil {
+			copyItem := item
+			selected = &copyItem
+			selectedPriority = priority
+			continue
+		}
+		if priority < selectedPriority || (priority == selectedPriority && compareActionableItems(item, *selected) < 0) {
+			copyItem := item
+			selected = &copyItem
+			selectedPriority = priority
+		}
+	}
+	if selected != nil {
+		return selected, nil
 	}
 	return nil, nextDue
+}
+
+func (s *PoolService) listScheduledDueStates(ctx context.Context, userID uuid.UUID, endUTC time.Time) ([]domain.UserWordState, []domain.UserWordState, error) {
+	shortTermStates, err := s.stateRepo.ListDueWithinWindow(ctx, userID, time.Time{}, endUTC, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	reviewStates, err := s.stateRepo.ListDueWithinWindow(ctx, userID, time.Time{}, endUTC, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	return shortTermStates, reviewStates, nil
+}
+
+func (s *PoolService) reconcileScheduledPoolItems(
+	ctx context.Context,
+	userID uuid.UUID,
+	pool domain.DailyLearningPool,
+	items []domain.DailyLearningPoolItem,
+	endUTC time.Time,
+) (bool, error) {
+	shortTermStates, reviewStates, err := s.listScheduledDueStates(ctx, userID, endUTC)
+	if err != nil {
+		return false, err
+	}
+
+	existing := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item.ItemType != domain.PoolItemTypeShortTerm && item.ItemType != domain.PoolItemTypeReview {
+			continue
+		}
+		existing[scheduledPoolKey(item.WordID, item.ItemType)] = struct{}{}
+	}
+
+	missingShort := filterMissingScheduledStates(shortTermStates, domain.PoolItemTypeShortTerm, existing)
+	missingReview := filterMissingScheduledStates(reviewStates, domain.PoolItemTypeReview, existing)
+	if len(missingShort) == 0 && len(missingReview) == 0 {
+		return false, nil
+	}
+
+	wordIDs := append(extractStateWordIDs(missingShort), extractStateWordIDs(missingReview)...)
+	wordMap, err := s.loadWordMap(ctx, wordIDs)
+	if err != nil {
+		return false, err
+	}
+
+	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, pool.ID)
+	if err != nil {
+		return false, err
+	}
+
+	appended := append(
+		buildReviewItems(userID, pool.ID, missingShort, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled),
+		buildReviewItems(userID, pool.ID, missingReview, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled)...,
+	)
+	for index := range appended {
+		appended[index].Ordinal = lastOrdinal + index + 1
+		if _, err := s.poolRepo.AppendPoolItem(ctx, appended[index]); err != nil {
+			return false, err
+		}
+	}
+	if err := s.poolRepo.IncrementScheduledCounts(ctx, pool.ID, len(missingReview), len(missingShort)); err != nil {
+		return false, err
+	}
+
+	s.logger.Info("reconciled scheduled pool items",
+		"user_id", userID,
+		"pool_id", pool.ID,
+		"local_date", pool.LocalDate,
+		"appended_short_term", len(missingShort),
+		"appended_review", len(missingReview),
+	)
+	return true, nil
+}
+
+func filterMissingScheduledStates(states []domain.UserWordState, itemType domain.PoolItemType, existing map[string]struct{}) []domain.UserWordState {
+	out := make([]domain.UserWordState, 0, len(states))
+	for _, state := range states {
+		if _, ok := existing[scheduledPoolKey(state.WordID, itemType)]; ok {
+			continue
+		}
+		out = append(out, state)
+	}
+	return out
+}
+
+func scheduledPoolKey(wordID uuid.UUID, itemType domain.PoolItemType) string {
+	return wordID.String() + "|" + string(itemType)
+}
+
+func compareActionableItems(left domain.DailyLearningPoolItem, right domain.DailyLearningPoolItem) int {
+	if diff := compareOptionalActionableDueAt(left.DueAt, right.DueAt); diff != 0 {
+		return diff
+	}
+	return compareInts(left.Ordinal, right.Ordinal)
+}
+
+func compareOptionalActionableDueAt(left *time.Time, right *time.Time) int {
+	switch {
+	case left == nil && right == nil:
+		return 0
+	case left == nil:
+		return 1
+	case right == nil:
+		return -1
+	case left.Before(*right):
+		return -1
+	case left.After(*right):
+		return 1
+	default:
+		return 0
+	}
 }
 
 func (s *PoolService) ForceRebuildTodayPool(ctx context.Context, user domain.User) (DailyPoolView, error) {
