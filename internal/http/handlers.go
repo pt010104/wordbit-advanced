@@ -191,6 +191,41 @@ func (h *Handler) AppendMoreWords(w nethttp.ResponseWriter, r *nethttp.Request) 
 	writeJSON(w, nethttp.StatusOK, view)
 }
 
+func (h *Handler) GenerateDynamicReviewPrompts(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.dynamicReview == nil {
+		writeError(w, errors.New("dynamic review service unavailable"))
+		return
+	}
+
+	view, err := h.pools.GetOrCreateDailyPool(r.Context(), user)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	result, err := h.dynamicReview.Prewarm(r.Context(), user.ID, view.Pool.LocalDate, view.Items)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	switch {
+	case result.EligibleCount == 0:
+		result.Message = "No Mode 2/3 scheduled cards need dynamic prompts right now."
+	case result.GeneratedCount == 0:
+		result.Message = "Today's dynamic review prompts are already ready."
+	default:
+		result.Message = fmt.Sprintf("Generated %d dynamic review prompts for today.", result.GeneratedCount)
+	}
+
+	writeJSON(w, nethttp.StatusOK, result)
+}
+
 func (h *Handler) StartExercise(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)
 	if err != nil {

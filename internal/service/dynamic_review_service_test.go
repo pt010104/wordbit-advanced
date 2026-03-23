@@ -82,8 +82,15 @@ func TestDynamicReviewPrewarmChunksAndRecordsLLMRuns(t *testing.T) {
 	generator := &dynamicReviewGeneratorStub{}
 	service := NewDynamicReviewService(repo, llmRepo, generator, dynamicReviewClock{now: time.Date(2026, 3, 23, 0, 10, 5, 0, time.UTC)}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
 
-	if err := service.Prewarm(context.Background(), userID, "2026-03-23", items); err != nil {
+	result, err := service.Prewarm(context.Background(), userID, "2026-03-23", items)
+	if err != nil {
 		t.Fatalf("Prewarm() error = %v", err)
+	}
+	if result.EligibleCount != dynamicReviewPromptChunkSize+1 {
+		t.Fatalf("expected eligible_count=%d, got %d", dynamicReviewPromptChunkSize+1, result.EligibleCount)
+	}
+	if result.GeneratedCount != dynamicReviewPromptChunkSize+1 {
+		t.Fatalf("expected generated_count=%d, got %d", dynamicReviewPromptChunkSize+1, result.GeneratedCount)
 	}
 	if len(generator.calls) != 2 {
 		t.Fatalf("expected 2 generator calls, got %d", len(generator.calls))

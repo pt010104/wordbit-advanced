@@ -39,6 +39,13 @@ type DynamicReviewPromptGenerationInput struct {
 	Items     []DynamicReviewPromptRequestItem
 }
 
+type DynamicReviewGenerationResult struct {
+	LocalDate      string `json:"local_date"`
+	EligibleCount  int    `json:"eligible_count"`
+	GeneratedCount int    `json:"generated_count"`
+	Message        string `json:"message,omitempty"`
+}
+
 type DailyPoolView struct {
 	Pool        domain.DailyLearningPool       `json:"pool"`
 	Items       []domain.DailyLearningPoolItem `json:"items"`

@@ -80,9 +80,14 @@ func (s *DynamicReviewService) OverlayCardOnly(ctx context.Context, userID uuid.
 	return applyDynamicPrompt(item, prompt.Payload), true, nil
 }
 
-func (s *DynamicReviewService) Prewarm(ctx context.Context, userID uuid.UUID, localDate string, items []domain.DailyLearningPoolItem) error {
-	_, err := s.ensurePrompts(ctx, userID, localDate, items, dynamicReviewTriggerPrewarm, nil)
-	return err
+func (s *DynamicReviewService) Prewarm(ctx context.Context, userID uuid.UUID, localDate string, items []domain.DailyLearningPoolItem) (DynamicReviewGenerationResult, error) {
+	result := DynamicReviewGenerationResult{
+		LocalDate:     localDate,
+		EligibleCount: len(selectDynamicReviewCandidates(items)),
+	}
+	generated, err := s.ensurePrompts(ctx, userID, localDate, items, dynamicReviewTriggerPrewarm, nil)
+	result.GeneratedCount = generated
+	return result, err
 }
 
 func (s *DynamicReviewService) BackfillForCurrentCard(ctx context.Context, userID uuid.UUID, localDate string, items []domain.DailyLearningPoolItem, current domain.DailyLearningPoolItem) error {

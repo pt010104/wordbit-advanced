@@ -158,14 +158,19 @@ func (m *memoryWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([
 }
 
 type memoryStateRepo struct {
-	weakCandidates []domain.UserWordState
+	weakCandidates    []domain.UserWordState
+	dueLearningStates []domain.UserWordState
+	dueReviewStates   []domain.UserWordState
 }
 
 func (m *memoryStateRepo) Get(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) (domain.UserWordState, error) {
 	return domain.UserWordState{}, domain.ErrNotFound
 }
 func (m *memoryStateRepo) ListDueWithinWindow(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time, learningOnly bool) ([]domain.UserWordState, error) {
-	return []domain.UserWordState{}, nil
+	if learningOnly {
+		return append([]domain.UserWordState(nil), m.dueLearningStates...), nil
+	}
+	return append([]domain.UserWordState(nil), m.dueReviewStates...), nil
 }
 func (m *memoryStateRepo) ListWeakCandidates(ctx context.Context, userID uuid.UUID, excludeWordIDs []uuid.UUID, limit int) ([]domain.UserWordState, error) {
 	if limit <= 0 || limit >= len(m.weakCandidates) {
@@ -524,6 +529,88 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	}
 	if len(morePayload.Items) <= len(payload.Items) {
 		t.Fatalf("expected more pool items after append, got before=%d after=%d", len(payload.Items), len(morePayload.Items))
+	}
+}
+
+func TestGenerateDynamicReviewPromptsEndpoint(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	userRepo := &memoryUserRepo{}
+	settingsRepo := &memorySettingsRepo{}
+	wordID := uuid.New()
+	wordRepo := &memoryWordRepo{
+		byID: map[uuid.UUID]domain.Word{
+			wordID: {
+				ID:                wordID,
+				Word:              "forecast",
+				NormalizedForm:    service.NormalizeWord("forecast"),
+				CanonicalForm:     "forecast",
+				Lemma:             "forecast",
+				Level:             domain.CEFRB2,
+				Topic:             "Business",
+				EnglishMeaning:    "a prediction",
+				VietnameseMeaning: "du bao",
+				ExampleSentence1:  "The team prepared a forecast before the launch.",
+			},
+		},
+	}
+	stateRepo := &memoryStateRepo{}
+	poolRepo := &memoryPoolRepo{}
+	eventRepo := &memoryEventRepo{}
+	llmRepo := &memoryLLMRepo{}
+	promptRepo := &memoryDynamicReviewPromptRepo{}
+	clock := service.RealClock{}
+
+	identity := service.NewIdentityService(userRepo, clock)
+	settingsService := service.NewSettingsService(settingsRepo)
+	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
+	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
+	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
+	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(promptRepo, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
+	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
+
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, dynamicReviewService, llmRepo, BuildInfo{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200 for get settings, got %d", resp.Code)
+	}
+
+	dueAt := time.Now().UTC().Add(-30 * time.Minute)
+	stateRepo.dueReviewStates = []domain.UserWordState{{
+		UserID:        userRepo.user.ID,
+		WordID:        wordID,
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &dueAt,
+		WeaknessScore: 0.2,
+		Difficulty:    0.3,
+	}}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/me/daily-pool/dynamic-review/generate", nil)
+	resp = httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200 for dynamic prompt generation, got %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var payload struct {
+		LocalDate      string `json:"local_date"`
+		EligibleCount  int    `json:"eligible_count"`
+		GeneratedCount int    `json:"generated_count"`
+		Message        string `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dynamic prompt generation response: %v", err)
+	}
+	if payload.EligibleCount != 1 || payload.GeneratedCount != 1 {
+		t.Fatalf("expected eligible/generated counts to be 1, got %+v", payload)
+	}
+	if len(promptRepo.prompts) != 1 {
+		t.Fatalf("expected one cached prompt, got %d", len(promptRepo.prompts))
 	}
 }
 

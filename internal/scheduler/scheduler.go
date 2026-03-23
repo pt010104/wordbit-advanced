@@ -104,7 +104,7 @@ func prewarmDynamicReviewPrompts(ctx context.Context, deps Dependencies, logger 
 			logger.Warn("prewarm dynamic review skipped: load pool", "user_id", user.ID, "error", viewErr)
 			continue
 		}
-		if err := deps.DynamicReviewService.Prewarm(ctx, user.ID, view.Pool.LocalDate, view.Items); err != nil {
+		if _, err := deps.DynamicReviewService.Prewarm(ctx, user.ID, view.Pool.LocalDate, view.Items); err != nil {
 			logger.Warn("prewarm dynamic review skipped: prepare prompts", "user_id", user.ID, "local_date", view.Pool.LocalDate, "error", err)
 		}
 	}
