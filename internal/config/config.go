@@ -21,6 +21,7 @@ type Config struct {
 	DefaultTimezone             string
 	AdminToken                  string
 	AutoMigrate                 bool
+	Mode4Enabled                bool
 	MemoryCauseInferenceEnabled bool
 	HTTPReadTimeout             time.Duration
 	HTTPWriteTimeout            time.Duration
@@ -67,6 +68,7 @@ func Load() (Config, error) {
 		DefaultTimezone:             envString("DEFAULT_TIMEZONE", domain.DefaultTimezone),
 		AdminToken:                  envString("ADMIN_TOKEN", ""),
 		AutoMigrate:                 envBool("AUTO_MIGRATE", true),
+		Mode4Enabled:                envBool("MODE4_ENABLED", true),
 		MemoryCauseInferenceEnabled: envBool("MEMORY_CAUSE_INFERENCE_ENABLED", true),
 		HTTPReadTimeout:             envDuration("HTTP_READ_TIMEOUT", 10*time.Second),
 		HTTPWriteTimeout:            envDuration("HTTP_WRITE_TIMEOUT", 45*time.Second),

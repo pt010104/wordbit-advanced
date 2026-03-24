@@ -27,6 +27,12 @@ type ExercisePackGenerationInput struct {
 	ClusterWords []domain.Word
 }
 
+type Mode4PassageGenerationInput struct {
+	UserID      uuid.UUID
+	LocalDate   string
+	TargetWords []domain.Word
+}
+
 type DynamicReviewPromptRequestItem struct {
 	WordID     uuid.UUID
 	ReviewMode domain.ReviewMode
@@ -54,9 +60,11 @@ type DailyPoolView struct {
 }
 
 type CardResponse struct {
-	LocalDate string                        `json:"local_date"`
-	NextDueAt *time.Time                    `json:"next_due_at,omitempty"`
-	PoolItem  *domain.DailyLearningPoolItem `json:"pool_item,omitempty"`
+	CardType  domain.LearnCardType               `json:"card_type"`
+	LocalDate string                             `json:"local_date"`
+	NextDueAt *time.Time                         `json:"next_due_at,omitempty"`
+	PoolItem  *domain.DailyLearningPoolItem      `json:"pool_item,omitempty"`
+	Mode4     *domain.Mode4WeakPassageReviewCard `json:"mode4,omitempty"`
 }
 
 type FirstExposureRequest struct {
@@ -97,4 +105,17 @@ type PronunciationRequest struct {
 
 type UndoLastAnswerRequest struct {
 	PoolItemID uuid.UUID
+}
+
+type Mode4WordRatingInput struct {
+	WordID uuid.UUID
+	Rating domain.ReviewRating
+}
+
+type Mode4CompletionRequest struct {
+	PassageID      uuid.UUID
+	Action         domain.Mode4ReviewAction
+	ResponseTimeMs int
+	ClientEventID  string
+	Ratings        []Mode4WordRatingInput
 }

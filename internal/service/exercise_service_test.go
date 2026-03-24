@@ -82,6 +82,12 @@ func (r *exerciseStateRepo) ListWeakCandidates(ctx context.Context, userID uuid.
 	}
 	return append([]domain.UserWordState(nil), r.weakCandidates[:limit]...), nil
 }
+func (r *exerciseStateRepo) ListMode4Candidates(ctx context.Context, userID uuid.UUID, limit int) ([]domain.UserWordState, error) {
+	if limit <= 0 || limit >= len(r.weakCandidates) {
+		return append([]domain.UserWordState(nil), r.weakCandidates...), nil
+	}
+	return append([]domain.UserWordState(nil), r.weakCandidates[:limit]...), nil
+}
 func (r *exerciseStateRepo) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
 	return nil, nil
 }

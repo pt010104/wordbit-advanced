@@ -270,7 +270,67 @@ func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 			}
 		}
 	}
+	if h.mode4 != nil && card.PoolItem != nil {
+		if overlaid, overlayErr := h.mode4.MaybeOverlayCard(r.Context(), user, card); overlayErr != nil {
+			h.logger.Warn("overlay mode4 card", "user_id", user.ID, "local_date", card.LocalDate, "error", overlayErr)
+		} else {
+			card = overlaid
+		}
+	}
 	writeJSON(w, nethttp.StatusOK, card)
+}
+
+func (h *Handler) SubmitMode4Completion(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.mode4 == nil {
+		writeError(w, errors.New("mode4 review service unavailable"))
+		return
+	}
+	passageID, err := parseUUID(chi.URLParam(r, "passageID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	var payload struct {
+		Action         domain.Mode4ReviewAction `json:"action"`
+		ResponseTimeMs int                      `json:"response_time_ms"`
+		ClientEventID  string                   `json:"client_event_id"`
+		Ratings        []struct {
+			WordID string              `json:"word_id"`
+			Rating domain.ReviewRating `json:"rating"`
+		} `json:"ratings"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	ratings := make([]service.Mode4WordRatingInput, 0, len(payload.Ratings))
+	for _, item := range payload.Ratings {
+		wordID, err := uuid.Parse(item.WordID)
+		if err != nil {
+			writeError(w, domain.ErrValidation)
+			return
+		}
+		ratings = append(ratings, service.Mode4WordRatingInput{
+			WordID: wordID,
+			Rating: item.Rating,
+		})
+	}
+	if err := h.mode4.Complete(r.Context(), user, service.Mode4CompletionRequest{
+		PassageID:      passageID,
+		Action:         payload.Action,
+		ResponseTimeMs: payload.ResponseTimeMs,
+		ClientEventID:  payload.ClientEventID,
+		Ratings:        ratings,
+	}); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h *Handler) SubmitFirstExposure(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -396,6 +456,7 @@ func (h *Handler) UndoLastAnswer(w nethttp.ResponseWriter, r *nethttp.Request) {
 				}
 			}
 			card := service.CardResponse{
+				CardType:  domain.LearnCardTypePoolItem,
 				LocalDate: view.Pool.LocalDate,
 				PoolItem:  &view.Items[idx],
 			}

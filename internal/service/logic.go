@@ -236,6 +236,39 @@ func ApplyBonusPracticeOutcome(state domain.UserWordState, rating domain.ReviewR
 	return state
 }
 
+func ApplyMode4WeakPassageOutcome(state domain.UserWordState, rating domain.ReviewRating, now time.Time, responseTimeMs int) domain.UserWordState {
+	state.LastSeenAt = &now
+	state.LastRating = rating
+
+	baseline := state.WeaknessScore
+	if baseline <= 0 {
+		baseline = ComputeWeaknessScore(state)
+	}
+
+	switch rating {
+	case domain.RatingEasy:
+		multiplier := 0.55
+		if responseTimeMs > 9000 {
+			multiplier = 0.65
+		}
+		state.WeaknessScore = maxFloat(0, baseline*multiplier)
+	case domain.RatingMedium:
+		multiplier := 0.8
+		if responseTimeMs > 9000 {
+			multiplier = 0.9
+		}
+		state.WeaknessScore = maxFloat(0, baseline*multiplier)
+	case domain.RatingHard:
+		state.WrongCount++
+		baseline = maxFloat(baseline, ComputeWeaknessScore(state))
+		state.WeaknessScore = baseline + 0.35
+	default:
+		state.WeaknessScore = baseline
+	}
+
+	return state
+}
+
 func nextConsolidationStep(stage int, rating domain.ReviewRating) (time.Duration, int, domain.WordStatus) {
 	if rating == domain.RatingHard {
 		switch stage {

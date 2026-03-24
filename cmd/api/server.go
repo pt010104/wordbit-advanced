@@ -48,10 +48,14 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, geminiClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	exerciseService := service.NewExerciseService(repos.Settings, repos.Words, repos.States, repos.ExercisePacks, repos.LLMRuns, geminiClient, clock, logger)
+	var mode4Service *service.WeakPassageReviewService
+	if cfg.Mode4Enabled {
+		mode4Service = service.NewWeakPassageReviewService(repos.Words, repos.States, repos.Mode4Reviews, repos.Events, repos.LLMRuns, geminiClient, clock, logger)
+	}
 	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, geminiClient, clock, logger)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
-	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, exerciseService, dynamicReviewService, repos.LLMRuns, apihttp.BuildInfo{
+	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, exerciseService, mode4Service, dynamicReviewService, repos.LLMRuns, apihttp.BuildInfo{
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,

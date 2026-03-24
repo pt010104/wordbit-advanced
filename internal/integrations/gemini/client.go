@@ -351,6 +351,135 @@ func (c *Client) GenerateContextExercisePack(ctx context.Context, input service.
 	return domain.ContextExercisePayload{}, "", lastErr
 }
 
+func (c *Client) GenerateMode4WeakPassage(ctx context.Context, input service.Mode4PassageGenerationInput) (domain.Mode4WeakPassagePayload, string, error) {
+	body := generateRequest{
+		SystemInstruction: contentBlock{
+			Parts: []part{{Text: mode4WeakPassageSystemInstruction}},
+		},
+		Contents: []contentBlock{{
+			Role:  "user",
+			Parts: []part{{Text: buildMode4WeakPassagePrompt(input)}},
+		}},
+		GenerationConfig: generationConfig{
+			Temperature:      c.temperature,
+			ResponseMimeType: "application/json",
+			MaxOutputTokens:  c.maxOutputTokens,
+		},
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return domain.Mode4WeakPassagePayload{}, "", fmt.Errorf("marshal gemini mode4 request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
+	var lastErr error
+	for attempt := 1; attempt <= maxInt(c.maxRetries, 1); attempt++ {
+		start := time.Now()
+		c.logger.Info("gemini mode4 generate request",
+			"model", c.model,
+			"attempt", attempt,
+			"target_count", len(input.TargetWords),
+			"timeout_ms", c.timeout.Milliseconds(),
+			"payload_size", len(payload),
+		)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return domain.Mode4WeakPassagePayload{}, "", fmt.Errorf("create gemini mode4 request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("gemini mode4 request failed: %w", err)
+			c.logger.Warn("gemini mode4 generate request failed",
+				"model", c.model,
+				"attempt", attempt,
+				"target_count", len(input.TargetWords),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"error", err,
+			)
+			c.backoff(attempt)
+			continue
+		}
+
+		rawBytes, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read gemini mode4 response: %w", readErr)
+			c.logger.Warn("gemini mode4 response read failed",
+				"model", c.model,
+				"attempt", attempt,
+				"target_count", len(input.TargetWords),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"error", readErr,
+			)
+			c.backoff(attempt)
+			continue
+		}
+		raw := string(rawBytes)
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("gemini mode4 server error: status=%d body=%s", resp.StatusCode, raw)
+			c.logger.Warn("gemini mode4 server error",
+				"model", c.model,
+				"attempt", attempt,
+				"target_count", len(input.TargetWords),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+			)
+			c.backoff(attempt)
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			c.logger.Warn("gemini mode4 client error",
+				"model", c.model,
+				"attempt", attempt,
+				"target_count", len(input.TargetWords),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+			)
+			return domain.Mode4WeakPassagePayload{}, raw, fmt.Errorf("gemini mode4 error: status=%d body=%s", resp.StatusCode, raw)
+		}
+
+		parsed, text, err := parseMode4WeakPassageGenerateResponse(rawBytes)
+		if err != nil {
+			lastErr = fmt.Errorf("parse gemini mode4 response: %w", err)
+			c.logger.Warn("gemini mode4 parse failed",
+				"model", c.model,
+				"attempt", attempt,
+				"target_count", len(input.TargetWords),
+				"timeout_ms", c.timeout.Milliseconds(),
+				"duration_ms", time.Since(start).Milliseconds(),
+				"status_code", resp.StatusCode,
+				"response_size", len(rawBytes),
+				"error", err,
+			)
+			c.backoff(attempt)
+			continue
+		}
+
+		c.logger.Info("gemini mode4 response",
+			"model", c.model,
+			"attempt", attempt,
+			"target_count", len(input.TargetWords),
+			"timeout_ms", c.timeout.Milliseconds(),
+			"duration_ms", time.Since(start).Milliseconds(),
+			"status_code", resp.StatusCode,
+			"response_size", len(rawBytes),
+			"text_size", len(text),
+		)
+		return parsed, text, nil
+	}
+	return domain.Mode4WeakPassagePayload{}, "", lastErr
+}
+
 func (c *Client) GenerateDynamicReviewPrompts(ctx context.Context, input service.DynamicReviewPromptGenerationInput) (domain.DynamicReviewPromptBatchPayload, string, error) {
 	body := generateRequest{
 		SystemInstruction: contentBlock{
@@ -547,6 +676,13 @@ Do not wrap the JSON in markdown fences.
 Do not ask follow-up questions.
 `
 
+const mode4WeakPassageSystemInstruction = `
+You generate reusable weak-word review passages for a production vocabulary learning service.
+Always return valid JSON only.
+Do not wrap the JSON in markdown fences.
+Do not ask follow-up questions.
+`
+
 const dynamicReviewSystemInstruction = `
 You generate fresh prompt-only overrides for vocabulary review cards in a production learning service.
 Always return valid JSON only.
@@ -596,10 +732,53 @@ Output format:
   ],
   "summary_tip": "string"
 }
-
 Selected weak words:
 `, input.CEFRLevel, len(input.ClusterWords)))
 	for index, word := range input.ClusterWords {
+		builder.WriteString(fmt.Sprintf(`
+%d. word="%s"
+   normalized_form="%s"
+   canonical_form="%s"
+   lemma="%s"
+   part_of_speech="%s"
+   topic="%s"
+   level="%s"
+   english_meaning="%s"
+   vietnamese_meaning="%s"
+   example_sentence_1="%s"
+   example_sentence_2="%s"
+`, index+1, word.Word, word.NormalizedForm, word.CanonicalForm, word.Lemma, word.PartOfSpeech, word.Topic, word.Level, word.EnglishMeaning, word.VietnameseMeaning, word.ExampleSentence1, word.ExampleSentence2))
+	}
+	return builder.String()
+}
+
+func buildMode4WeakPassagePrompt(input service.Mode4PassageGenerationInput) string {
+	var builder strings.Builder
+	builder.WriteString(`
+Generate one English weak-word review passage for a Learn-flow card.
+
+Requirements:
+- return strict JSON only
+- output must be English only
+- everyday, natural tone
+- at most 10 sentences
+- use every selected target word at least once
+- mark every target word occurrence with markdown **double-asterisk** markers
+- prefer the exact selected surface form of each target word
+- do not ask questions
+- do not include blanks
+- do not include multiple-choice content
+- do not add explanations outside the JSON
+
+Output format:
+{
+  "plain_passage_text": "string",
+  "marked_passage_markdown": "string"
+}
+
+Selected weak words:
+`)
+	for index, word := range input.TargetWords {
 		builder.WriteString(fmt.Sprintf(`
 %d. word="%s"
    normalized_form="%s"

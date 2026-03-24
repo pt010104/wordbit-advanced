@@ -101,6 +101,38 @@ func (r *WordStateRepository) ListWeakCandidates(ctx context.Context, userID uui
 	return states, rows.Err()
 }
 
+func (r *WordStateRepository) ListMode4Candidates(ctx context.Context, userID uuid.UUID, limit int) ([]domain.UserWordState, error) {
+	if limit <= 0 {
+		return []domain.UserWordState{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds, stability, difficulty,
+		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
+		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
+		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
+		       known_at, created_at, updated_at
+		FROM user_word_states
+		WHERE user_id = $1
+		  AND status IN ('learning', 'review')
+		ORDER BY next_review_at ASC NULLS LAST, weakness_score DESC, word_id ASC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+
+	var states []domain.UserWordState
+	for rows.Next() {
+		state, scanErr := scanState(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		states = append(states, state)
+	}
+	return states, rows.Err()
+}
+
 func (r *WordStateRepository) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds, stability, difficulty,

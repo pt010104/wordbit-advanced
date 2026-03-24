@@ -320,3 +320,29 @@ func TestApplyBonusPracticeOutcomeEasyKeepsReducingAcrossRepeats(t *testing.T) {
 		t.Fatalf("expected repeated easy bonus practice to continue reducing weakness, got %.2f from %.2f", second.WeaknessScore, first.WeaknessScore)
 	}
 }
+
+func TestApplyMode4WeakPassageOutcomeDoesNotMoveNextReviewAtOrLastMode(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 24, 9, 0, 0, 0, time.UTC)
+	nextReview := now.Add(48 * time.Hour)
+	state := domain.UserWordState{
+		Status:        domain.WordStatusReview,
+		NextReviewAt:  &nextReview,
+		WeaknessScore: 1.8,
+		Stability:     1.1,
+		Difficulty:    0.7,
+		LastMode:      domain.ReviewModeMultipleChoice,
+	}
+
+	updated := ApplyMode4WeakPassageOutcome(state, domain.RatingEasy, now, 1900)
+	if updated.NextReviewAt == nil || !updated.NextReviewAt.Equal(nextReview) {
+		t.Fatalf("expected next review to stay unchanged, got %#v", updated.NextReviewAt)
+	}
+	if updated.LastMode != state.LastMode {
+		t.Fatalf("expected last mode to stay unchanged, got %s", updated.LastMode)
+	}
+	if updated.LastRating != domain.RatingEasy {
+		t.Fatalf("expected last rating to update to easy, got %s", updated.LastRating)
+	}
+}

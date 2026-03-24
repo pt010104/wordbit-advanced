@@ -169,6 +169,16 @@ func (r *replenishStateRepo) ListWeakCandidates(ctx context.Context, userID uuid
 	return out, nil
 }
 
+func (r *replenishStateRepo) ListMode4Candidates(ctx context.Context, userID uuid.UUID, limit int) ([]domain.UserWordState, error) {
+	if limit <= 0 || len(r.weakCandidates) == 0 {
+		return nil, nil
+	}
+	if len(r.weakCandidates) < limit {
+		limit = len(r.weakCandidates)
+	}
+	return append([]domain.UserWordState(nil), r.weakCandidates[:limit]...), nil
+}
+
 func (r *replenishStateRepo) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
 	out := make([]domain.UserWordState, 0, len(r.states))
 	for _, state := range r.states {

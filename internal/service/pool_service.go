@@ -211,6 +211,7 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 	now := s.clock.Now()
 	if item, _ := findNextCardInItems(view.Items, now); item != nil {
 		return CardResponse{
+			CardType:  domain.LearnCardTypePoolItem,
 			LocalDate: view.Pool.LocalDate,
 			PoolItem:  item,
 		}, nil
@@ -223,11 +224,13 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 		}
 		if item, nextDue := findNextCardInItems(view.Items, now); item != nil {
 			return CardResponse{
+				CardType:  domain.LearnCardTypePoolItem,
 				LocalDate: view.Pool.LocalDate,
 				PoolItem:  item,
 			}, nil
 		} else {
 			return CardResponse{
+				CardType:  domain.LearnCardTypePoolItem,
 				LocalDate: view.Pool.LocalDate,
 				NextDueAt: nextDue,
 			}, nil
@@ -241,11 +244,13 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 		}
 		if item, nextDue := findNextCardInItems(view.Items, now); item != nil {
 			return CardResponse{
+				CardType:  domain.LearnCardTypePoolItem,
 				LocalDate: view.Pool.LocalDate,
 				PoolItem:  item,
 			}, nil
 		} else {
 			return CardResponse{
+				CardType:  domain.LearnCardTypePoolItem,
 				LocalDate: view.Pool.LocalDate,
 				NextDueAt: nextDue,
 			}, nil
@@ -253,6 +258,7 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 	} else {
 		_, nextDue := findNextCardInItems(view.Items, now)
 		return CardResponse{
+			CardType:  domain.LearnCardTypePoolItem,
 			LocalDate: view.Pool.LocalDate,
 			NextDueAt: nextDue,
 		}, nil

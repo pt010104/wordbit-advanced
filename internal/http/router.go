@@ -31,11 +31,12 @@ type Handler struct {
 	pools         *service.PoolService
 	learning      *service.LearningService
 	exercise      *service.ExerciseService
+	mode4         *service.WeakPassageReviewService
 	dynamicReview *service.DynamicReviewService
 	llmRuns       service.LLMRunRepository
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, exercise *service.ExerciseService, dynamicReview *service.DynamicReviewService, llmRuns service.LLMRunRepository, build BuildInfo) nethttp.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, exercise *service.ExerciseService, mode4 *service.WeakPassageReviewService, dynamicReview *service.DynamicReviewService, llmRuns service.LLMRunRepository, build BuildInfo) nethttp.Handler {
 	mw := NewMiddleware(logger, verifier, identity, cfg.AdminToken)
 	h := &Handler{
 		logger:        logger,
@@ -46,6 +47,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 		pools:         pools,
 		learning:      learning,
 		exercise:      exercise,
+		mode4:         mode4,
 		dynamicReview: dynamicReview,
 		llmRuns:       llmRuns,
 	}
@@ -72,6 +74,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Post("/me/daily-pool/dynamic-review/generate", h.GenerateDynamicReviewPrompts)
 			r.Post("/me/exercise/start", h.StartExercise)
 			r.Get("/me/cards/next", h.GetNextCard)
+			r.Post("/me/cards/mode4/{passageID}/complete", h.SubmitMode4Completion)
 			r.Post("/me/cards/{poolItemID}/first-exposure", h.SubmitFirstExposure)
 			r.Post("/me/cards/{poolItemID}/review", h.SubmitReview)
 			r.Post("/me/cards/{poolItemID}/undo-last-answer", h.UndoLastAnswer)

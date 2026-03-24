@@ -32,6 +32,7 @@ type Repositories struct {
 	Events               *LearningEventRepository
 	LLMRuns              *LLMRunRepository
 	ExercisePacks        *ExercisePackRepository
+	Mode4Reviews         *Mode4ReviewRepository
 	DynamicReviewPrompts *DynamicReviewPromptRepository
 }
 
@@ -45,6 +46,7 @@ func NewRepositories(pool *pgxpool.Pool) *Repositories {
 		Events:               &LearningEventRepository{pool: pool},
 		LLMRuns:              &LLMRunRepository{pool: pool},
 		ExercisePacks:        &ExercisePackRepository{pool: pool},
+		Mode4Reviews:         &Mode4ReviewRepository{pool: pool},
 		DynamicReviewPrompts: &DynamicReviewPromptRepository{pool: pool},
 	}
 }
@@ -166,6 +168,18 @@ func nullableBoolPointer(value sql.NullBool) *bool {
 	return &copied
 }
 
+func extractAudioURL(metadata domain.JSONMap) string {
+	raw, ok := metadata["audio_url"]
+	if !ok {
+		raw = metadata["audioUrl"]
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
 func scanUser(row pgx.Row) (domain.User, error) {
 	var user domain.User
 	err := row.Scan(
@@ -224,6 +238,7 @@ func scanWord(row pgx.Row) (domain.Word, error) {
 	)
 	word.CommonRate = nullableCommonRatePointer(commonRate)
 	word.SourceMetadata = toJSONMap(metadata)
+	word.AudioURL = extractAudioURL(word.SourceMetadata)
 	return word, mapError(err)
 }
 
@@ -349,6 +364,7 @@ func scanPoolItem(row pgx.Row) (domain.DailyLearningPoolItem, error) {
 	word.CommonRate = nullableCommonRatePointer(commonRate)
 	word.SourceMetadata = toJSONMap(wordMetadata)
 	if word.ID != uuid.Nil {
+		word.AudioURL = extractAudioURL(word.SourceMetadata)
 		item.Word = &word
 	}
 	return item, mapError(err)
@@ -448,6 +464,68 @@ func scanContextExercisePack(row pgx.Row) (domain.ContextExercisePack, error) {
 	return pack, mapError(err)
 }
 
+func scanMode4ReviewPassage(row pgx.Row) (domain.Mode4ReviewPassage, error) {
+	var passage domain.Mode4ReviewPassage
+	var wordIDsJSON []byte
+	var sourceWordsJSON []byte
+	var spansJSON []byte
+	var llmRunID uuid.NullUUID
+	err := row.Scan(
+		&passage.ID,
+		&passage.UserID,
+		&passage.GenerationNumber,
+		&wordIDsJSON,
+		&sourceWordsJSON,
+		&passage.PlainPassageText,
+		&passage.MarkedPassageMarkdown,
+		&spansJSON,
+		&passage.Status,
+		&passage.SkipCount,
+		&passage.LastSkippedAt,
+		&passage.CompletedAt,
+		&llmRunID,
+		&passage.CreatedAt,
+		&passage.UpdatedAt,
+	)
+	if llmRunID.Valid {
+		passage.LLMRunID = &llmRunID.UUID
+	}
+	if len(wordIDsJSON) > 0 {
+		if err := json.Unmarshal(wordIDsJSON, &passage.WordIDs); err != nil {
+			return domain.Mode4ReviewPassage{}, mapError(err)
+		}
+	}
+	if len(sourceWordsJSON) > 0 {
+		if err := json.Unmarshal(sourceWordsJSON, &passage.SourceWords); err != nil {
+			return domain.Mode4ReviewPassage{}, mapError(err)
+		}
+	}
+	if len(spansJSON) > 0 {
+		if err := json.Unmarshal(spansJSON, &passage.PassageSpans); err != nil {
+			return domain.Mode4ReviewPassage{}, mapError(err)
+		}
+	}
+	return passage, mapError(err)
+}
+
+func scanMode4ReviewState(row pgx.Row) (domain.Mode4ReviewState, error) {
+	var state domain.Mode4ReviewState
+	var activePassageID uuid.NullUUID
+	err := row.Scan(
+		&state.UserID,
+		&state.GenerationCount,
+		&activePassageID,
+		&state.LastCompletedAt,
+		&state.NextEligibleAt,
+		&state.CreatedAt,
+		&state.UpdatedAt,
+	)
+	if activePassageID.Valid {
+		state.ActivePassageID = &activePassageID.UUID
+	}
+	return state, mapError(err)
+}
+
 func scanDynamicReviewPrompt(row pgx.Row) (domain.DailyDynamicReviewPrompt, error) {
 	var prompt domain.DailyDynamicReviewPrompt
 	var localDate time.Time
@@ -515,6 +593,7 @@ func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {
 	)
 	entry.Word.CommonRate = nullableCommonRatePointer(commonRate)
 	entry.Word.SourceMetadata = toJSONMap(metadata)
+	entry.Word.AudioURL = extractAudioURL(entry.Word.SourceMetadata)
 	entry.ListStatus = domain.DictionaryListStatus(listStatus)
 	return entry, mapError(err)
 }
