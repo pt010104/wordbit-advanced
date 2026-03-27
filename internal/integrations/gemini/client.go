@@ -1,11 +1,9 @@
 package gemini
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -18,7 +16,7 @@ import (
 
 type Client struct {
 	baseURL         string
-	model           string
+	models          []string
 	apiKey          string
 	timeout         time.Duration
 	maxRetries      int
@@ -26,12 +24,19 @@ type Client struct {
 	maxOutputTokens int
 	logger          *slog.Logger
 	httpClient      *http.Client
+	quotaCache      *quotaCache
+	now             func() time.Time
+	sleep           func(time.Duration)
 }
 
 func NewClient(cfg config.GeminiConfig, logger *slog.Logger) *Client {
+	models := append([]string(nil), cfg.Models...)
+	if len(models) == 0 {
+		models = []string{"gemini-2.0-flash"}
+	}
 	return &Client{
 		baseURL:         strings.TrimRight(cfg.BaseURL, "/"),
-		model:           cfg.Model,
+		models:          models,
 		apiKey:          cfg.APIKey,
 		timeout:         cfg.Timeout,
 		maxRetries:      cfg.MaxRetries,
@@ -41,6 +46,9 @@ func NewClient(cfg config.GeminiConfig, logger *slog.Logger) *Client {
 		httpClient: &http.Client{
 			Timeout: cfg.Timeout,
 		},
+		quotaCache: newQuotaCache(cfg.RPMLimit, cfg.RPDLimit),
+		now:        time.Now,
+		sleep:      time.Sleep,
 	}
 }
 
@@ -96,123 +104,40 @@ func (c *Client) GenerateCandidates(ctx context.Context, input service.Generatio
 		return nil, "", fmt.Errorf("marshal gemini request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
-	var lastErr error
-	for attempt := 1; attempt <= maxInt(c.maxRetries, 1); attempt++ {
-		start := time.Now()
-		c.logger.Info("gemini generate request",
-			"model", c.model,
-			"attempt", attempt,
+	result, err := executeJSON(c, ctx, payload, requestOperation{
+		requestLog:       "gemini generate request",
+		requestFailedLog: "gemini generate request failed",
+		readFailedLog:    "gemini generate response read failed",
+		serverErrorLog:   "gemini generate server error",
+		clientErrorLog:   "gemini generate client error",
+		parseFailedLog:   "gemini generate parse failed",
+		successLog:       "gemini generate response",
+		createErrPrefix:  "create gemini request",
+		requestErrPrefix: "gemini request failed",
+		readErrPrefix:    "read gemini response",
+		serverErrPrefix:  "gemini server error",
+		clientErrPrefix:  "gemini error",
+		parseErrPrefix:   "parse gemini response",
+		extraFields: []any{
 			"requested_count", input.RequestedCount,
-			"timeout_ms", c.timeout.Milliseconds(),
-			"payload_size", len(payload),
-		)
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-		if err != nil {
-			return nil, "", fmt.Errorf("create gemini request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("gemini request failed: %w", err)
-			c.logger.Warn("gemini generate request failed",
-				"model", c.model,
-				"attempt", attempt,
-				"requested_count", input.RequestedCount,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"error", err,
-			)
-			c.backoff(attempt)
-			continue
-		}
-
-		rawBytes, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = fmt.Errorf("read gemini response: %w", readErr)
-			c.logger.Warn("gemini generate response read failed",
-				"model", c.model,
-				"attempt", attempt,
-				"requested_count", input.RequestedCount,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"error", readErr,
-			)
-			c.backoff(attempt)
-			continue
-		}
-		raw := string(rawBytes)
-		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("gemini server error: status=%d body=%s", resp.StatusCode, raw)
-			c.logger.Warn("gemini generate server error",
-				"model", c.model,
-				"attempt", attempt,
-				"requested_count", input.RequestedCount,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-			)
-			c.backoff(attempt)
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			c.logger.Warn("gemini generate client error",
-				"model", c.model,
-				"attempt", attempt,
-				"requested_count", input.RequestedCount,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-			)
-			return nil, raw, fmt.Errorf("gemini error: status=%d body=%s", resp.StatusCode, raw)
-		}
-
-		parsed, text, err := parseGenerateResponse(rawBytes)
-		if err != nil {
-			lastErr = fmt.Errorf("parse gemini response: %w", err)
-			c.logger.Warn("gemini generate parse failed",
-				"model", c.model,
-				"attempt", attempt,
-				"requested_count", input.RequestedCount,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-				"error", err,
-			)
-			c.backoff(attempt)
-			continue
-		}
-		for i := range parsed {
-			if parsed[i].SourceProvider == "" {
-				parsed[i].SourceProvider = domain.DefaultGeminiProvider
-			}
-			if parsed[i].SourceMetadata == nil {
-				parsed[i].SourceMetadata = domain.JSONMap{}
-			}
-			parsed[i].SourceMetadata["model"] = c.model
-			parsed[i].SourceMetadata["generated_at"] = time.Now().UTC().Format(time.RFC3339)
-		}
-		c.logger.Info("gemini generate response",
-			"model", c.model,
-			"attempt", attempt,
-			"requested_count", input.RequestedCount,
-			"timeout_ms", c.timeout.Milliseconds(),
-			"duration_ms", time.Since(start).Milliseconds(),
-			"status_code", resp.StatusCode,
-			"response_size", len(rawBytes),
-			"candidate_count", len(parsed),
-			"text_size", len(text),
-		)
-		return parsed, text, nil
+		},
+	}, parseGenerateResponse)
+	if err != nil {
+		return nil, result.raw, err
 	}
-	return nil, "", lastErr
+
+	parsed := result.value
+	for i := range parsed {
+		if parsed[i].SourceProvider == "" {
+			parsed[i].SourceProvider = domain.DefaultGeminiProvider
+		}
+		if parsed[i].SourceMetadata == nil {
+			parsed[i].SourceMetadata = domain.JSONMap{}
+		}
+		parsed[i].SourceMetadata["model"] = result.model
+		parsed[i].SourceMetadata["generated_at"] = c.now().UTC().Format(time.RFC3339)
+	}
+	return parsed, result.text, nil
 }
 
 func (c *Client) GenerateContextExercisePack(ctx context.Context, input service.ExercisePackGenerationInput) (domain.ContextExercisePayload, string, error) {
@@ -235,120 +160,29 @@ func (c *Client) GenerateContextExercisePack(ctx context.Context, input service.
 		return domain.ContextExercisePayload{}, "", fmt.Errorf("marshal gemini exercise request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
-	var lastErr error
-	for attempt := 1; attempt <= maxInt(c.maxRetries, 1); attempt++ {
-		start := time.Now()
-		c.logger.Info("gemini exercise generate request",
-			"model", c.model,
-			"attempt", attempt,
+	result, err := executeJSON(c, ctx, payload, requestOperation{
+		requestLog:       "gemini exercise generate request",
+		requestFailedLog: "gemini exercise generate request failed",
+		readFailedLog:    "gemini exercise response read failed",
+		serverErrorLog:   "gemini exercise generate server error",
+		clientErrorLog:   "gemini exercise generate client error",
+		parseFailedLog:   "gemini exercise generate parse failed",
+		successLog:       "gemini exercise generate response",
+		createErrPrefix:  "create gemini exercise request",
+		requestErrPrefix: "gemini exercise request failed",
+		readErrPrefix:    "read gemini exercise response",
+		serverErrPrefix:  "gemini exercise server error",
+		clientErrPrefix:  "gemini exercise error",
+		parseErrPrefix:   "parse gemini exercise response",
+		extraFields: []any{
 			"cluster_size", len(input.ClusterWords),
 			"topic", input.Topic,
-			"timeout_ms", c.timeout.Milliseconds(),
-			"payload_size", len(payload),
-		)
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-		if err != nil {
-			return domain.ContextExercisePayload{}, "", fmt.Errorf("create gemini exercise request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("gemini exercise request failed: %w", err)
-			c.logger.Warn("gemini exercise generate request failed",
-				"model", c.model,
-				"attempt", attempt,
-				"cluster_size", len(input.ClusterWords),
-				"topic", input.Topic,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"error", err,
-			)
-			c.backoff(attempt)
-			continue
-		}
-
-		rawBytes, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = fmt.Errorf("read gemini exercise response: %w", readErr)
-			c.logger.Warn("gemini exercise response read failed",
-				"model", c.model,
-				"attempt", attempt,
-				"cluster_size", len(input.ClusterWords),
-				"topic", input.Topic,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"error", readErr,
-			)
-			c.backoff(attempt)
-			continue
-		}
-		raw := string(rawBytes)
-		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("gemini exercise server error: status=%d body=%s", resp.StatusCode, raw)
-			c.logger.Warn("gemini exercise generate server error",
-				"model", c.model,
-				"attempt", attempt,
-				"cluster_size", len(input.ClusterWords),
-				"topic", input.Topic,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-			)
-			c.backoff(attempt)
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			c.logger.Warn("gemini exercise generate client error",
-				"model", c.model,
-				"attempt", attempt,
-				"cluster_size", len(input.ClusterWords),
-				"topic", input.Topic,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-			)
-			return domain.ContextExercisePayload{}, raw, fmt.Errorf("gemini exercise error: status=%d body=%s", resp.StatusCode, raw)
-		}
-
-		parsed, text, err := parseExerciseGenerateResponse(rawBytes)
-		if err != nil {
-			lastErr = fmt.Errorf("parse gemini exercise response: %w", err)
-			c.logger.Warn("gemini exercise generate parse failed",
-				"model", c.model,
-				"attempt", attempt,
-				"cluster_size", len(input.ClusterWords),
-				"topic", input.Topic,
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-				"error", err,
-			)
-			c.backoff(attempt)
-			continue
-		}
-		c.logger.Info("gemini exercise generate response",
-			"model", c.model,
-			"attempt", attempt,
-			"cluster_size", len(input.ClusterWords),
-			"topic", input.Topic,
-			"timeout_ms", c.timeout.Milliseconds(),
-			"duration_ms", time.Since(start).Milliseconds(),
-			"status_code", resp.StatusCode,
-			"response_size", len(rawBytes),
-			"question_count", len(parsed.Questions),
-			"text_size", len(text),
-		)
-		return parsed, text, nil
+		},
+	}, parseExerciseGenerateResponse)
+	if err != nil {
+		return domain.ContextExercisePayload{}, result.raw, err
 	}
-	return domain.ContextExercisePayload{}, "", lastErr
+	return result.value, result.text, nil
 }
 
 func (c *Client) GenerateMode4WeakPassage(ctx context.Context, input service.Mode4PassageGenerationInput) (domain.Mode4WeakPassagePayload, string, error) {
@@ -371,113 +205,28 @@ func (c *Client) GenerateMode4WeakPassage(ctx context.Context, input service.Mod
 		return domain.Mode4WeakPassagePayload{}, "", fmt.Errorf("marshal gemini mode4 request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
-	var lastErr error
-	for attempt := 1; attempt <= maxInt(c.maxRetries, 1); attempt++ {
-		start := time.Now()
-		c.logger.Info("gemini mode4 generate request",
-			"model", c.model,
-			"attempt", attempt,
+	result, err := executeJSON(c, ctx, payload, requestOperation{
+		requestLog:       "gemini mode4 generate request",
+		requestFailedLog: "gemini mode4 generate request failed",
+		readFailedLog:    "gemini mode4 response read failed",
+		serverErrorLog:   "gemini mode4 server error",
+		clientErrorLog:   "gemini mode4 client error",
+		parseFailedLog:   "gemini mode4 parse failed",
+		successLog:       "gemini mode4 response",
+		createErrPrefix:  "create gemini mode4 request",
+		requestErrPrefix: "gemini mode4 request failed",
+		readErrPrefix:    "read gemini mode4 response",
+		serverErrPrefix:  "gemini mode4 server error",
+		clientErrPrefix:  "gemini mode4 error",
+		parseErrPrefix:   "parse gemini mode4 response",
+		extraFields: []any{
 			"target_count", len(input.TargetWords),
-			"timeout_ms", c.timeout.Milliseconds(),
-			"payload_size", len(payload),
-		)
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-		if err != nil {
-			return domain.Mode4WeakPassagePayload{}, "", fmt.Errorf("create gemini mode4 request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("gemini mode4 request failed: %w", err)
-			c.logger.Warn("gemini mode4 generate request failed",
-				"model", c.model,
-				"attempt", attempt,
-				"target_count", len(input.TargetWords),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"error", err,
-			)
-			c.backoff(attempt)
-			continue
-		}
-
-		rawBytes, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = fmt.Errorf("read gemini mode4 response: %w", readErr)
-			c.logger.Warn("gemini mode4 response read failed",
-				"model", c.model,
-				"attempt", attempt,
-				"target_count", len(input.TargetWords),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"error", readErr,
-			)
-			c.backoff(attempt)
-			continue
-		}
-		raw := string(rawBytes)
-		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("gemini mode4 server error: status=%d body=%s", resp.StatusCode, raw)
-			c.logger.Warn("gemini mode4 server error",
-				"model", c.model,
-				"attempt", attempt,
-				"target_count", len(input.TargetWords),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-			)
-			c.backoff(attempt)
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			c.logger.Warn("gemini mode4 client error",
-				"model", c.model,
-				"attempt", attempt,
-				"target_count", len(input.TargetWords),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-			)
-			return domain.Mode4WeakPassagePayload{}, raw, fmt.Errorf("gemini mode4 error: status=%d body=%s", resp.StatusCode, raw)
-		}
-
-		parsed, text, err := parseMode4WeakPassageGenerateResponse(rawBytes)
-		if err != nil {
-			lastErr = fmt.Errorf("parse gemini mode4 response: %w", err)
-			c.logger.Warn("gemini mode4 parse failed",
-				"model", c.model,
-				"attempt", attempt,
-				"target_count", len(input.TargetWords),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-				"error", err,
-			)
-			c.backoff(attempt)
-			continue
-		}
-
-		c.logger.Info("gemini mode4 response",
-			"model", c.model,
-			"attempt", attempt,
-			"target_count", len(input.TargetWords),
-			"timeout_ms", c.timeout.Milliseconds(),
-			"duration_ms", time.Since(start).Milliseconds(),
-			"status_code", resp.StatusCode,
-			"response_size", len(rawBytes),
-			"text_size", len(text),
-		)
-		return parsed, text, nil
+		},
+	}, parseMode4WeakPassageGenerateResponse)
+	if err != nil {
+		return domain.Mode4WeakPassagePayload{}, result.raw, err
 	}
-	return domain.Mode4WeakPassagePayload{}, "", lastErr
+	return result.value, result.text, nil
 }
 
 func (c *Client) GenerateDynamicReviewPrompts(ctx context.Context, input service.DynamicReviewPromptGenerationInput) (domain.DynamicReviewPromptBatchPayload, string, error) {
@@ -500,113 +249,28 @@ func (c *Client) GenerateDynamicReviewPrompts(ctx context.Context, input service
 		return domain.DynamicReviewPromptBatchPayload{}, "", fmt.Errorf("marshal gemini dynamic review request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
-	var lastErr error
-	for attempt := 1; attempt <= maxInt(c.maxRetries, 1); attempt++ {
-		start := time.Now()
-		c.logger.Info("gemini dynamic review request",
-			"model", c.model,
-			"attempt", attempt,
+	result, err := executeJSON(c, ctx, payload, requestOperation{
+		requestLog:       "gemini dynamic review request",
+		requestFailedLog: "gemini dynamic review request failed",
+		readFailedLog:    "gemini dynamic review response read failed",
+		serverErrorLog:   "gemini dynamic review server error",
+		clientErrorLog:   "gemini dynamic review client error",
+		parseFailedLog:   "gemini dynamic review parse failed",
+		successLog:       "gemini dynamic review response",
+		createErrPrefix:  "create gemini dynamic review request",
+		requestErrPrefix: "gemini dynamic review request failed",
+		readErrPrefix:    "read gemini dynamic review response",
+		serverErrPrefix:  "gemini dynamic review server error",
+		clientErrPrefix:  "gemini dynamic review error",
+		parseErrPrefix:   "parse gemini dynamic review response",
+		extraFields: []any{
 			"item_count", len(input.Items),
-			"timeout_ms", c.timeout.Milliseconds(),
-			"payload_size", len(payload),
-		)
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-		if err != nil {
-			return domain.DynamicReviewPromptBatchPayload{}, "", fmt.Errorf("create gemini dynamic review request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("gemini dynamic review request failed: %w", err)
-			c.logger.Warn("gemini dynamic review request failed",
-				"model", c.model,
-				"attempt", attempt,
-				"item_count", len(input.Items),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"error", err,
-			)
-			c.backoff(attempt)
-			continue
-		}
-
-		rawBytes, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = fmt.Errorf("read gemini dynamic review response: %w", readErr)
-			c.logger.Warn("gemini dynamic review response read failed",
-				"model", c.model,
-				"attempt", attempt,
-				"item_count", len(input.Items),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"error", readErr,
-			)
-			c.backoff(attempt)
-			continue
-		}
-		raw := string(rawBytes)
-		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("gemini dynamic review server error: status=%d body=%s", resp.StatusCode, raw)
-			c.logger.Warn("gemini dynamic review server error",
-				"model", c.model,
-				"attempt", attempt,
-				"item_count", len(input.Items),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-			)
-			c.backoff(attempt)
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			c.logger.Warn("gemini dynamic review client error",
-				"model", c.model,
-				"attempt", attempt,
-				"item_count", len(input.Items),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-			)
-			return domain.DynamicReviewPromptBatchPayload{}, raw, fmt.Errorf("gemini dynamic review error: status=%d body=%s", resp.StatusCode, raw)
-		}
-
-		parsed, text, err := parseDynamicReviewGenerateResponse(rawBytes)
-		if err != nil {
-			lastErr = fmt.Errorf("parse gemini dynamic review response: %w", err)
-			c.logger.Warn("gemini dynamic review parse failed",
-				"model", c.model,
-				"attempt", attempt,
-				"item_count", len(input.Items),
-				"timeout_ms", c.timeout.Milliseconds(),
-				"duration_ms", time.Since(start).Milliseconds(),
-				"status_code", resp.StatusCode,
-				"response_size", len(rawBytes),
-				"error", err,
-			)
-			c.backoff(attempt)
-			continue
-		}
-		c.logger.Info("gemini dynamic review response",
-			"model", c.model,
-			"attempt", attempt,
-			"item_count", len(input.Items),
-			"timeout_ms", c.timeout.Milliseconds(),
-			"duration_ms", time.Since(start).Milliseconds(),
-			"status_code", resp.StatusCode,
-			"response_size", len(rawBytes),
-			"generated_items", len(parsed.Items),
-			"text_size", len(text),
-		)
-		return parsed, text, nil
+		},
+	}, parseDynamicReviewGenerateResponse)
+	if err != nil {
+		return domain.DynamicReviewPromptBatchPayload{}, result.raw, err
 	}
-	return domain.DynamicReviewPromptBatchPayload{}, "", lastErr
+	return result.value, result.text, nil
 }
 
 func (c *Client) backoff(attempt int) {
@@ -614,7 +278,7 @@ func (c *Client) backoff(attempt int) {
 		return
 	}
 	delay := time.Duration(attempt*attempt) * 200 * time.Millisecond
-	time.Sleep(delay)
+	c.sleep(delay)
 }
 
 func buildPrompt(input service.GenerationInput) string {

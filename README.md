@@ -42,8 +42,10 @@ backend/
 
 1. Copy `.env.example` to `.env`.
 2. Set `GEMINI_API_KEY` or `GEMINI_API_KEY_FILE`.
-3. For local auth, keep `DEV_AUTH_BYPASS=true`.
-4. Start dependencies with `docker compose up -d postgres` or run the full stack with `docker compose up --build`.
+3. Set `GEMINI_MODEL` and optionally `GEMINI_MODEL_2` / `GEMINI_MODEL_3` if you want automatic fallback rotation.
+4. Set `GEMINI_RPM_LIMIT` / `GEMINI_RPD_LIMIT` to match your current Gemini tier if you want the backend to skip locally exhausted models before making live requests.
+5. For local auth, keep `DEV_AUTH_BYPASS=true`.
+6. Start dependencies with `docker compose up -d postgres` or run the full stack with `docker compose up --build`.
 
 ## Run Locally
 
@@ -80,6 +82,8 @@ make test-integration
 - Run with environment variables injected by your VPS orchestrator or `.env`
 - Set `DEV_AUTH_BYPASS=false` and configure `AUTH_JWKS_URL`, `AUTH_ISSUER`, and `AUTH_AUDIENCE`
 - Set `GEMINI_API_KEY` through secrets or environment injection
+- Use `GEMINI_MODEL`, `GEMINI_MODEL_2`, and `GEMINI_MODEL_3` to configure fallback model rotation
+- Use `GEMINI_RPM_LIMIT` and `GEMINI_RPD_LIMIT` to match the request quotas of your current Gemini plan
 - `AUTO_MIGRATE=true` is enabled by default for simple VPS deployment; disable it if you prefer an explicit migration step
 - Expose only the backend port and place a reverse proxy in front if you need TLS termination
 

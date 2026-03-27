@@ -33,12 +33,14 @@ type Config struct {
 
 type GeminiConfig struct {
 	BaseURL         string
-	Model           string
+	Models          []string
 	APIKey          string
 	Timeout         time.Duration
 	MaxRetries      int
 	Temperature     float64
 	MaxOutputTokens int
+	RPMLimit        int
+	RPDLimit        int
 }
 
 type AuthConfig struct {
@@ -75,12 +77,14 @@ func Load() (Config, error) {
 		HTTPIdleTimeout:             envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		Gemini: GeminiConfig{
 			BaseURL:         envString("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
-			Model:           envString("GEMINI_MODEL", "gemini-2.0-flash"),
+			Models:          buildGeminiModels(),
 			APIKey:          resolveSecret("GEMINI_API_KEY", "GEMINI_API_KEY_FILE"),
 			Timeout:         envDuration("GEMINI_TIMEOUT", 20*time.Second),
 			MaxRetries:      envInt("GEMINI_MAX_RETRIES", 3),
 			Temperature:     envFloat("GEMINI_TEMPERATURE", 0.4),
 			MaxOutputTokens: envInt("GEMINI_MAX_OUTPUT_TOKENS", 4096),
+			RPMLimit:        envInt("GEMINI_RPM_LIMIT", 0),
+			RPDLimit:        envInt("GEMINI_RPD_LIMIT", 0),
 		},
 		Auth: AuthConfig{
 			DevBypass:  envBool("DEV_AUTH_BYPASS", false),
@@ -110,6 +114,27 @@ func Load() (Config, error) {
 		return Config{}, errors.New("GEMINI_API_KEY or GEMINI_API_KEY_FILE is required")
 	}
 	return cfg, nil
+}
+
+func buildGeminiModels() []string {
+	candidates := []string{
+		envString("GEMINI_MODEL", "gemini-2.0-flash"),
+		strings.TrimSpace(os.Getenv("GEMINI_MODEL_2")),
+		strings.TrimSpace(os.Getenv("GEMINI_MODEL_3")),
+	}
+	models := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, model := range candidates {
+		if model == "" {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+		models = append(models, model)
+	}
+	return models
 }
 
 func resolveSecret(envKey string, fileKey string) string {

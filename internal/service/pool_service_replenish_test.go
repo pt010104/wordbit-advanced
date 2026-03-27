@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"testing"
@@ -493,11 +495,97 @@ func (g *trackingGenerator) GenerateCandidates(ctx context.Context, input Genera
 	}, "{}", nil
 }
 
+type rateLimitedGenerator struct {
+	calls int
+}
+
+func (g *rateLimitedGenerator) GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error) {
+	g.calls++
+	return nil, `{"error":"rate limited"}`, fmt.Errorf("%w: gemini unavailable", domain.ErrRateLimited)
+}
+
+type emptyGenerator struct {
+	calls int
+}
+
+func (g *emptyGenerator) GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error) {
+	g.calls++
+	return nil, "{}", nil
+}
+
 type replenishClock struct {
 	now time.Time
 }
 
 func (c replenishClock) Now() time.Time { return c.now }
+
+func TestGenerateNewWordsStopsAfterRateLimitError(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	now := time.Date(2026, 3, 27, 1, 33, 0, 0, time.UTC)
+	generator := &rateLimitedGenerator{}
+	service := NewPoolService(
+		&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)},
+		&replenishWordRepo{words: map[uuid.UUID]domain.Word{}},
+		&replenishStateRepo{states: map[uuid.UUID]domain.UserWordState{}},
+		&replenishPoolRepo{},
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		generator,
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+		true,
+	)
+
+	settings := domain.DefaultUserSettings(userID)
+	settings.CEFRLevel = domain.CEFRB1
+
+	_, _, _, err := service.generateNewWords(context.Background(), userID, settings, "Environment", 1, nil, now)
+	if err == nil {
+		t.Fatal("expected rate-limited generation error, got nil")
+	}
+	if !errors.Is(err, domain.ErrRateLimited) {
+		t.Fatalf("expected ErrRateLimited, got %v", err)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("expected one generator call on rate limit, got %d", generator.calls)
+	}
+}
+
+func TestGenerateNewWordsKeepsRetryLoopForEmptyCandidates(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	now := time.Date(2026, 3, 27, 1, 33, 0, 0, time.UTC)
+	generator := &emptyGenerator{}
+	service := NewPoolService(
+		&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)},
+		&replenishWordRepo{words: map[uuid.UUID]domain.Word{}},
+		&replenishStateRepo{states: map[uuid.UUID]domain.UserWordState{}},
+		&replenishPoolRepo{},
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		generator,
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+		true,
+	)
+
+	settings := domain.DefaultUserSettings(userID)
+	settings.CEFRLevel = domain.CEFRB1
+
+	_, _, _, err := service.generateNewWords(context.Background(), userID, settings, "Environment", 1, nil, now)
+	if err == nil {
+		t.Fatal("expected empty-generation error, got nil")
+	}
+	if generator.calls != 3 {
+		t.Fatalf("expected retry loop to use 3 attempts, got %d", generator.calls)
+	}
+	if got := err.Error(); got != "unable to generate initial daily pool words: all candidates were rejected" {
+		t.Fatalf("unexpected error: %s", got)
+	}
+}
 
 func TestGetNextCardReplenishesUnknownDailySlotsAtPoolEnd(t *testing.T) {
 	t.Parallel()

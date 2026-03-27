@@ -852,6 +852,9 @@ func (s *PoolService) generateNewWords(
 				"response_size", len(raw),
 				"error", genErr,
 			)
+			if errors.Is(genErr, domain.ErrRateLimited) {
+				break
+			}
 			continue
 		}
 		s.logger.Info("daily pool generation attempt completed",

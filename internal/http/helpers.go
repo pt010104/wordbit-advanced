@@ -28,6 +28,8 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrValidation):
 		status = http.StatusBadRequest
+	case errors.Is(err, domain.ErrRateLimited):
+		status = http.StatusTooManyRequests
 	case errors.Is(err, domain.ErrUnauthorized):
 		status = http.StatusUnauthorized
 	case errors.Is(err, domain.ErrForbidden):
