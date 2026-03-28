@@ -53,10 +53,11 @@ type AuthConfig struct {
 }
 
 type SchedulerConfig struct {
-	Enabled             bool
-	PrewarmCron         string
-	WeaknessRefreshCron string
-	ActiveUserLookback  time.Duration
+	Enabled                  bool
+	DailyPoolPrewarmCron     string
+	DynamicReviewPrewarmCron string
+	WeaknessRefreshCron      string
+	ActiveUserLookback       time.Duration
 }
 
 func Load() (Config, error) {
@@ -95,10 +96,11 @@ func Load() (Config, error) {
 			Audience:   envString("AUTH_AUDIENCE", ""),
 		},
 		Scheduler: SchedulerConfig{
-			Enabled:             envBool("CRON_ENABLED", true),
-			PrewarmCron:         envString("CRON_PREWARM_SCHEDULE", "10 0 * * *"),
-			WeaknessRefreshCron: envString("CRON_WEAKNESS_SCHEDULE", "0 * * * *"),
-			ActiveUserLookback:  envDuration("ACTIVE_USER_LOOKBACK", 168*time.Hour),
+			Enabled:                  envBool("CRON_ENABLED", true),
+			DailyPoolPrewarmCron:     envString("CRON_DAILY_POOL_PREWARM_SCHEDULE", "* * * * *"),
+			DynamicReviewPrewarmCron: envString("CRON_PREWARM_SCHEDULE", "10 0 * * *"),
+			WeaknessRefreshCron:      envString("CRON_WEAKNESS_SCHEDULE", "0 * * * *"),
+			ActiveUserLookback:       envDuration("ACTIVE_USER_LOOKBACK", 168*time.Hour),
 		},
 	}
 

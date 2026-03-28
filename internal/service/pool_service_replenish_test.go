@@ -683,6 +683,149 @@ func TestGetNextCardReplenishesUnknownDailySlotsAtPoolEnd(t *testing.T) {
 	}
 }
 
+func TestGetOrCreateDailyPoolUsesBufferedNewWordQuota(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	now := time.Date(2026, 3, 20, 9, 0, 0, 0, time.UTC)
+	loc, err := time.LoadLocation(domain.DefaultTimezone)
+	if err != nil {
+		t.Fatalf("LoadLocation() error = %v", err)
+	}
+	topic := TopicForDate(now.In(loc))
+
+	wordIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			wordIDs[0]: {ID: wordIDs[0], Word: "adapt", NormalizedForm: "adapt", CanonicalForm: "adapt", Lemma: "adapt", Level: domain.CEFRB1, Topic: topic, EnglishMeaning: "adjust", VietnameseMeaning: "thich nghi"},
+			wordIDs[1]: {ID: wordIDs[1], Word: "clarify", NormalizedForm: "clarify", CanonicalForm: "clarify", Lemma: "clarify", Level: domain.CEFRB1, Topic: topic, EnglishMeaning: "make clear", VietnameseMeaning: "lam ro"},
+			wordIDs[2]: {ID: wordIDs[2], Word: "convey", NormalizedForm: "convey", CanonicalForm: "convey", Lemma: "convey", Level: domain.CEFRB1, Topic: topic, EnglishMeaning: "communicate", VietnameseMeaning: "truyen tai"},
+			wordIDs[3]: {ID: wordIDs[3], Word: "retain", NormalizedForm: "retain", CanonicalForm: "retain", Lemma: "retain", Level: domain.CEFRB1, Topic: topic, EnglishMeaning: "keep", VietnameseMeaning: "giu lai"},
+		},
+		bankWordIDs: append([]uuid.UUID(nil), wordIDs...),
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 2
+	service := NewPoolService(
+		&replenishSettingsRepo{settings: settings},
+		wordRepo,
+		&replenishStateRepo{states: map[uuid.UUID]domain.UserWordState{}},
+		&replenishPoolRepo{},
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&emptyGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
+	)
+
+	view, err := service.GetOrCreateDailyPool(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("GetOrCreateDailyPool returned error: %v", err)
+	}
+	if view.Pool.NewCount != 4 {
+		t.Fatalf("expected buffered new_count 4, got %d", view.Pool.NewCount)
+	}
+	if len(view.Items) != 4 {
+		t.Fatalf("expected 4 buffered new items, got %d", len(view.Items))
+	}
+}
+
+func TestGetNextCardReplenishesBufferedNewWordBatchAtPoolEnd(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	completedWordIDs := []uuid.UUID{uuid.New(), uuid.New()}
+	bufferWordIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	now := time.Date(2026, 3, 20, 9, 0, 0, 0, time.UTC)
+
+	wordRepo := &replenishWordRepo{
+		words: map[uuid.UUID]domain.Word{
+			completedWordIDs[0]: {ID: completedWordIDs[0], Word: "apply", NormalizedForm: "apply", CanonicalForm: "apply", Lemma: "apply", Level: domain.CEFRB1, Topic: "Work/Career", EnglishMeaning: "request", VietnameseMeaning: "ung tuyen"},
+			completedWordIDs[1]: {ID: completedWordIDs[1], Word: "deadline", NormalizedForm: "deadline", CanonicalForm: "deadline", Lemma: "deadline", Level: domain.CEFRB1, Topic: "Work/Career", EnglishMeaning: "time limit", VietnameseMeaning: "han chot"},
+			bufferWordIDs[0]:    {ID: bufferWordIDs[0], Word: "mentor", NormalizedForm: "mentor", CanonicalForm: "mentor", Lemma: "mentor", Level: domain.CEFRB1, Topic: "Work/Career", EnglishMeaning: "experienced advisor", VietnameseMeaning: "nguoi huong dan"},
+			bufferWordIDs[1]:    {ID: bufferWordIDs[1], Word: "network", NormalizedForm: "network", CanonicalForm: "network", Lemma: "network", Level: domain.CEFRB1, Topic: "Work/Career", EnglishMeaning: "professional connection", VietnameseMeaning: "mang luoi"},
+			bufferWordIDs[2]:    {ID: bufferWordIDs[2], Word: "salary", NormalizedForm: "salary", CanonicalForm: "salary", Lemma: "salary", Level: domain.CEFRB1, Topic: "Work/Career", EnglishMeaning: "pay from a job", VietnameseMeaning: "luong"},
+			bufferWordIDs[3]:    {ID: bufferWordIDs[3], Word: "vacancy", NormalizedForm: "vacancy", CanonicalForm: "vacancy", Lemma: "vacancy", Level: domain.CEFRB1, Topic: "Work/Career", EnglishMeaning: "open position", VietnameseMeaning: "vi tri trong"},
+		},
+		bankWordIDs: append([]uuid.UUID(nil), bufferWordIDs...),
+	}
+	completedWord1 := wordRepo.words[completedWordIDs[0]]
+	completedWord2 := wordRepo.words[completedWordIDs[1]]
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			completedWordIDs[0]: {UserID: userID, WordID: completedWordIDs[0], Status: domain.WordStatusKnown},
+			completedWordIDs[1]: {UserID: userID, WordID: completedWordIDs[1], Status: domain.WordStatusKnown},
+		},
+	}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-20",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Work/Career",
+			NewCount:  2,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:                    uuid.New(),
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                completedWordIDs[0],
+				Ordinal:               1,
+				ItemType:              domain.PoolItemTypeNew,
+				Status:                domain.PoolItemStatusCompleted,
+				FirstExposureRequired: true,
+				Word:                  &completedWord1,
+			},
+			{
+				ID:                    uuid.New(),
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                completedWordIDs[1],
+				Ordinal:               2,
+				ItemType:              domain.PoolItemTypeNew,
+				Status:                domain.PoolItemStatusCompleted,
+				FirstExposureRequired: true,
+				Word:                  &completedWord2,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 2
+	service := NewPoolService(
+		&replenishSettingsRepo{settings: settings},
+		wordRepo,
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&emptyGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
+	)
+
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("GetNextCard returned error: %v", err)
+	}
+	if card.PoolItem == nil {
+		t.Fatalf("expected replenished next card, got nil")
+	}
+	pendingNew := 0
+	for _, item := range poolRepo.items {
+		if item.ItemType == domain.PoolItemTypeNew && item.Status == domain.PoolItemStatusPending {
+			pendingNew++
+		}
+	}
+	if pendingNew != 4 {
+		t.Fatalf("expected 4 buffered pending new items, got %d", pendingNew)
+	}
+}
+
 func TestAppendMoreNewWordsAddsLimitSizedBatch(t *testing.T) {
 	t.Parallel()
 
@@ -990,8 +1133,8 @@ func TestGetNextCardPrioritizesUnknownReplenishmentBeforeBonusPractice(t *testin
 	if card.PoolItem.ItemType != domain.PoolItemTypeNew {
 		t.Fatalf("expected replenished new card before weak fallback, got %s", card.PoolItem.ItemType)
 	}
-	if generator.calls != 1 {
-		t.Fatalf("expected generator to run once for unknown replenishment, got %d", generator.calls)
+	if generator.calls == 0 {
+		t.Fatalf("expected generator to run for unknown replenishment, got %d", generator.calls)
 	}
 }
 

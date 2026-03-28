@@ -9,7 +9,7 @@ Production-minded Go backend for a vocabulary learning system. It owns daily poo
 - `pgxpool` repositories
 - Google Gemini via direct REST client
 - Structured JSON logging with `slog`
-- In-process cron scheduler for weakness refresh only
+- In-process cron scheduler for daily-pool prewarm, dynamic-review prewarm, and weakness refresh
 - Docker and docker-compose for local/VPS deployment
 
 ## Folder Structure
@@ -44,8 +44,10 @@ backend/
 2. Set `GEMINI_API_KEY` or `GEMINI_API_KEY_FILE`.
 3. Set `GEMINI_MODEL` and optionally `GEMINI_MODEL_2` / `GEMINI_MODEL_3` if you want automatic fallback rotation.
 4. Set `GEMINI_RPM_LIMIT` / `GEMINI_RPD_LIMIT` to match your current Gemini tier if you want the backend to skip locally exhausted models before making live requests.
-5. For local auth, keep `DEV_AUTH_BYPASS=true`.
-6. Start dependencies with `docker compose up -d postgres` or run the full stack with `docker compose up --build`.
+5. Set `CRON_DAILY_POOL_PREWARM_SCHEDULE` if you want to adjust how often the backend pre-creates the next local-day pool for active users. The default is every minute.
+6. `CRON_PREWARM_SCHEDULE` still controls dynamic-review prompt prewarm, and `CRON_WEAKNESS_SCHEDULE` controls weakness refresh.
+7. For local auth, keep `DEV_AUTH_BYPASS=true`.
+8. Start dependencies with `docker compose up -d postgres` or run the full stack with `docker compose up --build`.
 
 ## Run Locally
 
@@ -84,6 +86,8 @@ make test-integration
 - Set `GEMINI_API_KEY` through secrets or environment injection
 - Use `GEMINI_MODEL`, `GEMINI_MODEL_2`, and `GEMINI_MODEL_3` to configure fallback model rotation
 - Use `GEMINI_RPM_LIMIT` and `GEMINI_RPD_LIMIT` to match the request quotas of your current Gemini plan
+- Use `CRON_DAILY_POOL_PREWARM_SCHEDULE` to control how often active users get the next-day pool pre-created
+- `CRON_PREWARM_SCHEDULE` now controls only dynamic-review prompt prewarm
 - `AUTO_MIGRATE=true` is enabled by default for simple VPS deployment; disable it if you prefer an explicit migration step
 - Expose only the backend port and place a reverse proxy in front if you need TLS termination
 

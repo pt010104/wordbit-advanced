@@ -6,8 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 
+	"wordbit-advanced-app/backend/internal/domain"
 	"wordbit-advanced-app/backend/internal/service"
 )
 
@@ -17,16 +19,28 @@ type Scheduler struct {
 	stopOnce sync.Once
 }
 
+type WeaknessRefresher interface {
+	RefreshWeaknessForActiveUser(ctx context.Context, userID uuid.UUID) error
+}
+
+type DailyPoolPrewarmer interface {
+	GetOrCreateDailyPool(ctx context.Context, user domain.User) (service.DailyPoolView, error)
+}
+
+type DynamicReviewPrewarmer interface {
+	Prewarm(ctx context.Context, userID uuid.UUID, localDate string, items []domain.DailyLearningPoolItem) (service.DynamicReviewGenerationResult, error)
+}
+
 type Dependencies struct {
 	Users                service.UserRepository
-	LearningService      *service.LearningService
-	PoolService          *service.PoolService
-	DynamicReviewService *service.DynamicReviewService
+	LearningService      WeaknessRefresher
+	PoolService          DailyPoolPrewarmer
+	DynamicReviewService DynamicReviewPrewarmer
 	Clock                service.Clock
 	Lookback             time.Duration
 }
 
-func New(logger *slog.Logger, deps Dependencies, prewarmSpec string, weaknessSpec string) (*Scheduler, error) {
+func New(logger *slog.Logger, deps Dependencies, dailyPoolPrewarmSpec string, dynamicReviewPrewarmSpec string, weaknessSpec string) (*Scheduler, error) {
 	location, err := time.LoadLocation("Asia/Ho_Chi_Minh")
 	if err != nil {
 		return nil, err
@@ -37,7 +51,14 @@ func New(logger *slog.Logger, deps Dependencies, prewarmSpec string, weaknessSpe
 		logger: logger,
 	}
 
-	if _, err := c.AddFunc(prewarmSpec, func() {
+	if _, err := c.AddFunc(dailyPoolPrewarmSpec, func() {
+		s.run("prewarm_daily_pool", func(ctx context.Context) error {
+			return prewarmDailyPools(ctx, deps, s.logger)
+		})
+	}); err != nil {
+		return nil, err
+	}
+	if _, err := c.AddFunc(dynamicReviewPrewarmSpec, func() {
 		s.run("prewarm_dynamic_review", func(ctx context.Context) error {
 			return prewarmDynamicReviewPrompts(ctx, deps, s.logger)
 		})
@@ -88,6 +109,19 @@ func refreshWeakness(ctx context.Context, deps Dependencies) error {
 	for _, user := range users {
 		if err := deps.LearningService.RefreshWeaknessForActiveUser(ctx, user.ID); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func prewarmDailyPools(ctx context.Context, deps Dependencies, logger *slog.Logger) error {
+	users, err := deps.Users.ListActiveUsers(ctx, deps.Clock.Now().Add(-deps.Lookback))
+	if err != nil {
+		return err
+	}
+	for _, user := range users {
+		if _, err := deps.PoolService.GetOrCreateDailyPool(ctx, user); err != nil {
+			logger.Warn("prewarm daily pool skipped", "user_id", user.ID, "error", err)
 		}
 	}
 	return nil

@@ -70,7 +70,7 @@ func runServer(ctx context.Context, cfg config.Config) error {
 			DynamicReviewService: dynamicReviewService,
 			Clock:                clock,
 			Lookback:             cfg.Scheduler.ActiveUserLookback,
-		}, cfg.Scheduler.PrewarmCron, cfg.Scheduler.WeaknessRefreshCron)
+		}, cfg.Scheduler.DailyPoolPrewarmCron, cfg.Scheduler.DynamicReviewPrewarmCron, cfg.Scheduler.WeaknessRefreshCron)
 		if err != nil {
 			return fmt.Errorf("create scheduler: %w", err)
 		}

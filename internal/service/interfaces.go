@@ -113,7 +113,7 @@ type DynamicReviewPromptGenerator interface {
 }
 
 type UnknownDailyQuotaManager interface {
-	EnsureUnknownDailyQuota(ctx context.Context, user domain.User, sourcePoolItemID *uuid.UUID) ([]uuid.UUID, error)
+	ReconcileUnknownDailyBuffer(ctx context.Context, user domain.User) (UnknownDailyBufferMutation, error)
 }
 
 type Clock interface {

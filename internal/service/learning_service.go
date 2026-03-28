@@ -60,13 +60,14 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 		return err
 	}
 	createdItemIDs := []uuid.UUID{}
+	deletedPendingNewItems := []domain.DailyLearningPoolItem{}
 	payload := domain.JSONMap{
 		"action": req.Action,
 	}
 
 	switch req.Action {
 	case domain.ExposureActionDontLearn:
-		if err := s.markFirstExposureDontLearn(ctx, user, item, hadPreviousState, now, &createdItemIDs); err != nil {
+		if err := s.markFirstExposureDontLearn(ctx, item, hadPreviousState, now); err != nil {
 			return err
 		}
 	case domain.ExposureActionKnown:
@@ -77,12 +78,6 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 		}
 		if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
 			return err
-		}
-		if s.quotaManager != nil {
-			if createdItemIDs, err = s.quotaManager.EnsureUnknownDailyQuota(ctx, user, &item.ID); err != nil {
-				s.logger.Warn("ensure unknown daily quota", "error", err)
-				createdItemIDs = nil
-			}
 		}
 	case domain.ExposureActionUnknown:
 		state := s.initStateFromSnapshot(user.ID, item.WordID, previousState, hadPreviousState, now)
@@ -98,11 +93,20 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 		} else if followUpID != uuid.Nil {
 			createdItemIDs = append(createdItemIDs, followUpID)
 		}
+		if s.quotaManager != nil {
+			mutation, recErr := s.quotaManager.ReconcileUnknownDailyBuffer(ctx, user)
+			if recErr != nil {
+				s.logger.Warn("reconcile unknown daily buffer", "error", recErr)
+			} else {
+				createdItemIDs = append(createdItemIDs, mutation.CreatedItemIDs...)
+				deletedPendingNewItems = append(deletedPendingNewItems, mutation.DeletedPendingNewItems...)
+			}
+		}
 	default:
 		return fmt.Errorf("%w: unsupported action", domain.ErrValidation)
 	}
 
-	appendUndoSnapshotPayload(payload, previousState, hadPreviousState, createdItemIDs)
+	appendUndoSnapshotPayload(payload, previousState, hadPreviousState, createdItemIDs, deletedPendingNewItems)
 	if err := s.recordEvent(ctx, domain.LearningEvent{
 		UserID:         user.ID,
 		WordID:         item.WordID,
@@ -120,27 +124,17 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 
 func (s *LearningService) markFirstExposureDontLearn(
 	ctx context.Context,
-	user domain.User,
 	item domain.DailyLearningPoolItem,
 	hadPreviousState bool,
 	now time.Time,
-	createdItemIDs *[]uuid.UUID,
 ) error {
 	if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
 		return err
 	}
 	if hadPreviousState {
-		if err := s.stateRepo.Delete(ctx, user.ID, item.WordID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+		if err := s.stateRepo.Delete(ctx, item.UserID, item.WordID); err != nil && !errors.Is(err, domain.ErrNotFound) {
 			return err
 		}
-	}
-	if s.quotaManager != nil {
-		appendedIDs, err := s.quotaManager.EnsureUnknownDailyQuota(ctx, user, &item.ID)
-		if err != nil {
-			s.logger.Warn("ensure unknown daily quota after discard", "error", err)
-			return nil
-		}
-		*createdItemIDs = append(*createdItemIDs, appendedIDs...)
 	}
 	return nil
 }
@@ -230,7 +224,7 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 			createdItemIDs = append(createdItemIDs, followUpID)
 		}
 	}
-	appendUndoSnapshotPayload(payload, &previousState, true, createdItemIDs)
+	appendUndoSnapshotPayload(payload, &previousState, true, createdItemIDs, nil)
 	if err := s.recordEvent(ctx, domain.LearningEvent{
 		UserID:         user.ID,
 		WordID:         item.WordID,

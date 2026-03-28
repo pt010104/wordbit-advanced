@@ -13,9 +13,10 @@ import (
 )
 
 type answerUndoSnapshot struct {
-	HadPreviousState bool                  `json:"had_previous_state"`
-	PreviousState    *domain.UserWordState `json:"previous_state,omitempty"`
-	CreatedItemIDs   []string              `json:"created_item_ids,omitempty"`
+	HadPreviousState       bool                           `json:"had_previous_state"`
+	PreviousState          *domain.UserWordState          `json:"previous_state,omitempty"`
+	CreatedItemIDs         []string                       `json:"created_item_ids,omitempty"`
+	DeletedPendingNewItems []domain.DailyLearningPoolItem `json:"deleted_pending_new_items,omitempty"`
 }
 
 func (s *LearningService) UndoLastAnswer(ctx context.Context, user domain.User, req UndoLastAnswerRequest) error {
@@ -87,6 +88,23 @@ func (s *LearningService) UndoLastAnswer(ctx context.Context, user domain.User, 
 	if err := s.poolRepo.DeletePoolItems(ctx, user.ID, createdItemIDs); err != nil {
 		return err
 	}
+	if len(snapshot.DeletedPendingNewItems) > 0 {
+		restoredNewCount := 0
+		for _, deletedItem := range snapshot.DeletedPendingNewItems {
+			restoredItem := copyPoolItem(deletedItem)
+			restoredItem.Status = domain.PoolItemStatusPending
+			restoredItem.CompletedAt = nil
+			if _, err := s.poolRepo.AppendPoolItem(ctx, restoredItem); err != nil {
+				return err
+			}
+			if restoredItem.ItemType == domain.PoolItemTypeNew {
+				restoredNewCount++
+			}
+		}
+		if err := s.poolRepo.IncrementNewCount(ctx, currentPool.ID, restoredNewCount); err != nil {
+			return err
+		}
+	}
 	if err := s.poolRepo.ReopenPoolItem(ctx, item.ID); err != nil {
 		return err
 	}
@@ -132,10 +150,17 @@ func (s *LearningService) initStateFromSnapshot(userID uuid.UUID, wordID uuid.UU
 	}
 }
 
-func appendUndoSnapshotPayload(payload domain.JSONMap, previousState *domain.UserWordState, hadPreviousState bool, createdItemIDs []uuid.UUID) {
+func appendUndoSnapshotPayload(
+	payload domain.JSONMap,
+	previousState *domain.UserWordState,
+	hadPreviousState bool,
+	createdItemIDs []uuid.UUID,
+	deletedPendingNewItems []domain.DailyLearningPoolItem,
+) {
 	snapshot := answerUndoSnapshot{
-		HadPreviousState: hadPreviousState,
-		CreatedItemIDs:   uuidStrings(createdItemIDs),
+		HadPreviousState:       hadPreviousState,
+		CreatedItemIDs:         uuidStrings(createdItemIDs),
+		DeletedPendingNewItems: copyPoolItems(deletedPendingNewItems),
 	}
 	if hadPreviousState && previousState != nil {
 		stateCopy := *previousState

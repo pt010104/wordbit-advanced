@@ -342,7 +342,7 @@ func TestSubmitReviewBonusPracticeRepeatedRevealAndReviewDoesNotInflateWeakness(
 	}
 }
 
-func TestSubmitFirstExposureKnownAppendsReplacementNewCard(t *testing.T) {
+func TestSubmitFirstExposureKnownDoesNotAppendReplacementNewCard(t *testing.T) {
 	t.Parallel()
 
 	userID := uuid.New()
@@ -441,18 +441,14 @@ func TestSubmitFirstExposureKnownAppendsReplacementNewCard(t *testing.T) {
 		t.Fatalf("SubmitFirstExposure returned error: %v", err)
 	}
 
-	if generator.calls != 1 {
-		t.Fatalf("expected replacement generation after known exposure, got %d calls", generator.calls)
+	if generator.calls != 0 {
+		t.Fatalf("expected no replacement generation after known exposure, got %d calls", generator.calls)
 	}
-	if len(poolRepo.items) != 2 {
-		t.Fatalf("expected replacement new card appended, got %d pool items", len(poolRepo.items))
+	if len(poolRepo.items) != 1 {
+		t.Fatalf("expected no replacement new card appended, got %d pool items", len(poolRepo.items))
 	}
-	appended := poolRepo.items[1]
-	if appended.ItemType != domain.PoolItemTypeNew || appended.Status != domain.PoolItemStatusPending {
-		t.Fatalf("expected appended pending new item, got %#v", appended)
-	}
-	if !appended.FirstExposureRequired {
-		t.Fatalf("expected appended card to require first exposure")
+	if poolRepo.items[0].Status != domain.PoolItemStatusCompleted {
+		t.Fatalf("expected original card to be marked completed, got %#v", poolRepo.items[0])
 	}
 }
 
@@ -564,18 +560,15 @@ func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingState(t *testing.T)
 	if _, ok := stateRepo.states[wordID]; ok {
 		t.Fatalf("expected no persisted state for discarded word")
 	}
-	if len(poolRepo.items) != 2 {
-		t.Fatalf("expected discarded card to stay completed and one replacement to be appended, got %d items", len(poolRepo.items))
+	if len(poolRepo.items) != 1 {
+		t.Fatalf("expected discarded card to stay completed without replacement, got %d items", len(poolRepo.items))
 	}
 	if poolRepo.items[0].WordID != wordID || poolRepo.items[0].Status != domain.PoolItemStatusCompleted {
 		t.Fatalf("expected original discarded card to stay completed for undo, got %#v", poolRepo.items[0])
 	}
-	if poolRepo.items[1].WordID == wordID {
-		t.Fatalf("expected replacement card to use a different word")
-	}
 }
 
-func TestUndoLastAnswerKnownRestoresPendingCardAndRemovesReplacement(t *testing.T) {
+func TestUndoLastAnswerKnownRestoresPendingCardWithoutReplacement(t *testing.T) {
 	t.Parallel()
 
 	userID := uuid.New()
@@ -655,7 +648,7 @@ func TestUndoLastAnswerKnownRestoresPendingCardAndRemovesReplacement(t *testing.
 	}
 
 	if len(poolRepo.items) != 1 {
-		t.Fatalf("expected replacement card to be removed after undo, got %d items", len(poolRepo.items))
+		t.Fatalf("expected only the original card after undo, got %d items", len(poolRepo.items))
 	}
 	if poolRepo.items[0].Status != domain.PoolItemStatusPending {
 		t.Fatalf("expected original card to reopen, got %#v", poolRepo.items[0])
@@ -742,7 +735,138 @@ func TestUndoLastAnswerUnknownRestoresPendingCardAndDeletesFollowUp(t *testing.T
 	}
 }
 
-func TestUndoLastAnswerDontLearnRestoresPendingCardAndDeletesReplacement(t *testing.T) {
+func TestUndoLastAnswerUnknownRestoresTrimmedPendingNewItems(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	currentWordID := uuid.New()
+	bufferWordID := uuid.New()
+	itemID := uuid.New()
+	bufferItemID := uuid.New()
+	now := time.Date(2026, 3, 21, 9, 30, 0, 0, time.UTC)
+
+	currentWord := domain.Word{
+		ID:                currentWordID,
+		Word:              "resilient",
+		NormalizedForm:    "resilient",
+		CanonicalForm:     "resilient",
+		Lemma:             "resilient",
+		Level:             domain.CEFRB1,
+		Topic:             "Society",
+		EnglishMeaning:    "able to recover quickly",
+		VietnameseMeaning: "kien cuong",
+	}
+	bufferWord := domain.Word{
+		ID:                bufferWordID,
+		Word:              "cohesion",
+		NormalizedForm:    "cohesion",
+		CanonicalForm:     "cohesion",
+		Lemma:             "cohesion",
+		Level:             domain.CEFRB1,
+		Topic:             "Society",
+		EnglishMeaning:    "unity within a group",
+		VietnameseMeaning: "su gan ket",
+	}
+	stateRepo := &replenishStateRepo{}
+	poolID := uuid.New()
+	poolRepo := &replenishPoolRepo{
+		pool: domain.DailyLearningPool{
+			ID:        poolID,
+			UserID:    userID,
+			LocalDate: "2026-03-21",
+			Timezone:  domain.DefaultTimezone,
+			Topic:     "Society",
+			NewCount:  2,
+		},
+		items: []domain.DailyLearningPoolItem{
+			{
+				ID:                    itemID,
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                currentWordID,
+				Ordinal:               1,
+				ItemType:              domain.PoolItemTypeNew,
+				ReviewMode:            domain.ReviewModeReveal,
+				Status:                domain.PoolItemStatusPending,
+				FirstExposureRequired: true,
+				Word:                  &currentWord,
+			},
+			{
+				ID:                    bufferItemID,
+				PoolID:                poolID,
+				UserID:                userID,
+				WordID:                bufferWordID,
+				Ordinal:               2,
+				ItemType:              domain.PoolItemTypeNew,
+				ReviewMode:            domain.ReviewModeReveal,
+				Status:                domain.PoolItemStatusPending,
+				FirstExposureRequired: true,
+				Word:                  &bufferWord,
+			},
+		},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.DailyNewWordLimit = 1
+	settingsRepo := &replenishSettingsRepo{settings: settings}
+	eventRepo := &captureEventRepo{}
+	poolService := NewPoolService(
+		settingsRepo,
+		&replenishWordRepo{words: map[uuid.UUID]domain.Word{
+			currentWordID: currentWord,
+			bufferWordID:  bufferWord,
+		}},
+		stateRepo,
+		poolRepo,
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&emptyGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)),
+		true,
+	)
+	service := NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, replenishClock{now: now}, nil, true)
+
+	if err := service.SubmitFirstExposure(context.Background(), domain.User{ID: userID}, FirstExposureRequest{
+		PoolItemID:     itemID,
+		Action:         domain.ExposureActionUnknown,
+		ResponseTimeMs: 1200,
+		ClientEventID:  "unknown-trim-undo-1",
+	}); err != nil {
+		t.Fatalf("SubmitFirstExposure returned error: %v", err)
+	}
+
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected completed card plus follow-up after trim, got %d items", len(poolRepo.items))
+	}
+	for _, item := range poolRepo.items {
+		if item.WordID == bufferWordID {
+			t.Fatalf("expected buffered pending new item to be trimmed, got %#v", item)
+		}
+	}
+
+	if err := service.UndoLastAnswer(context.Background(), domain.User{ID: userID}, UndoLastAnswerRequest{PoolItemID: itemID}); err != nil {
+		t.Fatalf("UndoLastAnswer returned error: %v", err)
+	}
+
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected original pending card and restored buffered item after undo, got %d items", len(poolRepo.items))
+	}
+	restoredBuffer := false
+	restoredCurrent := false
+	for _, item := range poolRepo.items {
+		if item.WordID == currentWordID && item.Status == domain.PoolItemStatusPending {
+			restoredCurrent = true
+		}
+		if item.WordID == bufferWordID && item.Status == domain.PoolItemStatusPending {
+			restoredBuffer = true
+		}
+	}
+	if !restoredCurrent || !restoredBuffer {
+		t.Fatalf("expected both original and buffered pending new items after undo, got %#v", poolRepo.items)
+	}
+}
+
+func TestUndoLastAnswerDontLearnRestoresPendingCardWithoutReplacement(t *testing.T) {
 	t.Parallel()
 
 	userID := uuid.New()
@@ -820,7 +944,7 @@ func TestUndoLastAnswerDontLearnRestoresPendingCardAndDeletesReplacement(t *test
 		t.Fatalf("UndoLastAnswer returned error: %v", err)
 	}
 	if len(poolRepo.items) != 1 {
-		t.Fatalf("expected replacement card deleted after undo, got %d items", len(poolRepo.items))
+		t.Fatalf("expected only the original card after undo, got %d items", len(poolRepo.items))
 	}
 	if poolRepo.items[0].Status != domain.PoolItemStatusPending || poolRepo.items[0].WordID != wordID {
 		t.Fatalf("expected original dont-learn card reopened, got %#v", poolRepo.items[0])
@@ -1023,7 +1147,7 @@ func TestUndoLastAnswerRejectsWhenNotLatestCompleted(t *testing.T) {
 		},
 	}
 	payload := domain.JSONMap{"rating": domain.RatingMedium}
-	appendUndoSnapshotPayload(payload, &previousState, true, nil)
+	appendUndoSnapshotPayload(payload, &previousState, true, nil, nil)
 	eventRepo := &captureEventRepo{
 		events: []domain.LearningEvent{{
 			UserID:     userID,

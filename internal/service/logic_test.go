@@ -11,8 +11,8 @@ func TestComputeNewWordQuota(t *testing.T) {
 	t.Parallel()
 
 	got := ComputeNewWordQuota(10, 6, 2, 3)
-	if got != 10 {
-		t.Fatalf("expected quota 10, got %d", got)
+	if got != 20 {
+		t.Fatalf("expected buffered quota 20, got %d", got)
 	}
 }
 

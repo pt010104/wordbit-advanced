@@ -28,10 +28,14 @@ func ComputeWeakSlots(dailyLimit int) int {
 }
 
 func ComputeNewWordQuota(dailyLimit int, dueReview int, shortTerm int, weakSlots int) int {
+	return ComputeNewWordPrefetchBatchSize(dailyLimit)
+}
+
+func ComputeNewWordPrefetchBatchSize(dailyLimit int) int {
 	if dailyLimit < 0 {
 		return 0
 	}
-	return dailyLimit
+	return dailyLimit * 2
 }
 
 func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) domain.ReviewMode {

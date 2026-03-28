@@ -28,6 +28,18 @@ type PoolService struct {
 	maxGenerationAttempts       int
 }
 
+type UnknownDailyBufferMutation struct {
+	CreatedItemIDs         []uuid.UUID
+	DeletedPendingNewItems []domain.DailyLearningPoolItem
+}
+
+type newWordBufferState struct {
+	DailyLimit        int
+	PrefetchBatchSize int
+	LearnedNewCount   int
+	PendingNewItems   []domain.DailyLearningPoolItem
+}
+
 func NewPoolService(
 	settingsRepo SettingsRepository,
 	wordRepo WordRepository,
@@ -215,7 +227,7 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 			LocalDate: view.Pool.LocalDate,
 			PoolItem:  item,
 		}, nil
-	} else if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now, nil); replenishErr != nil {
+	} else if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
 		return CardResponse{}, replenishErr
 	} else if replenished {
 		view, err = s.GetOrCreateDailyPool(ctx, user)
@@ -265,13 +277,12 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardRe
 	}
 }
 
-func (s *PoolService) EnsureUnknownDailyQuota(ctx context.Context, user domain.User, sourcePoolItemID *uuid.UUID) ([]uuid.UUID, error) {
+func (s *PoolService) ReconcileUnknownDailyBuffer(ctx context.Context, user domain.User) (UnknownDailyBufferMutation, error) {
 	view, err := s.GetOrCreateDailyPool(ctx, user)
 	if err != nil {
-		return nil, err
+		return UnknownDailyBufferMutation{}, err
 	}
-	_, createdItemIDs, err := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, s.clock.Now(), sourcePoolItemID)
-	return createdItemIDs, err
+	return s.reconcileUnknownDailyBuffer(ctx, user.ID, view.Pool, view.Items)
 }
 
 func (s *PoolService) replenishBonusPracticeItems(
@@ -417,17 +428,16 @@ func (s *PoolService) replenishUnknownDailySlots(
 	pool domain.DailyLearningPool,
 	items []domain.DailyLearningPoolItem,
 	now time.Time,
-	sourcePoolItemID *uuid.UUID,
 ) (bool, []uuid.UUID, error) {
 	settings, err := s.settingsRepo.Get(ctx, userID)
 	if err != nil {
 		return false, nil, err
 	}
-	additionalNeeded, unknownCount, pendingNewCount, err := s.computeUnknownDailyNeed(ctx, userID, settings.DailyNewWordLimit, items)
+	bufferState, err := s.inspectNewWordBufferState(ctx, userID, settings.DailyNewWordLimit, items)
 	if err != nil {
 		return false, nil, err
 	}
-	if additionalNeeded <= 0 {
+	if bufferState.PrefetchBatchSize <= 0 || bufferState.LearnedNewCount >= bufferState.DailyLimit || len(bufferState.PendingNewItems) > 0 {
 		return false, nil, nil
 	}
 
@@ -436,17 +446,17 @@ func (s *PoolService) replenishUnknownDailySlots(
 		"pool_id", pool.ID,
 		"local_date", pool.LocalDate,
 		"daily_new_word_limit", settings.DailyNewWordLimit,
-		"unknown_count", unknownCount,
-		"pending_new_count", pendingNewCount,
-		"additional_needed", additionalNeeded,
+		"learned_new_count", bufferState.LearnedNewCount,
+		"pending_new_count", len(bufferState.PendingNewItems),
+		"prefetch_batch_size", bufferState.PrefetchBatchSize,
 	)
 
-	newWords, _, _, err := s.generateNewWords(ctx, userID, settings, pool.Topic, additionalNeeded, items, now)
+	newWords, _, _, err := s.generateNewWords(ctx, userID, settings, pool.Topic, bufferState.PrefetchBatchSize, items, now)
 	if err != nil {
 		return false, nil, err
 	}
 	if len(newWords) == 0 {
-		return false, nil, fmt.Errorf("unable to replenish known daily slots: no replacement words generated")
+		return false, nil, fmt.Errorf("unable to replenish buffered daily slots: no replacement words generated")
 	}
 
 	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, pool.ID)
@@ -456,13 +466,6 @@ func (s *PoolService) replenishUnknownDailySlots(
 	newItems := buildNewItems(userID, pool.ID, newWords)
 	createdItemIDs := make([]uuid.UUID, 0, len(newItems))
 	for i := range newItems {
-		if sourcePoolItemID != nil {
-			if newItems[i].Metadata == nil {
-				newItems[i].Metadata = domain.JSONMap{}
-			}
-			newItems[i].Metadata["source_pool_item_id"] = sourcePoolItemID.String()
-			newItems[i].Metadata["source_reason"] = "unknown_daily_quota"
-		}
 		newItems[i].Ordinal = lastOrdinal + i + 1
 		appendedItem, err := s.poolRepo.AppendPoolItem(ctx, newItems[i])
 		if err != nil {
@@ -483,38 +486,72 @@ func (s *PoolService) replenishUnknownDailySlots(
 	return true, createdItemIDs, nil
 }
 
-func (s *PoolService) computeUnknownDailyNeed(
+func (s *PoolService) reconcileUnknownDailyBuffer(
+	ctx context.Context,
+	userID uuid.UUID,
+	pool domain.DailyLearningPool,
+	items []domain.DailyLearningPoolItem,
+) (UnknownDailyBufferMutation, error) {
+	settings, err := s.settingsRepo.Get(ctx, userID)
+	if err != nil {
+		return UnknownDailyBufferMutation{}, err
+	}
+	bufferState, err := s.inspectNewWordBufferState(ctx, userID, settings.DailyNewWordLimit, items)
+	if err != nil {
+		return UnknownDailyBufferMutation{}, err
+	}
+	if bufferState.DailyLimit <= 0 || bufferState.LearnedNewCount < bufferState.DailyLimit || len(bufferState.PendingNewItems) == 0 {
+		return UnknownDailyBufferMutation{}, nil
+	}
+
+	deletedItems := copyPoolItems(bufferState.PendingNewItems)
+	if err := s.poolRepo.DeletePoolItems(ctx, userID, extractPoolItemIDs(bufferState.PendingNewItems)); err != nil {
+		return UnknownDailyBufferMutation{}, err
+	}
+
+	s.logger.Info("trimmed overflow pending new items after reaching daily limit",
+		"user_id", userID,
+		"pool_id", pool.ID,
+		"local_date", pool.LocalDate,
+		"daily_new_word_limit", bufferState.DailyLimit,
+		"learned_new_count", bufferState.LearnedNewCount,
+		"trimmed_pending_new_count", len(deletedItems),
+	)
+	return UnknownDailyBufferMutation{
+		DeletedPendingNewItems: deletedItems,
+	}, nil
+}
+
+func (s *PoolService) inspectNewWordBufferState(
 	ctx context.Context,
 	userID uuid.UUID,
 	dailyLimit int,
 	items []domain.DailyLearningPoolItem,
-) (int, int, int, error) {
-	unknownCount := 0
-	pendingNewCount := 0
+) (newWordBufferState, error) {
+	bufferState := newWordBufferState{
+		DailyLimit:        dailyLimit,
+		PrefetchBatchSize: ComputeNewWordPrefetchBatchSize(dailyLimit),
+	}
 	for _, item := range items {
 		if item.ItemType != domain.PoolItemTypeNew {
 			continue
 		}
 		if item.Status == domain.PoolItemStatusPending {
-			pendingNewCount++
+			bufferState.PendingNewItems = append(bufferState.PendingNewItems, copyPoolItem(item))
 			continue
 		}
-		state, err := s.stateRepo.Get(ctx, userID, item.WordID)
+		wordState, err := s.stateRepo.Get(ctx, userID, item.WordID)
 		if err != nil {
 			if isNotFound(err) {
 				continue
 			}
-			return 0, 0, 0, err
+			return newWordBufferState{}, err
 		}
-		if state.Status != domain.WordStatusKnown {
-			unknownCount++
+		if wordState.Status != domain.WordStatusKnown {
+			bufferState.LearnedNewCount++
 		}
 	}
-	additionalNeeded := dailyLimit - unknownCount - pendingNewCount
-	if additionalNeeded < 0 {
-		return 0, unknownCount, pendingNewCount, nil
-	}
-	return additionalNeeded, unknownCount, pendingNewCount, nil
+	return bufferState, nil
 }
 
 func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*domain.DailyLearningPoolItem, *time.Time) {
@@ -976,6 +1013,25 @@ func extractPoolWordIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
 		set[item.WordID] = struct{}{}
 	}
 	return mapUUIDKeys(set)
+}
+
+func extractPoolItemIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		if item.ID == uuid.Nil {
+			continue
+		}
+		out = append(out, item.ID)
+	}
+	return out
+}
+
+func copyPoolItems(items []domain.DailyLearningPoolItem) []domain.DailyLearningPoolItem {
+	out := make([]domain.DailyLearningPoolItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, copyPoolItem(item))
+	}
+	return out
 }
 
 func filterBankWords(
