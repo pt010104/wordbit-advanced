@@ -385,6 +385,7 @@ func scanEvent(row pgx.Row) (domain.LearningEvent, error) {
 		&event.ResponseTimeMs,
 		&modeUsed,
 		&event.ClientEventID,
+		&event.ClientSessionID,
 		&event.CreatedAt,
 	)
 	event.ModeUsed = domain.ReviewMode(modeUsed)

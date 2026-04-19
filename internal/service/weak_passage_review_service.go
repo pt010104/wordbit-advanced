@@ -91,11 +91,11 @@ func (s *WeakPassageReviewService) MaybeOverlayCard(ctx context.Context, user do
 		if err != nil {
 			return fallback, err
 		}
-		return CardResponse{
-			CardType:  domain.LearnCardTypeMode4WeakPassageReview,
-			LocalDate: fallback.LocalDate,
-			Mode4:     &card,
-		}, nil
+		overlaid := fallback
+		overlaid.CardType = domain.LearnCardTypeMode4WeakPassageReview
+		overlaid.PoolItem = nil
+		overlaid.Mode4 = &card
+		return overlaid, nil
 	}
 
 	if !mode4Eligible(state.NextEligibleAt, now) {
@@ -120,11 +120,11 @@ func (s *WeakPassageReviewService) MaybeOverlayCard(ctx context.Context, user do
 	if err != nil {
 		return fallback, err
 	}
-	return CardResponse{
-		CardType:  domain.LearnCardTypeMode4WeakPassageReview,
-		LocalDate: fallback.LocalDate,
-		Mode4:     &card,
-	}, nil
+	overlaid := fallback
+	overlaid.CardType = domain.LearnCardTypeMode4WeakPassageReview
+	overlaid.PoolItem = nil
+	overlaid.Mode4 = &card
+	return overlaid, nil
 }
 
 func (s *WeakPassageReviewService) Complete(ctx context.Context, user domain.User, req Mode4CompletionRequest) error {
@@ -503,13 +503,14 @@ func (s *WeakPassageReviewService) recordMode4PassageEvent(ctx context.Context, 
 		payload["final_ratings"] = stringifyMode4Ratings(passage.WordIDs, finalRatings)
 	}
 	if err := s.eventRepo.Insert(ctx, domain.LearningEvent{
-		UserID:         userID,
-		WordID:         passage.WordIDs[0],
-		EventType:      domain.EventTypeMode4Passage,
-		EventTime:      now,
-		ResponseTimeMs: req.ResponseTimeMs,
-		ClientEventID:  req.ClientEventID,
-		Payload:        payload,
+		UserID:          userID,
+		WordID:          passage.WordIDs[0],
+		EventType:       domain.EventTypeMode4Passage,
+		EventTime:       now,
+		ResponseTimeMs:  req.ResponseTimeMs,
+		ClientEventID:   req.ClientEventID,
+		ClientSessionID: req.ClientSessionID,
+		Payload:         payload,
 	}); err != nil {
 		return err
 	}
@@ -523,12 +524,13 @@ func (s *WeakPassageReviewService) recordMode4PassageEvent(ctx context.Context, 
 			continue
 		}
 		if err := s.eventRepo.Insert(ctx, domain.LearningEvent{
-			UserID:         userID,
-			WordID:         wordID,
-			EventType:      domain.EventTypeMode4WordRating,
-			EventTime:      now,
-			ResponseTimeMs: req.ResponseTimeMs,
-			ClientEventID:  "",
+			UserID:          userID,
+			WordID:          wordID,
+			EventType:       domain.EventTypeMode4WordRating,
+			EventTime:       now,
+			ResponseTimeMs:  req.ResponseTimeMs,
+			ClientEventID:   "",
+			ClientSessionID: req.ClientSessionID,
 			Payload: domain.JSONMap{
 				"passage_id":        passage.ID.String(),
 				"generation_number": passage.GenerationNumber,

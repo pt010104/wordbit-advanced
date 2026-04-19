@@ -310,17 +310,18 @@ type DailyLearningPoolItem struct {
 }
 
 type LearningEvent struct {
-	ID             uuid.UUID  `json:"id"`
-	UserID         uuid.UUID  `json:"user_id"`
-	WordID         uuid.UUID  `json:"word_id"`
-	PoolItemID     *uuid.UUID `json:"pool_item_id,omitempty"`
-	EventType      EventType  `json:"event_type"`
-	EventTime      time.Time  `json:"event_time"`
-	Payload        JSONMap    `json:"payload,omitempty"`
-	ResponseTimeMs int        `json:"response_time_ms"`
-	ModeUsed       ReviewMode `json:"mode_used,omitempty"`
-	ClientEventID  string     `json:"client_event_id,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID              uuid.UUID  `json:"id"`
+	UserID          uuid.UUID  `json:"user_id"`
+	WordID          uuid.UUID  `json:"word_id"`
+	PoolItemID      *uuid.UUID `json:"pool_item_id,omitempty"`
+	EventType       EventType  `json:"event_type"`
+	EventTime       time.Time  `json:"event_time"`
+	Payload         JSONMap    `json:"payload,omitempty"`
+	ResponseTimeMs  int        `json:"response_time_ms"`
+	ModeUsed        ReviewMode `json:"mode_used,omitempty"`
+	ClientEventID   string     `json:"client_event_id,omitempty"`
+	ClientSessionID string     `json:"client_session_id,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 type LLMGenerationRun struct {

@@ -136,9 +136,14 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 	if err != nil {
 		return DailyPoolView{}, err
 	}
+	rawReviewPracticeCount := totalDueReviewPracticeItems(shortTermStates, reviewStates, weakStates)
+	shortTermStates, reviewStates, weakStates, comebackMode := capReviewPracticeStates(shortTermStates, reviewStates, weakStates)
 
 	topic := TopicForDate(now.In(loc))
 	newQuota := ComputeNewWordQuota(settings.DailyNewWordLimit, len(reviewStates), len(shortTermStates), weakSlots)
+	if comebackMode {
+		newQuota = catchUpNewQuota(settings.DailyNewWordLimit)
+	}
 
 	wordMap, err := s.loadWordMap(ctx, append(extractStateWordIDs(shortTermStates), append(extractStateWordIDs(reviewStates), extractStateWordIDs(weakStates)...)...))
 	if err != nil {
@@ -178,14 +183,16 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 		EventType: domain.EventTypePoolGenerated,
 		EventTime: now,
 		Payload: domain.JSONMap{
-			"local_date":         localDate,
-			"topic":              topic,
-			"due_review_count":   len(reviewStates),
-			"short_term_count":   len(shortTermStates),
-			"weak_count":         len(weakStates),
-			"new_count":          len(newWords),
-			"accepted_new_words": acceptedWords,
-			"rejections":         rejectionSummary,
+			"local_date":                localDate,
+			"topic":                     topic,
+			"due_review_count":          len(reviewStates),
+			"short_term_count":          len(shortTermStates),
+			"weak_count":                len(weakStates),
+			"new_count":                 len(newWords),
+			"comeback_mode":             comebackMode,
+			"raw_review_practice_count": rawReviewPracticeCount,
+			"accepted_new_words":        acceptedWords,
+			"rejections":                rejectionSummary,
 		},
 	}); err != nil {
 		s.logger.Warn("record pool generation event", "error", err)
@@ -198,6 +205,8 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 		"due_review_count", len(reviewStates),
 		"short_term_count", len(shortTermStates),
 		"weak_count", len(weakStates),
+		"raw_review_practice_count", rawReviewPracticeCount,
+		"comeback_mode", comebackMode,
 		"new_quota", newQuota,
 		"new_count", len(newWords),
 		"item_count", len(items),
@@ -215,65 +224,112 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 	}, nil
 }
 
-func (s *PoolService) GetNextCard(ctx context.Context, user domain.User) (CardResponse, error) {
+func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, sessionID string) (CardResponse, error) {
 	view, err := s.GetOrCreateDailyPool(ctx, user)
 	if err != nil {
 		return CardResponse{}, err
 	}
 	now := s.clock.Now()
-	if item, _ := findNextCardInItems(view.Items, now); item != nil {
-		return CardResponse{
-			CardType:  domain.LearnCardTypePoolItem,
-			LocalDate: view.Pool.LocalDate,
-			PoolItem:  item,
-		}, nil
-	} else if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+	settings, err := s.settingsRepo.Get(ctx, user.ID)
+	if err != nil {
+		return CardResponse{}, err
+	}
+	card, shouldReplenish, err := s.nextCardFromView(ctx, user.ID, view, now, sessionID, settings.DailyNewWordLimit)
+	if err != nil {
+		return CardResponse{}, err
+	}
+	if !shouldReplenish {
+		return card, nil
+	}
+
+	if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
 		return CardResponse{}, replenishErr
 	} else if replenished {
 		view, err = s.GetOrCreateDailyPool(ctx, user)
 		if err != nil {
 			return CardResponse{}, err
 		}
-		if item, nextDue := findNextCardInItems(view.Items, now); item != nil {
-			return CardResponse{
-				CardType:  domain.LearnCardTypePoolItem,
-				LocalDate: view.Pool.LocalDate,
-				PoolItem:  item,
-			}, nil
-		} else {
-			return CardResponse{
-				CardType:  domain.LearnCardTypePoolItem,
-				LocalDate: view.Pool.LocalDate,
-				NextDueAt: nextDue,
-			}, nil
+		card, shouldReplenish, err = s.nextCardFromView(ctx, user.ID, view, now, sessionID, settings.DailyNewWordLimit)
+		if err != nil {
+			return CardResponse{}, err
 		}
-	} else if replenished, replenishErr := s.replenishBonusPracticeItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+		if !shouldReplenish {
+			return card, nil
+		}
+	}
+
+	if replenished, replenishErr := s.replenishBonusPracticeItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
 		return CardResponse{}, replenishErr
 	} else if replenished {
 		view, err = s.GetOrCreateDailyPool(ctx, user)
 		if err != nil {
 			return CardResponse{}, err
 		}
-		if item, nextDue := findNextCardInItems(view.Items, now); item != nil {
-			return CardResponse{
-				CardType:  domain.LearnCardTypePoolItem,
-				LocalDate: view.Pool.LocalDate,
-				PoolItem:  item,
-			}, nil
-		} else {
-			return CardResponse{
-				CardType:  domain.LearnCardTypePoolItem,
-				LocalDate: view.Pool.LocalDate,
-				NextDueAt: nextDue,
-			}, nil
+		card, _, err = s.nextCardFromView(ctx, user.ID, view, now, sessionID, settings.DailyNewWordLimit)
+		if err != nil {
+			return CardResponse{}, err
 		}
+		return card, nil
+	}
+
+	return card, nil
+}
+
+func (s *PoolService) nextCardFromView(
+	ctx context.Context,
+	userID uuid.UUID,
+	view DailyPoolView,
+	now time.Time,
+	sessionID string,
+	dailyNewWordLimit int,
+) (CardResponse, bool, error) {
+	progress, err := s.buildSessionProgress(ctx, userID, sessionID, view.Pool, view.Items, now)
+	if err != nil {
+		return CardResponse{}, false, err
+	}
+	comebackMode := isComebackPool(view.Pool, view.Items)
+	effectiveNewLimit := dailyNewWordLimit
+	if comebackMode {
+		effectiveNewLimit = catchUpNewQuota(dailyNewWordLimit)
+	}
+	item, nextDue, completeReason := findNextCardForSession(view.Items, now, progress, comebackMode, effectiveNewLimit)
+	if item != nil || completeReason != "" {
+		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, item, nextDue, completeReason), false, nil
+	}
+	if sessionID != "" && nextDue == nil {
+		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, nil, nil, sessionCompleteReasonNoCards), false, nil
+	}
+	return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, nil, nextDue, ""), true, nil
+}
+
+func buildCardResponse(
+	localDate string,
+	progress sessionProgress,
+	comebackMode bool,
+	item *domain.DailyLearningPoolItem,
+	nextDue *time.Time,
+	completeReason string,
+) CardResponse {
+	sessionComplete := progress.SessionComplete
+	if completeReason != "" {
+		sessionComplete = true
 	} else {
-		_, nextDue := findNextCardInItems(view.Items, now)
-		return CardResponse{
-			CardType:  domain.LearnCardTypePoolItem,
-			LocalDate: view.Pool.LocalDate,
-			NextDueAt: nextDue,
-		}, nil
+		completeReason = progress.SessionCompleteReason
+	}
+	return CardResponse{
+		CardType:               domain.LearnCardTypePoolItem,
+		LocalDate:              localDate,
+		SessionID:              progress.SessionID,
+		SessionComplete:        sessionComplete,
+		SessionCompleteReason:  completeReason,
+		ComebackMode:           comebackMode,
+		DailyReviewCap:         progress.DailyReviewCap,
+		DailyReviewCompleted:   progress.DailyReviewCompleted,
+		SessionTotalCompleted:  progress.SessionTotalCompleted,
+		SessionReviewCompleted: progress.SessionReviewCompleted,
+		SessionNewCompleted:    progress.SessionNewCompleted,
+		NextDueAt:              nextDue,
+		PoolItem:               item,
 	}
 }
 
@@ -297,7 +353,11 @@ func (s *PoolService) replenishBonusPracticeItems(
 		return false, err
 	}
 
-	limit := maxInt(ComputeWeakSlots(settings.DailyNewWordLimit), 1)
+	remainingReviewBudget := catchUpDailyReviewCap - totalReviewPracticeItems(items)
+	if remainingReviewBudget <= 0 {
+		return false, nil
+	}
+	limit := minInt(maxInt(ComputeWeakSlots(settings.DailyNewWordLimit), 1), remainingReviewBudget)
 	weakStates, err := s.listBonusPracticeCandidates(ctx, userID, items, limit)
 	if err != nil {
 		return false, err
@@ -433,7 +493,8 @@ func (s *PoolService) replenishUnknownDailySlots(
 	if err != nil {
 		return false, nil, err
 	}
-	bufferState, err := s.inspectNewWordBufferState(ctx, userID, settings.DailyNewWordLimit, items)
+	dailyLimit, prefetchBatchSize := effectiveNewWordBufferLimits(settings.DailyNewWordLimit, isComebackPool(pool, items))
+	bufferState, err := s.inspectNewWordBufferState(ctx, userID, dailyLimit, prefetchBatchSize, items)
 	if err != nil {
 		return false, nil, err
 	}
@@ -496,7 +557,8 @@ func (s *PoolService) reconcileUnknownDailyBuffer(
 	if err != nil {
 		return UnknownDailyBufferMutation{}, err
 	}
-	bufferState, err := s.inspectNewWordBufferState(ctx, userID, settings.DailyNewWordLimit, items)
+	dailyLimit, prefetchBatchSize := effectiveNewWordBufferLimits(settings.DailyNewWordLimit, isComebackPool(pool, items))
+	bufferState, err := s.inspectNewWordBufferState(ctx, userID, dailyLimit, prefetchBatchSize, items)
 	if err != nil {
 		return UnknownDailyBufferMutation{}, err
 	}
@@ -526,11 +588,12 @@ func (s *PoolService) inspectNewWordBufferState(
 	ctx context.Context,
 	userID uuid.UUID,
 	dailyLimit int,
+	prefetchBatchSize int,
 	items []domain.DailyLearningPoolItem,
 ) (newWordBufferState, error) {
 	bufferState := newWordBufferState{
 		DailyLimit:        dailyLimit,
-		PrefetchBatchSize: ComputeNewWordPrefetchBatchSize(dailyLimit),
+		PrefetchBatchSize: prefetchBatchSize,
 	}
 	for _, item := range items {
 		if item.ItemType != domain.PoolItemTypeNew {
@@ -589,6 +652,144 @@ func findNextCardInItems(items []domain.DailyLearningPoolItem, now time.Time) (*
 	return nil, nextDue
 }
 
+func findNextCardForSession(
+	items []domain.DailyLearningPoolItem,
+	now time.Time,
+	progress sessionProgress,
+	comebackMode bool,
+	effectiveNewLimit int,
+) (*domain.DailyLearningPoolItem, *time.Time, string) {
+	if progress.SessionComplete {
+		return nil, nil, progress.SessionCompleteReason
+	}
+
+	reviewCapReached := progress.DailyReviewCompleted >= progress.DailyReviewCap
+	newCapReached := comebackMode && effectiveNewLimit >= 0 && progress.DailyNewCompleted >= effectiveNewLimit
+	var nextDue *time.Time
+	reviewCandidates := make([]domain.DailyLearningPoolItem, 0)
+	newCandidates := make([]domain.DailyLearningPoolItem, 0)
+	for _, item := range items {
+		if item.Status != domain.PoolItemStatusPending {
+			continue
+		}
+		if item.DueAt != nil && item.DueAt.After(now) {
+			if nextDue == nil || item.DueAt.Before(*nextDue) {
+				nextDue = item.DueAt
+			}
+			continue
+		}
+		if IsReviewPracticeItem(item) {
+			if !reviewCapReached {
+				reviewCandidates = append(reviewCandidates, item)
+			}
+			continue
+		}
+		if item.ItemType == domain.PoolItemTypeNew && !newCapReached {
+			newCandidates = append(newCandidates, item)
+		}
+	}
+
+	reviewCandidate := bestActionableItem(reviewCandidates)
+	newCandidate := bestActionableItem(newCandidates)
+	if progress.SessionID == "" {
+		if reviewCandidate != nil {
+			return reviewCandidate, nil, ""
+		}
+		if newCandidate != nil {
+			return newCandidate, nil, ""
+		}
+		return nil, nextDue, ""
+	}
+
+	if progress.PreferredKind == completedCardKindNew {
+		if newCandidate != nil {
+			return newCandidate, nil, ""
+		}
+		return nil, nil, sessionCompleteReasonNoNew
+	}
+
+	if reviewCandidate != nil {
+		return reviewCandidate, nil, ""
+	}
+	if reviewCapReached {
+		return nil, nil, sessionCompleteReasonDailyCap
+	}
+	if progress.SessionNewCompleted == 0 && newCandidate != nil {
+		return newCandidate, nil, ""
+	}
+	if progress.SessionNewCompleted > 0 {
+		return nil, nil, sessionCompleteReasonNoReview
+	}
+	return nil, nextDue, ""
+}
+
+func bestActionableItem(items []domain.DailyLearningPoolItem) *domain.DailyLearningPoolItem {
+	if len(items) == 0 {
+		return nil
+	}
+	selected := items[0]
+	selectedPriority := poolItemPriority(selected.ItemType)
+	for _, item := range items[1:] {
+		priority := poolItemPriority(item.ItemType)
+		if priority < selectedPriority || (priority == selectedPriority && compareActionableItems(item, selected) < 0) {
+			selected = item
+			selectedPriority = priority
+		}
+	}
+	copyItem := selected
+	return &copyItem
+}
+
+func capReviewPracticeStates(
+	shortTermStates []domain.UserWordState,
+	reviewStates []domain.UserWordState,
+	weakStates []domain.UserWordState,
+) ([]domain.UserWordState, []domain.UserWordState, []domain.UserWordState, bool) {
+	if totalDueReviewPracticeItems(shortTermStates, reviewStates, weakStates) <= catchUpDailyReviewCap {
+		return shortTermStates, reviewStates, weakStates, false
+	}
+	remaining := catchUpDailyReviewCap
+	shortTermStates = takeStates(shortTermStates, &remaining)
+	reviewStates = takeStates(reviewStates, &remaining)
+	weakStates = takeStates(weakStates, &remaining)
+	return shortTermStates, reviewStates, weakStates, true
+}
+
+func takeStates(states []domain.UserWordState, remaining *int) []domain.UserWordState {
+	if *remaining <= 0 {
+		return nil
+	}
+	if len(states) <= *remaining {
+		*remaining -= len(states)
+		return states
+	}
+	out := states[:*remaining]
+	*remaining = 0
+	return out
+}
+
+func isComebackPool(pool domain.DailyLearningPool, items []domain.DailyLearningPoolItem) bool {
+	if pool.ShortTermCount+pool.DueReviewCount+pool.WeakCount >= catchUpDailyReviewCap {
+		return true
+	}
+	return totalReviewPracticeItems(items) >= catchUpDailyReviewCap
+}
+
+func catchUpNewQuota(dailyLimit int) int {
+	if dailyLimit <= 0 {
+		return 0
+	}
+	return minInt(dailyLimit, catchUpSessionNewRunCap)
+}
+
+func effectiveNewWordBufferLimits(dailyLimit int, comebackMode bool) (int, int) {
+	if comebackMode {
+		quota := catchUpNewQuota(dailyLimit)
+		return quota, quota
+	}
+	return dailyLimit, ComputeNewWordPrefetchBatchSize(dailyLimit)
+}
+
 func (s *PoolService) listScheduledDueStates(ctx context.Context, userID uuid.UUID, endUTC time.Time) ([]domain.UserWordState, []domain.UserWordState, error) {
 	shortTermStates, err := s.stateRepo.ListDueWithinWindow(ctx, userID, time.Time{}, endUTC, true)
 	if err != nil {
@@ -626,6 +827,14 @@ func (s *PoolService) reconcileScheduledPoolItems(
 	if len(missingShort) == 0 && len(missingReview) == 0 {
 		return false, nil
 	}
+	remainingReviewBudget := catchUpDailyReviewCap - totalReviewPracticeItems(items)
+	if remainingReviewBudget <= 0 {
+		return false, nil
+	}
+	missingShort, missingReview = capMissingScheduledStates(missingShort, missingReview, remainingReviewBudget)
+	if len(missingShort) == 0 && len(missingReview) == 0 {
+		return false, nil
+	}
 
 	wordIDs := append(extractStateWordIDs(missingShort), extractStateWordIDs(missingReview)...)
 	wordMap, err := s.loadWordMap(ctx, wordIDs)
@@ -660,6 +869,13 @@ func (s *PoolService) reconcileScheduledPoolItems(
 		"appended_review", len(missingReview),
 	)
 	return true, nil
+}
+
+func capMissingScheduledStates(shortTermStates []domain.UserWordState, reviewStates []domain.UserWordState, budget int) ([]domain.UserWordState, []domain.UserWordState) {
+	remaining := budget
+	shortTermStates = takeStates(shortTermStates, &remaining)
+	reviewStates = takeStates(reviewStates, &remaining)
+	return shortTermStates, reviewStates
 }
 
 func filterMissingScheduledStates(states []domain.UserWordState, itemType domain.PoolItemType, existing map[string]struct{}) []domain.UserWordState {
@@ -799,6 +1015,10 @@ func (s *PoolService) generateNewWords(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	seenNewSet := uuidSet(seenNewIDs)
+	existingStateWordIDSet := uuidSet(extractStateWordIDs(existingStates))
+	seedPoolWordIDSet := uuidSet(extractPoolWordIDs(seedItems))
+	selectedWordIDSet := map[uuid.UUID]struct{}{}
 
 	selectedWords := []domain.Word{}
 	acceptedNames := []string{}
@@ -815,7 +1035,11 @@ func (s *PoolService) generateNewWords(
 		if len(selectedWords) >= newQuota {
 			break
 		}
+		if _, selected := selectedWordIDSet[word.ID]; selected {
+			continue
+		}
 		selectedWords = append(selectedWords, word)
+		selectedWordIDSet[word.ID] = struct{}{}
 		acceptedNames = append(acceptedNames, word.Word)
 		existingWords = append(existingWords, word)
 		addNonEmptySlice(&exclusionWords, word.Word)
@@ -911,10 +1135,27 @@ func (s *PoolService) generateNewWords(
 				rejections[candidate.Word] = []string{upsertErr.Error()}
 				continue
 			}
+			if _, seen := seenNewSet[word.ID]; seen {
+				rejections[candidate.Word] = append(rejections[candidate.Word], "recent new duplicate after upsert")
+				continue
+			}
+			if _, exists := existingStateWordIDSet[word.ID]; exists {
+				rejections[candidate.Word] = append(rejections[candidate.Word], "existing word state duplicate after upsert")
+				continue
+			}
+			if _, seeded := seedPoolWordIDSet[word.ID]; seeded {
+				rejections[candidate.Word] = append(rejections[candidate.Word], "seed pool duplicate after upsert")
+				continue
+			}
+			if _, selected := selectedWordIDSet[word.ID]; selected {
+				rejections[candidate.Word] = append(rejections[candidate.Word], "selected duplicate after upsert")
+				continue
+			}
 			if len(selectedWords) >= newQuota {
 				continue
 			}
 			selectedWords = append(selectedWords, word)
+			selectedWordIDSet[word.ID] = struct{}{}
 			acceptedNames = append(acceptedNames, word.Word)
 			existingWords = append(existingWords, word)
 			addNonEmptySlice(&exclusionWords, word.Word)
@@ -1110,6 +1351,17 @@ func mapUUIDKeys(values map[uuid.UUID]struct{}) []uuid.UUID {
 	out := make([]uuid.UUID, 0, len(values))
 	for value := range values {
 		out = append(out, value)
+	}
+	return out
+}
+
+func uuidSet(values []uuid.UUID) map[uuid.UUID]struct{} {
+	out := make(map[uuid.UUID]struct{}, len(values))
+	for _, value := range values {
+		if value == uuid.Nil {
+			continue
+		}
+		out[value] = struct{}{}
 	}
 	return out
 }

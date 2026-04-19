@@ -60,18 +60,28 @@ type DailyPoolView struct {
 }
 
 type CardResponse struct {
-	CardType  domain.LearnCardType               `json:"card_type"`
-	LocalDate string                             `json:"local_date"`
-	NextDueAt *time.Time                         `json:"next_due_at,omitempty"`
-	PoolItem  *domain.DailyLearningPoolItem      `json:"pool_item,omitempty"`
-	Mode4     *domain.Mode4WeakPassageReviewCard `json:"mode4,omitempty"`
+	CardType               domain.LearnCardType               `json:"card_type"`
+	LocalDate              string                             `json:"local_date"`
+	SessionID              string                             `json:"session_id"`
+	SessionComplete        bool                               `json:"session_complete"`
+	SessionCompleteReason  string                             `json:"session_complete_reason"`
+	ComebackMode           bool                               `json:"comeback_mode"`
+	DailyReviewCap         int                                `json:"daily_review_cap"`
+	DailyReviewCompleted   int                                `json:"daily_review_completed"`
+	SessionTotalCompleted  int                                `json:"session_total_completed"`
+	SessionReviewCompleted int                                `json:"session_review_completed"`
+	SessionNewCompleted    int                                `json:"session_new_completed"`
+	NextDueAt              *time.Time                         `json:"next_due_at,omitempty"`
+	PoolItem               *domain.DailyLearningPoolItem      `json:"pool_item,omitempty"`
+	Mode4                  *domain.Mode4WeakPassageReviewCard `json:"mode4,omitempty"`
 }
 
 type FirstExposureRequest struct {
-	PoolItemID     uuid.UUID
-	Action         domain.ExposureAction
-	ResponseTimeMs int
-	ClientEventID  string
+	PoolItemID      uuid.UUID
+	Action          domain.ExposureAction
+	ResponseTimeMs  int
+	ClientEventID   string
+	ClientSessionID string
 }
 
 type ReviewRequest struct {
@@ -80,6 +90,7 @@ type ReviewRequest struct {
 	ModeUsed                         domain.ReviewMode
 	ResponseTimeMs                   int
 	ClientEventID                    string
+	ClientSessionID                  string
 	AnswerCorrect                    *bool
 	RevealedMeaningBeforeAnswer      bool
 	RevealedExampleBeforeAnswer      bool
@@ -113,9 +124,10 @@ type Mode4WordRatingInput struct {
 }
 
 type Mode4CompletionRequest struct {
-	PassageID      uuid.UUID
-	Action         domain.Mode4ReviewAction
-	ResponseTimeMs int
-	ClientEventID  string
-	Ratings        []Mode4WordRatingInput
+	PassageID       uuid.UUID
+	Action          domain.Mode4ReviewAction
+	ResponseTimeMs  int
+	ClientEventID   string
+	ClientSessionID string
+	Ratings         []Mode4WordRatingInput
 }

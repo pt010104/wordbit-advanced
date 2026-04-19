@@ -108,14 +108,15 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 
 	appendUndoSnapshotPayload(payload, previousState, hadPreviousState, createdItemIDs, deletedPendingNewItems)
 	if err := s.recordEvent(ctx, domain.LearningEvent{
-		UserID:         user.ID,
-		WordID:         item.WordID,
-		PoolItemID:     &item.ID,
-		EventType:      domain.EventTypeFirstExposure,
-		EventTime:      now,
-		ResponseTimeMs: req.ResponseTimeMs,
-		ClientEventID:  req.ClientEventID,
-		Payload:        payload,
+		UserID:          user.ID,
+		WordID:          item.WordID,
+		PoolItemID:      &item.ID,
+		EventType:       domain.EventTypeFirstExposure,
+		EventTime:       now,
+		ResponseTimeMs:  req.ResponseTimeMs,
+		ClientEventID:   req.ClientEventID,
+		ClientSessionID: req.ClientSessionID,
+		Payload:         payload,
 	}); err != nil {
 		return err
 	}
@@ -226,15 +227,16 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 	}
 	appendUndoSnapshotPayload(payload, &previousState, true, createdItemIDs, nil)
 	if err := s.recordEvent(ctx, domain.LearningEvent{
-		UserID:         user.ID,
-		WordID:         item.WordID,
-		PoolItemID:     &item.ID,
-		EventType:      eventType,
-		EventTime:      now,
-		ResponseTimeMs: req.ResponseTimeMs,
-		ModeUsed:       req.ModeUsed,
-		ClientEventID:  req.ClientEventID,
-		Payload:        payload,
+		UserID:          user.ID,
+		WordID:          item.WordID,
+		PoolItemID:      &item.ID,
+		EventType:       eventType,
+		EventTime:       now,
+		ResponseTimeMs:  req.ResponseTimeMs,
+		ModeUsed:        req.ModeUsed,
+		ClientEventID:   req.ClientEventID,
+		ClientSessionID: req.ClientSessionID,
+		Payload:         payload,
 	}); err != nil {
 		return err
 	}
@@ -360,9 +362,12 @@ func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID
 		return uuid.Nil, nil
 	}
 
-	pool, _, err := s.poolRepo.GetByLocalDate(ctx, userID, nowDate)
+	pool, items, err := s.poolRepo.GetByLocalDate(ctx, userID, nowDate)
 	if err != nil {
 		return uuid.Nil, err
+	}
+	if totalReviewPracticeItems(items) >= catchUpDailyReviewCap {
+		return uuid.Nil, nil
 	}
 	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, pool.ID)
 	if err != nil {

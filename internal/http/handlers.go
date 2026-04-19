@@ -246,9 +246,14 @@ func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeError(w, err)
 		return
 	}
-	card, err := h.pools.GetNextCard(r.Context(), user)
+	sessionID := r.URL.Query().Get("session_id")
+	card, err := h.pools.GetNextCard(r.Context(), user, sessionID)
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	if card.SessionComplete {
+		writeJSON(w, nethttp.StatusOK, card)
 		return
 	}
 	if h.dynamicReview != nil && card.PoolItem != nil {
@@ -270,7 +275,7 @@ func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 			}
 		}
 	}
-	if h.mode4 != nil && card.PoolItem != nil {
+	if h.mode4 != nil && card.PoolItem != nil && service.IsReviewPracticeItem(*card.PoolItem) {
 		if overlaid, overlayErr := h.mode4.MaybeOverlayCard(r.Context(), user, card); overlayErr != nil {
 			h.logger.Warn("overlay mode4 card", "user_id", user.ID, "local_date", card.LocalDate, "error", overlayErr)
 		} else {
@@ -296,10 +301,11 @@ func (h *Handler) SubmitMode4Completion(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	var payload struct {
-		Action         domain.Mode4ReviewAction `json:"action"`
-		ResponseTimeMs int                      `json:"response_time_ms"`
-		ClientEventID  string                   `json:"client_event_id"`
-		Ratings        []struct {
+		Action          domain.Mode4ReviewAction `json:"action"`
+		ResponseTimeMs  int                      `json:"response_time_ms"`
+		ClientEventID   string                   `json:"client_event_id"`
+		ClientSessionID string                   `json:"client_session_id"`
+		Ratings         []struct {
 			WordID string              `json:"word_id"`
 			Rating domain.ReviewRating `json:"rating"`
 		} `json:"ratings"`
@@ -321,11 +327,12 @@ func (h *Handler) SubmitMode4Completion(w nethttp.ResponseWriter, r *nethttp.Req
 		})
 	}
 	if err := h.mode4.Complete(r.Context(), user, service.Mode4CompletionRequest{
-		PassageID:      passageID,
-		Action:         payload.Action,
-		ResponseTimeMs: payload.ResponseTimeMs,
-		ClientEventID:  payload.ClientEventID,
-		Ratings:        ratings,
+		PassageID:       passageID,
+		Action:          payload.Action,
+		ResponseTimeMs:  payload.ResponseTimeMs,
+		ClientEventID:   payload.ClientEventID,
+		ClientSessionID: payload.ClientSessionID,
+		Ratings:         ratings,
 	}); err != nil {
 		writeError(w, err)
 		return
@@ -345,19 +352,21 @@ func (h *Handler) SubmitFirstExposure(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	var payload struct {
-		Action         domain.ExposureAction `json:"action"`
-		ResponseTimeMs int                   `json:"response_time_ms"`
-		ClientEventID  string                `json:"client_event_id"`
+		Action          domain.ExposureAction `json:"action"`
+		ResponseTimeMs  int                   `json:"response_time_ms"`
+		ClientEventID   string                `json:"client_event_id"`
+		ClientSessionID string                `json:"client_session_id"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, domain.ErrValidation)
 		return
 	}
 	if err := h.learning.SubmitFirstExposure(r.Context(), user, service.FirstExposureRequest{
-		PoolItemID:     itemID,
-		Action:         payload.Action,
-		ResponseTimeMs: payload.ResponseTimeMs,
-		ClientEventID:  payload.ClientEventID,
+		PoolItemID:      itemID,
+		Action:          payload.Action,
+		ResponseTimeMs:  payload.ResponseTimeMs,
+		ClientEventID:   payload.ClientEventID,
+		ClientSessionID: payload.ClientSessionID,
 	}); err != nil {
 		writeError(w, err)
 		return
@@ -381,6 +390,7 @@ func (h *Handler) SubmitReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		ModeUsed                         domain.ReviewMode        `json:"mode_used"`
 		ResponseTimeMs                   int                      `json:"response_time_ms"`
 		ClientEventID                    string                   `json:"client_event_id"`
+		ClientSessionID                  string                   `json:"client_session_id"`
 		AnswerCorrect                    *bool                    `json:"answer_correct"`
 		RevealedMeaningBeforeAnswer      bool                     `json:"revealed_meaning_before_answer"`
 		RevealedExampleBeforeAnswer      bool                     `json:"revealed_example_before_answer"`
@@ -409,6 +419,7 @@ func (h *Handler) SubmitReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		ModeUsed:                         payload.ModeUsed,
 		ResponseTimeMs:                   payload.ResponseTimeMs,
 		ClientEventID:                    payload.ClientEventID,
+		ClientSessionID:                  payload.ClientSessionID,
 		AnswerCorrect:                    payload.AnswerCorrect,
 		RevealedMeaningBeforeAnswer:      payload.RevealedMeaningBeforeAnswer,
 		RevealedExampleBeforeAnswer:      payload.RevealedExampleBeforeAnswer,
