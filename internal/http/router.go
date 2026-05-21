@@ -33,10 +33,11 @@ type Handler struct {
 	exercise      *service.ExerciseService
 	mode4         *service.WeakPassageReviewService
 	dynamicReview *service.DynamicReviewService
+	wordSets      *service.WordSetService
 	llmRuns       service.LLMRunRepository
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, exercise *service.ExerciseService, mode4 *service.WeakPassageReviewService, dynamicReview *service.DynamicReviewService, llmRuns service.LLMRunRepository, build BuildInfo) nethttp.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, exercise *service.ExerciseService, mode4 *service.WeakPassageReviewService, dynamicReview *service.DynamicReviewService, wordSets *service.WordSetService, llmRuns service.LLMRunRepository, build BuildInfo) nethttp.Handler {
 	mw := NewMiddleware(logger, verifier, identity, cfg.AdminToken)
 	h := &Handler{
 		logger:        logger,
@@ -49,6 +50,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 		exercise:      exercise,
 		mode4:         mode4,
 		dynamicReview: dynamicReview,
+		wordSets:      wordSets,
 		llmRuns:       llmRuns,
 	}
 
@@ -65,6 +67,11 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Use(mw.RequireUser)
 			r.Get("/me/settings", h.GetSettings)
 			r.Put("/me/settings", h.UpdateSettings)
+			r.Get("/me/word-sets", h.ListWordSets)
+			r.Post("/me/word-sets", h.CreateWordSet)
+			r.Put("/me/word-sets/{setID}", h.UpdateWordSet)
+			r.Delete("/me/word-sets/{setID}", h.DeleteWordSet)
+			r.Post("/me/word-sets/{setID}/activate", h.ActivateWordSet)
 			r.Get("/me/dictionary/words", h.ListDictionaryWords)
 			r.Post("/me/dictionary/words", h.CreateDictionaryWord)
 			r.Put("/me/dictionary/words/{wordID}", h.UpdateDictionaryWord)

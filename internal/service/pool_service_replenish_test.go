@@ -189,7 +189,7 @@ func (r *replenishStateRepo) ListExistingWords(ctx context.Context, userID uuid.
 	return out, nil
 }
 
-func (r *replenishStateRepo) ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, limit int, offset int) ([]domain.DictionaryEntry, error) {
+func (r *replenishStateRepo) ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, setID *uuid.UUID, limit int, offset int) ([]domain.DictionaryEntry, error) {
 	return nil, nil
 }
 
@@ -199,6 +199,18 @@ func (r *replenishStateRepo) Upsert(ctx context.Context, state domain.UserWordSt
 	}
 	r.states[state.WordID] = state
 	return state, nil
+}
+
+func (r *replenishStateRepo) SetWordSetForWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID, setID uuid.UUID) error {
+	return nil
+}
+
+func (r *replenishStateRepo) BackfillDefaultWordSet(ctx context.Context, userID uuid.UUID, defaultSetID uuid.UUID) error {
+	return nil
+}
+
+func (r *replenishStateRepo) GetWordSetIDsForWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	return map[uuid.UUID]uuid.UUID{}, nil
 }
 
 func (r *replenishStateRepo) Delete(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error {

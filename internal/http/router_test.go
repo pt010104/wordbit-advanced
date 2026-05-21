@@ -187,11 +187,20 @@ func (m *memoryStateRepo) ListMode4Candidates(ctx context.Context, userID uuid.U
 func (m *memoryStateRepo) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
 	return []domain.UserWordState{}, nil
 }
-func (m *memoryStateRepo) ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, limit int, offset int) ([]domain.DictionaryEntry, error) {
+func (m *memoryStateRepo) ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, setID *uuid.UUID, limit int, offset int) ([]domain.DictionaryEntry, error) {
 	return []domain.DictionaryEntry{}, nil
 }
 func (m *memoryStateRepo) Upsert(ctx context.Context, state domain.UserWordState) (domain.UserWordState, error) {
 	return state, nil
+}
+func (m *memoryStateRepo) SetWordSetForWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID, setID uuid.UUID) error {
+	return nil
+}
+func (m *memoryStateRepo) BackfillDefaultWordSet(ctx context.Context, userID uuid.UUID, defaultSetID uuid.UUID) error {
+	return nil
+}
+func (m *memoryStateRepo) GetWordSetIDsForWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	return map[uuid.UUID]uuid.UUID{}, nil
 }
 func (m *memoryStateRepo) Delete(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error {
 	return nil
@@ -460,14 +469,14 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 
 	identity := service.NewIdentityService(userRepo, clock)
 	settingsService := service.NewSettingsService(settingsRepo)
-	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
+	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
 	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, nil, dynamicReviewService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, nil, dynamicReviewService, nil, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -570,14 +579,14 @@ func TestGenerateDynamicReviewPromptsEndpoint(t *testing.T) {
 
 	identity := service.NewIdentityService(userRepo, clock)
 	settingsService := service.NewSettingsService(settingsRepo)
-	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
+	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
 	dynamicReviewService := service.NewDynamicReviewService(promptRepo, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, nil, dynamicReviewService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, nil, dynamicReviewService, nil, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -635,14 +644,14 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 
 	identity := service.NewIdentityService(userRepo, clock)
 	settingsService := service.NewSettingsService(settingsRepo)
-	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
+	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &failingGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
 	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, nil, dynamicReviewService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, nil, dynamicReviewService, nil, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/daily-pool", nil)
 	resp := httptest.NewRecorder()
@@ -709,14 +718,14 @@ func TestExerciseStartReturnsReadyPack(t *testing.T) {
 
 	identity := service.NewIdentityService(userRepo, clock)
 	settingsService := service.NewSettingsService(settingsRepo)
-	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, clock)
+	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
 	exerciseService := service.NewExerciseService(settingsRepo, wordRepo, stateRepo, &memoryExercisePackRepo{}, llmRepo, &staticExerciseGenerator{}, clock, logger)
 	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, nil, dynamicReviewService, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, exerciseService, nil, dynamicReviewService, nil, llmRepo, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/me/exercise/start", nil)
 	resp := httptest.NewRecorder()

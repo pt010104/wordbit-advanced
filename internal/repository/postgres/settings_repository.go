@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"wordbit-advanced-app/backend/internal/domain"
@@ -14,8 +15,8 @@ type SettingsRepository struct {
 }
 
 func (r *SettingsRepository) Get(ctx context.Context, userID uuid.UUID) (domain.UserSettings, error) {
-	return scanSettings(r.pool.QueryRow(ctx, `
-		SELECT user_id, cefr_level, daily_new_word_limit, preferred_meaning_language, timezone, pronunciation_enabled, lock_screen_enabled, created_at, updated_at
+	return scanSettingsWithSet(r.pool.QueryRow(ctx, `
+		SELECT user_id, cefr_level, daily_new_word_limit, preferred_meaning_language, timezone, pronunciation_enabled, lock_screen_enabled, active_word_set_id, created_at, updated_at
 		FROM user_settings
 		WHERE user_id = $1
 	`, userID))
@@ -24,18 +25,19 @@ func (r *SettingsRepository) Get(ctx context.Context, userID uuid.UUID) (domain.
 func (r *SettingsRepository) Upsert(ctx context.Context, settings domain.UserSettings) (domain.UserSettings, error) {
 	query := `
 		INSERT INTO user_settings (
-			user_id, cefr_level, daily_new_word_limit, preferred_meaning_language, timezone, pronunciation_enabled, lock_screen_enabled
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			user_id, cefr_level, daily_new_word_limit, preferred_meaning_language, timezone, pronunciation_enabled, lock_screen_enabled, active_word_set_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (user_id) DO UPDATE SET
 			cefr_level = EXCLUDED.cefr_level,
 			daily_new_word_limit = EXCLUDED.daily_new_word_limit,
 			preferred_meaning_language = EXCLUDED.preferred_meaning_language,
 			timezone = EXCLUDED.timezone,
 			pronunciation_enabled = EXCLUDED.pronunciation_enabled,
-			lock_screen_enabled = EXCLUDED.lock_screen_enabled
-		RETURNING user_id, cefr_level, daily_new_word_limit, preferred_meaning_language, timezone, pronunciation_enabled, lock_screen_enabled, created_at, updated_at
+			lock_screen_enabled = EXCLUDED.lock_screen_enabled,
+			active_word_set_id = COALESCE(EXCLUDED.active_word_set_id, user_settings.active_word_set_id)
+		RETURNING user_id, cefr_level, daily_new_word_limit, preferred_meaning_language, timezone, pronunciation_enabled, lock_screen_enabled, active_word_set_id, created_at, updated_at
 	`
-	return scanSettings(r.pool.QueryRow(ctx, query,
+	return scanSettingsWithSet(r.pool.QueryRow(ctx, query,
 		settings.UserID,
 		settings.CEFRLevel,
 		settings.DailyNewWordLimit,
@@ -43,5 +45,28 @@ func (r *SettingsRepository) Upsert(ctx context.Context, settings domain.UserSet
 		settings.Timezone,
 		settings.PronunciationEnabled,
 		settings.LockScreenEnabled,
+		settings.ActiveWordSetID,
 	))
+}
+
+func scanSettingsWithSet(row pgx.Row) (domain.UserSettings, error) {
+	var settings domain.UserSettings
+	var activeSetID uuid.NullUUID
+	err := row.Scan(
+		&settings.UserID,
+		&settings.CEFRLevel,
+		&settings.DailyNewWordLimit,
+		&settings.PreferredMeaningLanguage,
+		&settings.Timezone,
+		&settings.PronunciationEnabled,
+		&settings.LockScreenEnabled,
+		&activeSetID,
+		&settings.CreatedAt,
+		&settings.UpdatedAt,
+	)
+	if activeSetID.Valid {
+		copied := activeSetID.UUID
+		settings.ActiveWordSetID = &copied
+	}
+	return settings, mapError(err)
 }

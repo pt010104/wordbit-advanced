@@ -43,9 +43,11 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	clock := service.RealClock{}
 	identity := service.NewIdentityService(repos.Users, clock)
 	settings := service.NewSettingsService(repos.Settings)
-	dictionary := service.NewDictionaryService(repos.Settings, repos.Words, repos.States, repos.Pools, clock)
+	wordSets := service.NewWordSetService(repos.WordSets, repos.Settings, repos.States)
+	dictionary := service.NewDictionaryService(repos.Settings, repos.Words, repos.States, repos.Pools, wordSets, clock)
 	geminiClient := gemini.NewClient(cfg.Gemini, logger)
 	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, geminiClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
+	poolService.SetWordSetService(wordSets)
 	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	exerciseService := service.NewExerciseService(repos.Settings, repos.Words, repos.States, repos.ExercisePacks, repos.LLMRuns, geminiClient, clock, logger)
 	var mode4Service *service.WeakPassageReviewService
@@ -55,7 +57,7 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, geminiClient, clock, logger)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
-	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, exerciseService, mode4Service, dynamicReviewService, repos.LLMRuns, apihttp.BuildInfo{
+	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, exerciseService, mode4Service, dynamicReviewService, wordSets, repos.LLMRuns, apihttp.BuildInfo{
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,

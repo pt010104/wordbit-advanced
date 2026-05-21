@@ -91,11 +91,20 @@ func (r *exerciseStateRepo) ListMode4Candidates(ctx context.Context, userID uuid
 func (r *exerciseStateRepo) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
 	return nil, nil
 }
-func (r *exerciseStateRepo) ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, limit int, offset int) ([]domain.DictionaryEntry, error) {
+func (r *exerciseStateRepo) ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, setID *uuid.UUID, limit int, offset int) ([]domain.DictionaryEntry, error) {
 	return nil, nil
 }
 func (r *exerciseStateRepo) Upsert(ctx context.Context, state domain.UserWordState) (domain.UserWordState, error) {
 	return state, nil
+}
+func (r *exerciseStateRepo) SetWordSetForWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID, setID uuid.UUID) error {
+	return nil
+}
+func (r *exerciseStateRepo) BackfillDefaultWordSet(ctx context.Context, userID uuid.UUID, defaultSetID uuid.UUID) error {
+	return nil
+}
+func (r *exerciseStateRepo) GetWordSetIDsForWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	return map[uuid.UUID]uuid.UUID{}, nil
 }
 func (r *exerciseStateRepo) Delete(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error {
 	return nil

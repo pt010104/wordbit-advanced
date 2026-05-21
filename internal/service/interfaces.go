@@ -35,10 +35,23 @@ type WordStateRepository interface {
 	ListWeakCandidates(ctx context.Context, userID uuid.UUID, excludeWordIDs []uuid.UUID, limit int) ([]domain.UserWordState, error)
 	ListMode4Candidates(ctx context.Context, userID uuid.UUID, limit int) ([]domain.UserWordState, error)
 	ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error)
-	ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, limit int, offset int) ([]domain.DictionaryEntry, error)
+	ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, setID *uuid.UUID, limit int, offset int) ([]domain.DictionaryEntry, error)
 	Upsert(ctx context.Context, state domain.UserWordState) (domain.UserWordState, error)
+	SetWordSetForWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID, setID uuid.UUID) error
+	BackfillDefaultWordSet(ctx context.Context, userID uuid.UUID, defaultSetID uuid.UUID) error
+	GetWordSetIDsForWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error)
 	Delete(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error
 	RefreshWeaknessScores(ctx context.Context, userID uuid.UUID) error
+}
+
+type WordSetRepository interface {
+	List(ctx context.Context, userID uuid.UUID) ([]domain.WordSet, error)
+	Get(ctx context.Context, userID uuid.UUID, setID uuid.UUID) (domain.WordSet, error)
+	GetDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error)
+	Create(ctx context.Context, set domain.WordSet) (domain.WordSet, error)
+	Update(ctx context.Context, set domain.WordSet) (domain.WordSet, error)
+	Delete(ctx context.Context, userID uuid.UUID, setID uuid.UUID) error
+	EnsureDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error)
 }
 
 type PoolRepository interface {

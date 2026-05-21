@@ -29,6 +29,7 @@ type DictionaryUpsertInput struct {
 	ExampleSentence1   string
 	ExampleSentence2   string
 	ListStatus         domain.DictionaryListStatus
+	WordSetID          *uuid.UUID
 }
 
 type DictionaryService struct {
@@ -36,6 +37,7 @@ type DictionaryService struct {
 	wordRepo     WordRepository
 	stateRepo    WordStateRepository
 	poolRepo     PoolRepository
+	wordSets     *WordSetService
 	clock        Clock
 }
 
@@ -44,6 +46,7 @@ func NewDictionaryService(
 	wordRepo WordRepository,
 	stateRepo WordStateRepository,
 	poolRepo PoolRepository,
+	wordSets *WordSetService,
 	clock Clock,
 ) *DictionaryService {
 	return &DictionaryService{
@@ -51,16 +54,17 @@ func NewDictionaryService(
 		wordRepo:     wordRepo,
 		stateRepo:    stateRepo,
 		poolRepo:     poolRepo,
+		wordSets:     wordSets,
 		clock:        clock,
 	}
 }
 
-func (s *DictionaryService) List(ctx context.Context, userID uuid.UUID, filter string, query string, limit int, offset int) (domain.DictionaryListResponse, error) {
+func (s *DictionaryService) List(ctx context.Context, userID uuid.UUID, filter string, query string, setID *uuid.UUID, limit int, offset int) (domain.DictionaryListResponse, error) {
 	normalizedFilter, err := normalizeDictionaryFilter(filter)
 	if err != nil {
 		return domain.DictionaryListResponse{}, err
 	}
-	items, err := s.stateRepo.ListDictionaryEntries(ctx, userID, normalizedFilter, query, limit, offset)
+	items, err := s.stateRepo.ListDictionaryEntries(ctx, userID, normalizedFilter, query, setID, limit, offset)
 	if err != nil {
 		return domain.DictionaryListResponse{}, err
 	}
@@ -96,6 +100,19 @@ func (s *DictionaryService) Create(ctx context.Context, user domain.User, input 
 	if err != nil {
 		return domain.DictionaryEntry{}, err
 	}
+	if s.wordSets != nil {
+		setID := input.WordSetID
+		if setID == nil {
+			if active, err := s.wordSets.ResolveActiveSet(ctx, user.ID); err == nil {
+				setID = &active.ID
+			}
+		}
+		if setID != nil {
+			if err := s.stateRepo.SetWordSetForWord(ctx, user.ID, word.ID, *setID); err != nil {
+				return domain.DictionaryEntry{}, err
+			}
+		}
+	}
 	return dictionaryEntryFrom(word, savedState), nil
 }
 
@@ -124,7 +141,11 @@ func (s *DictionaryService) Update(ctx context.Context, user domain.User, wordID
 	if err != nil {
 		return domain.DictionaryEntry{}, err
 	}
-
+	if input.WordSetID != nil {
+		if err := s.stateRepo.SetWordSetForWord(ctx, user.ID, word.ID, *input.WordSetID); err != nil {
+			return domain.DictionaryEntry{}, err
+		}
+	}
 	return dictionaryEntryFrom(word, savedState), nil
 }
 

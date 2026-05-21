@@ -6,6 +6,7 @@ import (
 	"io"
 	nethttp "net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -41,10 +42,20 @@ func (h *Handler) UpdateSettings(w nethttp.ResponseWriter, r *nethttp.Request) {
 		Timezone                 string                 `json:"timezone"`
 		PronunciationEnabled     bool                   `json:"pronunciation_enabled"`
 		LockScreenEnabled        bool                   `json:"lock_screen_enabled"`
+		ActiveWordSetID          string                 `json:"active_word_set_id"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, errors.New(domain.ErrValidation.Error()+": invalid json body"))
 		return
+	}
+	var activeSetID *uuid.UUID
+	if trimmed := strings.TrimSpace(payload.ActiveWordSetID); trimmed != "" {
+		parsed, parseErr := uuid.Parse(trimmed)
+		if parseErr != nil {
+			writeError(w, domain.ErrValidation)
+			return
+		}
+		activeSetID = &parsed
 	}
 	settings, err := h.settings.Update(r.Context(), domain.UserSettings{
 		UserID:                   user.ID,
@@ -54,6 +65,7 @@ func (h *Handler) UpdateSettings(w nethttp.ResponseWriter, r *nethttp.Request) {
 		Timezone:                 payload.Timezone,
 		PronunciationEnabled:     payload.PronunciationEnabled,
 		LockScreenEnabled:        payload.LockScreenEnabled,
+		ActiveWordSetID:          activeSetID,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -78,12 +90,139 @@ func (h *Handler) ListDictionaryWords(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeError(w, err)
 		return
 	}
-	response, err := h.dictionary.List(r.Context(), user.ID, r.URL.Query().Get("filter"), r.URL.Query().Get("q"), limit, offset)
+	setID, err := parseOptionalUUID(r.URL.Query().Get("set_id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response, err := h.dictionary.List(r.Context(), user.ID, r.URL.Query().Get("filter"), r.URL.Query().Get("q"), setID, limit, offset)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, response)
+}
+
+func (h *Handler) ListWordSets(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	sets, err := h.wordSets.List(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]any{"items": sets})
+}
+
+func (h *Handler) CreateWordSet(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	var payload struct {
+		Name string             `json:"name"`
+		Icon string             `json:"icon"`
+		Mode domain.WordSetMode `json:"mode"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	set, err := h.wordSets.Create(r.Context(), user.ID, service.WordSetUpsertInput{
+		Name: payload.Name,
+		Icon: payload.Icon,
+		Mode: payload.Mode,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusCreated, set)
+}
+
+func (h *Handler) UpdateWordSet(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	setID, err := parseUUID(chi.URLParam(r, "setID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	var payload struct {
+		Name string             `json:"name"`
+		Icon string             `json:"icon"`
+		Mode domain.WordSetMode `json:"mode"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	set, err := h.wordSets.Update(r.Context(), user.ID, setID, service.WordSetUpsertInput{
+		Name: payload.Name,
+		Icon: payload.Icon,
+		Mode: payload.Mode,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, set)
+}
+
+func (h *Handler) DeleteWordSet(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	setID, err := parseUUID(chi.URLParam(r, "setID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	if err := h.wordSets.Delete(r.Context(), user.ID, setID); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) ActivateWordSet(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	setID, err := parseUUID(chi.URLParam(r, "setID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	settings, err := h.wordSets.SetActive(r.Context(), user.ID, setID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, settings)
+}
+
+func parseOptionalUUID(value string) (*uuid.UUID, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	parsed, err := uuid.Parse(trimmed)
+	if err != nil {
+		return nil, domain.ErrValidation
+	}
+	return &parsed, nil
 }
 
 func (h *Handler) CreateDictionaryWord(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -164,6 +303,11 @@ func (h *Handler) GetDailyPool(w nethttp.ResponseWriter, r *nethttp.Request) {
 		} else {
 			view.Items = items
 		}
+	}
+	if filtered, filterErr := h.pools.FilterDailyPoolByActiveSet(r.Context(), user, view); filterErr != nil {
+		h.logger.Warn("filter daily pool by active set", "user_id", user.ID, "error", filterErr)
+	} else {
+		view = filtered
 	}
 	writeJSON(w, nethttp.StatusOK, view)
 }
@@ -585,9 +729,18 @@ func decodeDictionaryUpsertPayload(r *nethttp.Request) (service.DictionaryUpsert
 		ExampleSentence1   string                      `json:"example_sentence_1"`
 		ExampleSentence2   string                      `json:"example_sentence_2"`
 		ListStatus         domain.DictionaryListStatus `json:"list_status"`
+		WordSetID          string                      `json:"word_set_id"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		return service.DictionaryUpsertInput{}, fmt.Errorf("%w: invalid json body", domain.ErrValidation)
+	}
+	var setID *uuid.UUID
+	if trimmed := strings.TrimSpace(payload.WordSetID); trimmed != "" {
+		parsed, parseErr := uuid.Parse(trimmed)
+		if parseErr != nil {
+			return service.DictionaryUpsertInput{}, fmt.Errorf("%w: invalid word_set_id", domain.ErrValidation)
+		}
+		setID = &parsed
 	}
 	return service.DictionaryUpsertInput{
 		Word:               payload.Word,
@@ -605,6 +758,7 @@ func decodeDictionaryUpsertPayload(r *nethttp.Request) (service.DictionaryUpsert
 		ExampleSentence1:   payload.ExampleSentence1,
 		ExampleSentence2:   payload.ExampleSentence2,
 		ListStatus:         payload.ListStatus,
+		WordSetID:          setID,
 	}, nil
 }
 

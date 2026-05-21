@@ -34,6 +34,7 @@ type Repositories struct {
 	ExercisePacks        *ExercisePackRepository
 	Mode4Reviews         *Mode4ReviewRepository
 	DynamicReviewPrompts *DynamicReviewPromptRepository
+	WordSets             *WordSetRepository
 }
 
 func NewRepositories(pool *pgxpool.Pool) *Repositories {
@@ -48,6 +49,7 @@ func NewRepositories(pool *pgxpool.Pool) *Repositories {
 		ExercisePacks:        &ExercisePackRepository{pool: pool},
 		Mode4Reviews:         &Mode4ReviewRepository{pool: pool},
 		DynamicReviewPrompts: &DynamicReviewPromptRepository{pool: pool},
+		WordSets:             &WordSetRepository{pool: pool},
 	}
 }
 
@@ -191,22 +193,6 @@ func scanUser(row pgx.Row) (domain.User, error) {
 		&user.LastActiveAt,
 	)
 	return user, mapError(err)
-}
-
-func scanSettings(row pgx.Row) (domain.UserSettings, error) {
-	var settings domain.UserSettings
-	err := row.Scan(
-		&settings.UserID,
-		&settings.CEFRLevel,
-		&settings.DailyNewWordLimit,
-		&settings.PreferredMeaningLanguage,
-		&settings.Timezone,
-		&settings.PronunciationEnabled,
-		&settings.LockScreenEnabled,
-		&settings.CreatedAt,
-		&settings.UpdatedAt,
-	)
-	return settings, mapError(err)
 }
 
 func scanWord(row pgx.Row) (domain.Word, error) {

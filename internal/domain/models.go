@@ -164,6 +164,24 @@ const (
 	ExercisePackStatusReady ExercisePackStatus = "ready"
 )
 
+type WordSetMode string
+
+const (
+	WordSetModeNewWords WordSetMode = "new_words"
+	WordSetModeCustom   WordSetMode = "custom"
+)
+
+type WordSet struct {
+	ID        uuid.UUID   `json:"id"`
+	UserID    uuid.UUID   `json:"user_id"`
+	Name      string      `json:"name"`
+	Icon      string      `json:"icon,omitempty"`
+	Mode      WordSetMode `json:"mode"`
+	IsDefault bool        `json:"is_default"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
 type Mode4ReviewAction string
 
 const (
@@ -207,6 +225,7 @@ type UserSettings struct {
 	Timezone                 string          `json:"timezone"`
 	PronunciationEnabled     bool            `json:"pronunciation_enabled"`
 	LockScreenEnabled        bool            `json:"lock_screen_enabled"`
+	ActiveWordSetID          *uuid.UUID      `json:"active_word_set_id,omitempty"`
 	CreatedAt                time.Time       `json:"created_at"`
 	UpdatedAt                time.Time       `json:"updated_at"`
 }
@@ -268,6 +287,7 @@ type UserWordState struct {
 	SlowRecallCount      int          `json:"slow_recall_count"`
 	GuessedCorrectCount  int          `json:"guessed_correct_count"`
 	KnownAt              *time.Time   `json:"known_at,omitempty"`
+	WordSetID            *uuid.UUID   `json:"word_set_id,omitempty"`
 	CreatedAt            time.Time    `json:"created_at"`
 	UpdatedAt            time.Time    `json:"updated_at"`
 }
@@ -282,6 +302,7 @@ type DailyLearningPool struct {
 	ShortTermCount int       `json:"short_term_count"`
 	WeakCount      int       `json:"weak_count"`
 	NewCount       int       `json:"new_count"`
+	WordSetID      *uuid.UUID `json:"word_set_id,omitempty"`
 	GeneratedAt    time.Time `json:"generated_at"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`

@@ -22,10 +22,19 @@ type PoolService struct {
 	eventRepo                   LearningEventRepository
 	llmRepo                     LLMRunRepository
 	generator                   CandidateGenerator
+	wordSets                    *WordSetService
 	clock                       Clock
 	logger                      *slog.Logger
 	memoryCauseInferenceEnabled bool
 	maxGenerationAttempts       int
+}
+
+// SetWordSetService wires the optional WordSetService dependency. It is
+// optional so unit tests / older callers can construct the PoolService
+// without word-set filtering; when nil, [FilterDailyPoolByActiveSet] is a
+// no-op and the full daily pool is returned.
+func (s *PoolService) SetWordSetService(wordSets *WordSetService) {
+	s.wordSets = wordSets
 }
 
 type UnknownDailyBufferMutation struct {
@@ -234,7 +243,15 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 	if err != nil {
 		return CardResponse{}, err
 	}
-	card, shouldReplenish, err := s.nextCardFromView(ctx, user.ID, view, now, sessionID, settings.DailyNewWordLimit)
+	// Replenishment decisions below need the unfiltered view (so the default
+	// new_words set keeps topping up new words even when the user is on a
+	// custom set). Only the card-selection step sees the filtered view.
+	visibleView, filterErr := s.FilterDailyPoolByActiveSet(ctx, user, view)
+	if filterErr != nil {
+		s.logger.Warn("filter daily pool by active set for next card", "user_id", user.ID, "error", filterErr)
+		visibleView = view
+	}
+	card, shouldReplenish, err := s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit)
 	if err != nil {
 		return CardResponse{}, err
 	}
@@ -249,7 +266,11 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 		if err != nil {
 			return CardResponse{}, err
 		}
-		card, shouldReplenish, err = s.nextCardFromView(ctx, user.ID, view, now, sessionID, settings.DailyNewWordLimit)
+		visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
+		if filterErr != nil {
+			visibleView = view
+		}
+		card, shouldReplenish, err = s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit)
 		if err != nil {
 			return CardResponse{}, err
 		}
@@ -265,7 +286,11 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 		if err != nil {
 			return CardResponse{}, err
 		}
-		card, _, err = s.nextCardFromView(ctx, user.ID, view, now, sessionID, settings.DailyNewWordLimit)
+		visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
+		if filterErr != nil {
+			visibleView = view
+		}
+		card, _, err = s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit)
 		if err != nil {
 			return CardResponse{}, err
 		}
@@ -1429,4 +1454,78 @@ func minInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+// FilterDailyPoolByActiveSet returns a view restricted to pool items whose
+// underlying user_word_state belongs to the user's currently active word set.
+// New-word generation continues to run unfiltered in the background and
+// always targets the user's new_words-mode set, but when the user is in any
+// other (custom) set, those new-word cards must not appear in their session.
+//
+// The filter is applied in-memory after [GetOrCreateDailyPool] so that the
+// stored pool stays "global" per (user, local_date) and switching sets only
+// changes what the client sees — not what is generated.
+//
+// When the PoolService was constructed without a [WordSetService] (e.g. in
+// tests), this method is a no-op and returns the original view unchanged.
+func (s *PoolService) FilterDailyPoolByActiveSet(ctx context.Context, user domain.User, view DailyPoolView) (DailyPoolView, error) {
+	if s.wordSets == nil {
+		return view, nil
+	}
+	if len(view.Items) == 0 {
+		return view, nil
+	}
+	activeSet, err := s.wordSets.ResolveActiveSet(ctx, user.ID)
+	if err != nil {
+		return view, err
+	}
+	wordIDs := make([]uuid.UUID, 0, len(view.Items))
+	seen := map[uuid.UUID]struct{}{}
+	for _, item := range view.Items {
+		if _, ok := seen[item.WordID]; ok {
+			continue
+		}
+		seen[item.WordID] = struct{}{}
+		wordIDs = append(wordIDs, item.WordID)
+	}
+	setMap, err := s.stateRepo.GetWordSetIDsForWords(ctx, user.ID, wordIDs)
+	if err != nil {
+		return view, err
+	}
+	filtered := make([]domain.DailyLearningPoolItem, 0, len(view.Items))
+	var due, short, weak, newCount int
+	for _, item := range view.Items {
+		setID, hasMapping := setMap[item.WordID]
+		// Items whose state has no word_set_id (legacy rows that escaped the
+		// backfill, e.g. created after migration but before the default set
+		// existed) are conservatively shown only when the active set is the
+		// default — otherwise they'd be invisible across all sets.
+		if !hasMapping {
+			if !activeSet.IsDefault {
+				continue
+			}
+		} else if setID != activeSet.ID {
+			continue
+		}
+		filtered = append(filtered, item)
+		switch item.ItemType {
+		case domain.PoolItemTypeReview:
+			due++
+		case domain.PoolItemTypeShortTerm:
+			short++
+		case domain.PoolItemTypeWeak:
+			weak++
+		case domain.PoolItemTypeNew:
+			newCount++
+		}
+	}
+	out := view
+	out.Items = filtered
+	out.Counts = domain.PoolGenerationCounts{
+		DueReview: due,
+		ShortTerm: short,
+		Weak:      weak,
+		New:       newCount,
+	}
+	return out, nil
 }

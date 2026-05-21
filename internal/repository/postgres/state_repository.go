@@ -159,7 +159,7 @@ func (r *WordStateRepository) ListExistingWords(ctx context.Context, userID uuid
 	return states, rows.Err()
 }
 
-func (r *WordStateRepository) ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, limit int, offset int) ([]domain.DictionaryEntry, error) {
+func (r *WordStateRepository) ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, setID *uuid.UUID, limit int, offset int) ([]domain.DictionaryEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -187,6 +187,11 @@ func (r *WordStateRepository) ListDictionaryEntries(ctx context.Context, userID 
 		baseQuery += " AND s.status = 'known'"
 	case domain.DictionaryFilterUnknown:
 		baseQuery += " AND s.status IN ('learning', 'review')"
+	}
+
+	if setID != nil {
+		baseQuery += fmt.Sprintf(" AND s.word_set_id = $%d", len(args)+1)
+		args = append(args, *setID)
 	}
 
 	trimmedQuery := strings.TrimSpace(query)
@@ -305,6 +310,59 @@ func (r *WordStateRepository) Upsert(ctx context.Context, state domain.UserWordS
 		state.GuessedCorrectCount,
 		state.KnownAt,
 	))
+}
+
+func (r *WordStateRepository) SetWordSetForWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID, setID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE user_word_states
+		SET word_set_id = $3
+		WHERE user_id = $1 AND word_id = $2
+	`, userID, wordID, setID)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (r *WordStateRepository) GetWordSetIDsForWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	result := map[uuid.UUID]uuid.UUID{}
+	if len(wordIDs) == 0 {
+		return result, nil
+	}
+	args := append([]any{userID}, inClauseUUIDs(wordIDs)...)
+	query := fmt.Sprintf(`
+		SELECT word_id, word_set_id
+		FROM user_word_states
+		WHERE user_id = $1 AND word_id IN (%s)
+	`, joinPlaceholders(2, len(wordIDs)))
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var wordID uuid.UUID
+		var setID uuid.NullUUID
+		if scanErr := rows.Scan(&wordID, &setID); scanErr != nil {
+			return nil, scanErr
+		}
+		if setID.Valid {
+			result[wordID] = setID.UUID
+		}
+	}
+	return result, rows.Err()
+}
+
+func (r *WordStateRepository) BackfillDefaultWordSet(ctx context.Context, userID uuid.UUID, defaultSetID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE user_word_states
+		SET word_set_id = $2
+		WHERE user_id = $1 AND word_set_id IS NULL
+	`, userID, defaultSetID)
+	return mapError(err)
 }
 
 func (r *WordStateRepository) Delete(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error {
