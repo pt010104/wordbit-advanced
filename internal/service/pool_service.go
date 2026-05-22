@@ -146,13 +146,10 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 		return DailyPoolView{}, err
 	}
 	rawReviewPracticeCount := totalDueReviewPracticeItems(shortTermStates, reviewStates, weakStates)
-	shortTermStates, reviewStates, weakStates, comebackMode := capReviewPracticeStates(shortTermStates, reviewStates, weakStates)
+	comebackMode := hasOverdueReviewStates(shortTermStates, reviewStates, weakStates, now)
 
 	topic := TopicForDate(now.In(loc))
 	newQuota := ComputeNewWordQuota(settings.DailyNewWordLimit, len(reviewStates), len(shortTermStates), weakSlots)
-	if comebackMode {
-		newQuota = catchUpNewQuota(settings.DailyNewWordLimit)
-	}
 
 	wordMap, err := s.loadWordMap(ctx, append(extractStateWordIDs(shortTermStates), append(extractStateWordIDs(reviewStates), extractStateWordIDs(weakStates)...)...))
 	if err != nil {
@@ -314,23 +311,22 @@ func (s *PoolService) nextCardFromView(
 	}
 	comebackMode := isComebackPool(view.Pool, view.Items)
 	effectiveNewLimit := dailyNewWordLimit
-	if comebackMode {
-		effectiveNewLimit = catchUpNewQuota(dailyNewWordLimit)
-	}
+	pendingDue := actionableItemsRemaining(view.Items, now)
 	item, nextDue, completeReason := findNextCardForSession(view.Items, now, progress, comebackMode, effectiveNewLimit)
 	if item != nil || completeReason != "" {
-		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, item, nextDue, completeReason), false, nil
+		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, item, nextDue, completeReason), false, nil
 	}
 	if sessionID != "" && nextDue == nil {
-		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, nil, nil, sessionCompleteReasonNoCards), false, nil
+		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, nil, nil, sessionCompleteReasonNoCards), false, nil
 	}
-	return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, nil, nextDue, ""), true, nil
+	return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, nil, nextDue, ""), true, nil
 }
 
 func buildCardResponse(
 	localDate string,
 	progress sessionProgress,
 	comebackMode bool,
+	pendingDueCount int,
 	item *domain.DailyLearningPoolItem,
 	nextDue *time.Time,
 	completeReason string,
@@ -348,11 +344,12 @@ func buildCardResponse(
 		SessionComplete:        sessionComplete,
 		SessionCompleteReason:  completeReason,
 		ComebackMode:           comebackMode,
-		DailyReviewCap:         progress.DailyReviewCap,
+		SessionTotalCap:        progress.SessionTotalCap,
 		DailyReviewCompleted:   progress.DailyReviewCompleted,
 		SessionTotalCompleted:  progress.SessionTotalCompleted,
 		SessionReviewCompleted: progress.SessionReviewCompleted,
 		SessionNewCompleted:    progress.SessionNewCompleted,
+		PendingDueCount:        pendingDueCount,
 		NextDueAt:              nextDue,
 		PoolItem:               item,
 	}
@@ -378,11 +375,7 @@ func (s *PoolService) replenishBonusPracticeItems(
 		return false, err
 	}
 
-	remainingReviewBudget := catchUpDailyReviewCap - totalReviewPracticeItems(items)
-	if remainingReviewBudget <= 0 {
-		return false, nil
-	}
-	limit := minInt(maxInt(ComputeWeakSlots(settings.DailyNewWordLimit), 1), remainingReviewBudget)
+	limit := maxInt(ComputeWeakSlots(settings.DailyNewWordLimit), 1)
 	weakStates, err := s.listBonusPracticeCandidates(ctx, userID, items, limit)
 	if err != nil {
 		return false, err
@@ -681,15 +674,14 @@ func findNextCardForSession(
 	items []domain.DailyLearningPoolItem,
 	now time.Time,
 	progress sessionProgress,
-	comebackMode bool,
+	_ bool,
 	effectiveNewLimit int,
 ) (*domain.DailyLearningPoolItem, *time.Time, string) {
 	if progress.SessionComplete {
 		return nil, nil, progress.SessionCompleteReason
 	}
 
-	reviewCapReached := progress.DailyReviewCompleted >= progress.DailyReviewCap
-	newCapReached := comebackMode && effectiveNewLimit >= 0 && progress.DailyNewCompleted >= effectiveNewLimit
+	newCapReached := effectiveNewLimit >= 0 && progress.DailyNewCompleted >= effectiveNewLimit
 	var nextDue *time.Time
 	reviewCandidates := make([]domain.DailyLearningPoolItem, 0)
 	newCandidates := make([]domain.DailyLearningPoolItem, 0)
@@ -704,9 +696,7 @@ func findNextCardForSession(
 			continue
 		}
 		if IsReviewPracticeItem(item) {
-			if !reviewCapReached {
-				reviewCandidates = append(reviewCandidates, item)
-			}
+			reviewCandidates = append(reviewCandidates, item)
 			continue
 		}
 		if item.ItemType == domain.PoolItemTypeNew && !newCapReached {
@@ -736,9 +726,6 @@ func findNextCardForSession(
 	if reviewCandidate != nil {
 		return reviewCandidate, nil, ""
 	}
-	if reviewCapReached {
-		return nil, nil, sessionCompleteReasonDailyCap
-	}
 	if progress.SessionNewCompleted == 0 && newCandidate != nil {
 		return newCandidate, nil, ""
 	}
@@ -765,53 +752,41 @@ func bestActionableItem(items []domain.DailyLearningPoolItem) *domain.DailyLearn
 	return &copyItem
 }
 
-func capReviewPracticeStates(
+// comebackPoolReviewThreshold is the review-volume threshold (per day) that
+// marks the pool as being in "comeback mode". It is a UI/throttling hint only
+// and no longer caps the number of reviews a user can do in a day.
+const comebackPoolReviewThreshold = 40
+
+// hasOverdueReviewStates reports whether any due review state has a
+// NextReviewAt before "now" (i.e. carried over from a previous day). Kept for
+// pool generation logging.
+func hasOverdueReviewStates(
 	shortTermStates []domain.UserWordState,
 	reviewStates []domain.UserWordState,
 	weakStates []domain.UserWordState,
-) ([]domain.UserWordState, []domain.UserWordState, []domain.UserWordState, bool) {
-	if totalDueReviewPracticeItems(shortTermStates, reviewStates, weakStates) <= catchUpDailyReviewCap {
-		return shortTermStates, reviewStates, weakStates, false
+	now time.Time,
+) bool {
+	for _, group := range [][]domain.UserWordState{shortTermStates, reviewStates, weakStates} {
+		for _, state := range group {
+			if state.NextReviewAt != nil && state.NextReviewAt.Before(now) {
+				return true
+			}
+		}
 	}
-	remaining := catchUpDailyReviewCap
-	shortTermStates = takeStates(shortTermStates, &remaining)
-	reviewStates = takeStates(reviewStates, &remaining)
-	weakStates = takeStates(weakStates, &remaining)
-	return shortTermStates, reviewStates, weakStates, true
+	return false
 }
 
-func takeStates(states []domain.UserWordState, remaining *int) []domain.UserWordState {
-	if *remaining <= 0 {
-		return nil
-	}
-	if len(states) <= *remaining {
-		*remaining -= len(states)
-		return states
-	}
-	out := states[:*remaining]
-	*remaining = 0
-	return out
-}
-
+// isComebackPool reports whether the user has accumulated enough due review
+// items to be considered in "comeback mode". Mirrors the original cap-based
+// trigger (≥40 review items) but no longer enforces it as a hard cap.
 func isComebackPool(pool domain.DailyLearningPool, items []domain.DailyLearningPoolItem) bool {
-	if pool.ShortTermCount+pool.DueReviewCount+pool.WeakCount >= catchUpDailyReviewCap {
+	if pool.ShortTermCount+pool.DueReviewCount+pool.WeakCount >= comebackPoolReviewThreshold {
 		return true
 	}
-	return totalReviewPracticeItems(items) >= catchUpDailyReviewCap
+	return totalReviewPracticeItems(items) >= comebackPoolReviewThreshold
 }
 
-func catchUpNewQuota(dailyLimit int) int {
-	if dailyLimit <= 0 {
-		return 0
-	}
-	return minInt(dailyLimit, catchUpSessionNewRunCap)
-}
-
-func effectiveNewWordBufferLimits(dailyLimit int, comebackMode bool) (int, int) {
-	if comebackMode {
-		quota := catchUpNewQuota(dailyLimit)
-		return quota, quota
-	}
+func effectiveNewWordBufferLimits(dailyLimit int, _ bool) (int, int) {
 	return dailyLimit, ComputeNewWordPrefetchBatchSize(dailyLimit)
 }
 
@@ -852,14 +827,6 @@ func (s *PoolService) reconcileScheduledPoolItems(
 	if len(missingShort) == 0 && len(missingReview) == 0 {
 		return false, nil
 	}
-	remainingReviewBudget := catchUpDailyReviewCap - totalReviewPracticeItems(items)
-	if remainingReviewBudget <= 0 {
-		return false, nil
-	}
-	missingShort, missingReview = capMissingScheduledStates(missingShort, missingReview, remainingReviewBudget)
-	if len(missingShort) == 0 && len(missingReview) == 0 {
-		return false, nil
-	}
 
 	wordIDs := append(extractStateWordIDs(missingShort), extractStateWordIDs(missingReview)...)
 	wordMap, err := s.loadWordMap(ctx, wordIDs)
@@ -894,13 +861,6 @@ func (s *PoolService) reconcileScheduledPoolItems(
 		"appended_review", len(missingReview),
 	)
 	return true, nil
-}
-
-func capMissingScheduledStates(shortTermStates []domain.UserWordState, reviewStates []domain.UserWordState, budget int) ([]domain.UserWordState, []domain.UserWordState) {
-	remaining := budget
-	shortTermStates = takeStates(shortTermStates, &remaining)
-	reviewStates = takeStates(reviewStates, &remaining)
-	return shortTermStates, reviewStates
 }
 
 func filterMissingScheduledStates(states []domain.UserWordState, itemType domain.PoolItemType, existing map[string]struct{}) []domain.UserWordState {

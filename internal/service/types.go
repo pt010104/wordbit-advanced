@@ -66,11 +66,12 @@ type CardResponse struct {
 	SessionComplete        bool                               `json:"session_complete"`
 	SessionCompleteReason  string                             `json:"session_complete_reason"`
 	ComebackMode           bool                               `json:"comeback_mode"`
-	DailyReviewCap         int                                `json:"daily_review_cap"`
+	SessionTotalCap        int                                `json:"session_total_cap"`
 	DailyReviewCompleted   int                                `json:"daily_review_completed"`
 	SessionTotalCompleted  int                                `json:"session_total_completed"`
 	SessionReviewCompleted int                                `json:"session_review_completed"`
 	SessionNewCompleted    int                                `json:"session_new_completed"`
+	PendingDueCount        int                                `json:"pending_due_count"`
 	NextDueAt              *time.Time                         `json:"next_due_at,omitempty"`
 	PoolItem               *domain.DailyLearningPoolItem      `json:"pool_item,omitempty"`
 	Mode4                  *domain.Mode4WeakPassageReviewCard `json:"mode4,omitempty"`

@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	catchUpDailyReviewCap      = 40
 	catchUpSessionReviewRunCap = 5
 	catchUpSessionNewRunCap    = 5
 	catchUpSessionTotalCap     = 15
@@ -21,7 +20,6 @@ const (
 	sessionCompleteReasonNoNew    = "new_block_no_new_available"
 	sessionCompleteReasonNoReview = "review_block_no_review_available"
 	sessionCompleteReasonNoCards  = "no_cards_available"
-	sessionCompleteReasonDailyCap = "daily_review_cap_reached"
 )
 
 type learningEventTimeRangeRepository interface {
@@ -37,7 +35,7 @@ const (
 
 type sessionProgress struct {
 	SessionID              string
-	DailyReviewCap         int
+	SessionTotalCap        int
 	DailyReviewCompleted   int
 	DailyNewCompleted      int
 	SessionTotalCompleted  int
@@ -50,9 +48,9 @@ type sessionProgress struct {
 
 func newSessionProgress(sessionID string) sessionProgress {
 	return sessionProgress{
-		SessionID:      sessionID,
-		DailyReviewCap: catchUpDailyReviewCap,
-		PreferredKind:  completedCardKindReview,
+		SessionID:       sessionID,
+		SessionTotalCap: catchUpSessionTotalCap,
+		PreferredKind:   completedCardKindReview,
 	}
 }
 
@@ -245,4 +243,18 @@ func totalReviewPracticeItems(items []domain.DailyLearningPoolItem) int {
 
 func totalDueReviewPracticeItems(shortTermStates []domain.UserWordState, reviewStates []domain.UserWordState, weakStates []domain.UserWordState) int {
 	return len(shortTermStates) + len(reviewStates) + len(weakStates)
+}
+
+func actionableItemsRemaining(items []domain.DailyLearningPoolItem, now time.Time) int {
+	count := 0
+	for _, item := range items {
+		if item.Status != domain.PoolItemStatusPending {
+			continue
+		}
+		if item.DueAt != nil && item.DueAt.After(now) {
+			continue
+		}
+		count++
+	}
+	return count
 }

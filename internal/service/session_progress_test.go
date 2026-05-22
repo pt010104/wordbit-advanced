@@ -62,23 +62,6 @@ func TestFindNextCardForSessionCompletesWhenNewBlockHasNoNewCards(t *testing.T) 
 	}
 }
 
-func TestFindNextCardForSessionBlocksReviewAfterDailyCap(t *testing.T) {
-	now := time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC)
-	progress := newSessionProgress("session-1")
-	progress.DailyReviewCompleted = catchUpDailyReviewCap
-
-	item, _, reason := findNextCardForSession(
-		[]domain.DailyLearningPoolItem{testSessionPoolItem(domain.PoolItemTypeReview, 1)},
-		now,
-		progress,
-		true,
-		5,
-	)
-	if item != nil || reason != sessionCompleteReasonDailyCap {
-		t.Fatalf("selected item=%v reason=%q, want daily-cap complete", item, reason)
-	}
-}
-
 func TestCompletedKindsForEventsSkipsUndoneAnswerEvent(t *testing.T) {
 	poolItemID := uuid.New()
 	events := []domain.LearningEvent{

@@ -362,12 +362,9 @@ func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID
 		return uuid.Nil, nil
 	}
 
-	pool, items, err := s.poolRepo.GetByLocalDate(ctx, userID, nowDate)
+	pool, _, err := s.poolRepo.GetByLocalDate(ctx, userID, nowDate)
 	if err != nil {
 		return uuid.Nil, err
-	}
-	if totalReviewPracticeItems(items) >= catchUpDailyReviewCap {
-		return uuid.Nil, nil
 	}
 	lastOrdinal, err := s.poolRepo.GetLastOrdinal(ctx, pool.ID)
 	if err != nil {
