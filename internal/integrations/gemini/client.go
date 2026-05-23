@@ -53,12 +53,12 @@ func NewClient(cfg config.DeepSeekConfig, logger *slog.Logger) *Client {
 }
 
 type chatCompletionRequest struct {
-	Model          string         `json:"model"`
-	Messages       []chatMessage  `json:"messages"`
-	Temperature    float64        `json:"temperature,omitempty"`
-	MaxTokens      int            `json:"max_tokens,omitempty"`
-	ResponseFormat responseFormat `json:"response_format"`
-	Stream         bool           `json:"stream"`
+	Model          string          `json:"model"`
+	Messages       []chatMessage   `json:"messages"`
+	Temperature    float64         `json:"temperature,omitempty"`
+	MaxTokens      int             `json:"max_tokens,omitempty"`
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Stream         bool            `json:"stream"`
 }
 
 type chatMessage struct {
@@ -87,7 +87,7 @@ func (c *Client) GenerateCandidates(ctx context.Context, input service.Generatio
 		},
 		Temperature:    c.temperature,
 		MaxTokens:      c.maxOutputTokens,
-		ResponseFormat: responseFormat{Type: "json_object"},
+		ResponseFormat: &responseFormat{Type: "json_object"},
 		Stream:         false,
 	}
 
@@ -143,7 +143,7 @@ func (c *Client) GenerateMode4WeakPassage(ctx context.Context, input service.Mod
 		},
 		Temperature:    c.temperature,
 		MaxTokens:      c.maxOutputTokens,
-		ResponseFormat: responseFormat{Type: "json_object"},
+		ResponseFormat: &responseFormat{Type: "json_object"},
 		Stream:         false,
 	}
 
@@ -187,7 +187,7 @@ func (c *Client) GenerateDynamicReviewPrompts(ctx context.Context, input service
 		},
 		Temperature:    c.temperature,
 		MaxTokens:      c.maxOutputTokens,
-		ResponseFormat: responseFormat{Type: "json_object"},
+		ResponseFormat: &responseFormat{Type: "json_object"},
 		Stream:         false,
 	}
 
@@ -221,6 +221,49 @@ func (c *Client) GenerateDynamicReviewPrompts(ctx context.Context, input service
 		return domain.DynamicReviewPromptBatchPayload{}, result.raw, err
 	}
 	return result.value, result.text, nil
+}
+
+func (c *Client) GeneratePromptResponse(ctx context.Context, prompt string) (string, string, string, error) {
+	body := chatCompletionRequest{
+		Messages: []chatMessage{
+			{Role: "system", Content: testPromptSystemInstruction},
+			{Role: "user", Content: strings.TrimSpace(prompt)},
+		},
+		Temperature: c.temperature,
+		MaxTokens:   c.maxOutputTokens,
+		Stream:      false,
+	}
+
+	result, err := executeJSON(c, ctx, func(model string) ([]byte, error) {
+		requestBody := body
+		requestBody.Model = model
+		payload, err := json.Marshal(requestBody)
+		if err != nil {
+			return nil, fmt.Errorf("marshal deepseek test prompt request: %w", err)
+		}
+		return payload, nil
+	}, requestOperation{
+		requestLog:       "deepseek test prompt request",
+		requestFailedLog: "deepseek test prompt request failed",
+		readFailedLog:    "deepseek test prompt response read failed",
+		serverErrorLog:   "deepseek test prompt server error",
+		clientErrorLog:   "deepseek test prompt client error",
+		parseFailedLog:   "deepseek test prompt parse failed",
+		successLog:       "deepseek test prompt response",
+		createErrPrefix:  "create deepseek test prompt request",
+		requestErrPrefix: "deepseek test prompt request failed",
+		readErrPrefix:    "read deepseek test prompt response",
+		serverErrPrefix:  "deepseek test prompt server error",
+		clientErrPrefix:  "deepseek test prompt error",
+		parseErrPrefix:   "parse deepseek test prompt response",
+		extraFields: []any{
+			"prompt_length", len(strings.TrimSpace(prompt)),
+		},
+	}, parsePromptResponse)
+	if err != nil {
+		return "", result.raw, result.model, err
+	}
+	return result.value, result.raw, result.model, nil
 }
 
 func (c *Client) backoff(attempt int) {
@@ -296,6 +339,11 @@ Always return valid json only.
 Do not wrap the json in markdown fences.
 Do not reveal the answer word, canonical form, or lemma in the prompt.
 Do not ask follow-up questions.
+`
+
+const testPromptSystemInstruction = `
+You are a helpful assistant for a vocabulary learning app team.
+Answer the user's prompt directly and clearly.
 `
 
 func buildMode4WeakPassagePrompt(input service.Mode4PassageGenerationInput) string {
@@ -401,4 +449,12 @@ func maxInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func parsePromptResponse(body []byte) (string, string, error) {
+	text, err := extractChatText(body)
+	if err != nil {
+		return "", "", err
+	}
+	return text, text, nil
 }

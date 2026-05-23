@@ -352,6 +352,12 @@ func (g *failingGenerator) GenerateCandidates(ctx context.Context, input service
 	return nil, "", errors.New("deepseek unavailable")
 }
 
+type staticPromptTester struct{}
+
+func (t *staticPromptTester) GeneratePromptResponse(ctx context.Context, prompt string) (string, string, string, error) {
+	return "echo: " + prompt, `{"ok":true}`, "deepseek-v4-flash", nil
+}
+
 type memoryDynamicReviewPromptRepo struct {
 	prompts []domain.DailyDynamicReviewPrompt
 }
@@ -444,7 +450,7 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -553,7 +559,7 @@ func TestGenerateDynamicReviewPromptsEndpoint(t *testing.T) {
 	dynamicReviewService := service.NewDynamicReviewService(promptRepo, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -596,6 +602,53 @@ func TestGenerateDynamicReviewPromptsEndpoint(t *testing.T) {
 	}
 }
 
+func TestTestLLMEndpoint(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	userRepo := &memoryUserRepo{}
+	settingsRepo := &memorySettingsRepo{}
+	wordRepo := &memoryWordRepo{}
+	stateRepo := &memoryStateRepo{}
+	poolRepo := &memoryPoolRepo{}
+	eventRepo := &memoryEventRepo{}
+	llmRepo := &memoryLLMRepo{}
+	clock := service.RealClock{}
+
+	identity := service.NewIdentityService(userRepo, clock)
+	settingsService := service.NewSettingsService(settingsRepo)
+	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
+	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
+	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
+	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
+	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
+
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, llmRepo, &staticPromptTester{}, BuildInfo{})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/me/llm/test", bytes.NewBufferString(`{"prompt":"hello llm"}`))
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200 for llm test, got %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var payload struct {
+		Prompt   string `json:"prompt"`
+		Response string `json:"response"`
+		Raw      string `json:"raw"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode llm test response: %v", err)
+	}
+	if payload.Response != "echo: hello llm" {
+		t.Fatalf("unexpected llm response payload: %+v", payload)
+	}
+	if payload.Model == "" {
+		t.Fatalf("expected llm model in payload, got %+v", payload)
+	}
+}
+
 func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	t.Parallel()
 
@@ -617,7 +670,7 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, llmRepo, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/daily-pool", nil)
 	resp := httptest.NewRecorder()

@@ -90,8 +90,6 @@ type CandidateGenerator interface {
 	GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error)
 }
 
-
-
 type Mode4ReviewRepository interface {
 	GetOrCreateState(ctx context.Context, userID uuid.UUID) (domain.Mode4ReviewState, error)
 	UpsertState(ctx context.Context, state domain.Mode4ReviewState) (domain.Mode4ReviewState, error)
@@ -103,8 +101,6 @@ type Mode4ReviewRepository interface {
 	UpdatePassageSkip(ctx context.Context, userID uuid.UUID, passageID uuid.UUID, skipCount int, skippedAt *time.Time) (domain.Mode4ReviewPassage, error)
 	UpdatePassageStatus(ctx context.Context, userID uuid.UUID, passageID uuid.UUID, status domain.Mode4ReviewPassageStatus, completedAt *time.Time) (domain.Mode4ReviewPassage, error)
 }
-
-
 
 type Mode4PassageGenerator interface {
 	GenerateMode4WeakPassage(ctx context.Context, input Mode4PassageGenerationInput) (domain.Mode4WeakPassagePayload, string, error)
@@ -118,6 +114,10 @@ type DynamicReviewPromptRepository interface {
 
 type DynamicReviewPromptGenerator interface {
 	GenerateDynamicReviewPrompts(ctx context.Context, input DynamicReviewPromptGenerationInput) (domain.DynamicReviewPromptBatchPayload, string, error)
+}
+
+type PromptTester interface {
+	GeneratePromptResponse(ctx context.Context, prompt string) (string, string, string, error)
 }
 
 type UnknownDailyQuotaManager interface {

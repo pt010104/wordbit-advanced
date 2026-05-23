@@ -74,6 +74,50 @@ func (h *Handler) UpdateSettings(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, nethttp.StatusOK, settings)
 }
 
+func (h *Handler) TestLLM(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.promptTester == nil {
+		writeError(w, errors.New("llm test service unavailable"))
+		return
+	}
+
+	var payload struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, errors.New(domain.ErrValidation.Error()+": invalid json body"))
+		return
+	}
+
+	prompt := strings.TrimSpace(payload.Prompt)
+	if prompt == "" {
+		writeError(w, fmt.Errorf("%w: prompt is required", domain.ErrValidation))
+		return
+	}
+	if len(prompt) > 8000 {
+		writeError(w, fmt.Errorf("%w: prompt is too long", domain.ErrValidation))
+		return
+	}
+
+	responseText, raw, model, err := h.promptTester.GeneratePromptResponse(r.Context(), prompt)
+	if err != nil {
+		h.logger.Warn("llm test prompt failed", "user_id", user.ID, "prompt_length", len(prompt), "error", err)
+		writeError(w, err)
+		return
+	}
+
+	writeJSON(w, nethttp.StatusOK, map[string]any{
+		"prompt":   prompt,
+		"response": responseText,
+		"raw":      raw,
+		"model":    model,
+	})
+}
+
 func (h *Handler) ListDictionaryWords(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)
 	if err != nil {
@@ -369,7 +413,6 @@ func (h *Handler) GenerateDynamicReviewPrompts(w nethttp.ResponseWriter, r *neth
 
 	writeJSON(w, nethttp.StatusOK, result)
 }
-
 
 func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)

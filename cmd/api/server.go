@@ -56,7 +56,7 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, deepseekClient, clock, logger)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
-	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, mode4Service, dynamicReviewService, wordSets, repos.LLMRuns, apihttp.BuildInfo{
+	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, mode4Service, dynamicReviewService, wordSets, repos.LLMRuns, deepseekClient, apihttp.BuildInfo{
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,

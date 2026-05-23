@@ -66,3 +66,14 @@ func stripCodeFences(value string) string {
 	value = strings.TrimSpace(value)
 	return string(bytes.TrimSpace([]byte(value)))
 }
+
+func extractChatText(body []byte) (string, error) {
+	var response chatCompletionResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", fmt.Errorf("decode deepseek envelope: %w", err)
+	}
+	if len(response.Choices) == 0 || strings.TrimSpace(response.Choices[0].Message.Content) == "" {
+		return "", fmt.Errorf("deepseek response had no text content")
+	}
+	return strings.TrimSpace(response.Choices[0].Message.Content), nil
+}
