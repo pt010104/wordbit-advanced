@@ -59,6 +59,7 @@ type ReviewMode string
 const (
 	ReviewModeReveal         ReviewMode = "hidden_meaning"
 	ReviewModeMultipleChoice ReviewMode = "multiple_choice"
+	ReviewModeBuildWord      ReviewMode = "build_word"
 	ReviewModeFillBlank      ReviewMode = "fill_in_blank"
 )
 

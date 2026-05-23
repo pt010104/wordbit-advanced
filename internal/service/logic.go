@@ -51,7 +51,7 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 			state.LastRating == domain.RatingHard {
 			return alternatingMode2Reveal(state)
 		}
-		return domain.ReviewModeFillBlank
+		return domain.ReviewModeBuildWord
 	default:
 		if state.LearningStage > 0 {
 			return domain.ReviewModeReveal
@@ -65,7 +65,7 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 		case domain.MemoryCauseMixedUpWord:
 			return domain.ReviewModeMultipleChoice
 		case domain.MemoryCauseSpellingIssue:
-			return domain.ReviewModeFillBlank
+			return domain.ReviewModeBuildWord
 		}
 	}
 	if state.WrongCount >= standardMode2WrongCountThreshold ||

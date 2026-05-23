@@ -720,17 +720,18 @@ func findNextCardForSession(
 		if newCandidate != nil {
 			return newCandidate, nil, ""
 		}
-		return nil, nil, sessionCompleteReasonNoNew
+		if reviewCandidate != nil {
+			return reviewCandidate, nil, ""
+		}
+		return nil, nextDue, ""
 	}
 
+	// Preferred kind is review
 	if reviewCandidate != nil {
 		return reviewCandidate, nil, ""
 	}
-	if progress.SessionNewCompleted == 0 && newCandidate != nil {
+	if newCandidate != nil {
 		return newCandidate, nil, ""
-	}
-	if progress.SessionNewCompleted > 0 {
-		return nil, nil, sessionCompleteReasonNoReview
 	}
 	return nil, nextDue, ""
 }

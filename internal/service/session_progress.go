@@ -93,7 +93,39 @@ func (s *PoolService) buildSessionProgress(
 		return progress, nil
 	}
 
-	sessionKinds := completedKindsForEvents(dayEvents, itemKinds, undoneClientEventIDs, sessionID)
+	var sessionKinds []completedCardKind
+	totalCompleted := len(dayKinds)
+	if totalCompleted > 0 {
+		remainder := totalCompleted % 15
+		sessionCompletedCount := remainder
+		if remainder == 0 {
+			// Find the last event's session ID to see if we've transitioned to a new session
+			var lastEventSessionID string
+			for i := len(dayEvents) - 1; i >= 0; i-- {
+				event := dayEvents[i]
+				_, isUndone := undoneClientEventIDs[event.ClientEventID]
+				if isUndone {
+					continue
+				}
+				_, ok := completedKindForEvent(event, itemKinds)
+				if !ok {
+					continue
+				}
+				lastEventSessionID = event.ClientSessionID
+				break
+			}
+			if sessionID == lastEventSessionID {
+				sessionCompletedCount = 15
+			} else {
+				sessionCompletedCount = 0
+			}
+		}
+
+		if sessionCompletedCount > 0 {
+			sessionKinds = dayKinds[totalCompleted-sessionCompletedCount:]
+		}
+	}
+
 	for _, kind := range sessionKinds {
 		progress.SessionTotalCompleted++
 		switch kind {
