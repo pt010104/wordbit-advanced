@@ -145,8 +145,6 @@ const (
 	LLMRunStatusPartial LLMRunStatus = "partial"
 )
 
-
-
 type WordSetMode string
 
 const (
@@ -179,8 +177,6 @@ const (
 	Mode4ReviewPassageStatusCompleted  Mode4ReviewPassageStatus = "completed"
 	Mode4ReviewPassageStatusSuperseded Mode4ReviewPassageStatus = "superseded"
 )
-
-
 
 type User struct {
 	ID              uuid.UUID `json:"id"`
@@ -267,19 +263,19 @@ type UserWordState struct {
 }
 
 type DailyLearningPool struct {
-	ID             uuid.UUID `json:"id"`
-	UserID         uuid.UUID `json:"user_id"`
-	LocalDate      string    `json:"local_date"`
-	Timezone       string    `json:"timezone"`
-	Topic          string    `json:"topic"`
-	DueReviewCount int       `json:"due_review_count"`
-	ShortTermCount int       `json:"short_term_count"`
-	WeakCount      int       `json:"weak_count"`
-	NewCount       int       `json:"new_count"`
+	ID             uuid.UUID  `json:"id"`
+	UserID         uuid.UUID  `json:"user_id"`
+	LocalDate      string     `json:"local_date"`
+	Timezone       string     `json:"timezone"`
+	Topic          string     `json:"topic"`
+	DueReviewCount int        `json:"due_review_count"`
+	ShortTermCount int        `json:"short_term_count"`
+	WeakCount      int        `json:"weak_count"`
+	NewCount       int        `json:"new_count"`
 	WordSetID      *uuid.UUID `json:"word_set_id,omitempty"`
-	GeneratedAt    time.Time `json:"generated_at"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	GeneratedAt    time.Time  `json:"generated_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type DailyLearningPoolItem struct {
@@ -362,8 +358,6 @@ type CandidateWord struct {
 	ValidationIssues   []string        `json:"validation_issues,omitempty"`
 }
 
-
-
 type DynamicReviewPromptPayload struct {
 	PromptText  string `json:"prompt_text"`
 	Source      string `json:"source"`
@@ -380,6 +374,49 @@ type DynamicReviewPromptBatchPayload struct {
 	Items []DynamicReviewPromptBatchItem `json:"items"`
 }
 
+type StatisticsSummary struct {
+	TotalLearnedWords int `json:"total_learned_words"`
+	ActiveReviewWords int `json:"active_review_words"`
+	CurrentStreakDays int `json:"current_streak_days"`
+	ReviewCount       int `json:"review_count"`
+	NewWordCount      int `json:"new_word_count"`
+}
+
+type StatisticsActivityPoint struct {
+	Date         string `json:"date"`
+	Label        string `json:"label"`
+	ReviewCount  int    `json:"review_count"`
+	NewWordCount int    `json:"new_word_count"`
+}
+
+type StatisticsBreakdownItem struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+type StatisticsTopWord struct {
+	Word              string    `json:"word"`
+	WordID            uuid.UUID `json:"word_id"`
+	VietnameseMeaning string    `json:"vietnamese_meaning"`
+	EnglishMeaning    string    `json:"english_meaning"`
+	WeaknessScore     float64   `json:"weakness_score"`
+	ReviewCount       int       `json:"review_count"`
+	LearningStage     int       `json:"learning_stage"`
+}
+
+type UserStatistics struct {
+	Range                string                    `json:"range"`
+	Timezone             string                    `json:"timezone"`
+	Summary              StatisticsSummary         `json:"summary"`
+	ActivitySeries       []StatisticsActivityPoint `json:"activity_series"`
+	StageDistribution    []StatisticsBreakdownItem `json:"stage_distribution"`
+	WeaknessDistribution []StatisticsBreakdownItem `json:"weakness_distribution"`
+	TopDifficultWords    []StatisticsTopWord       `json:"top_difficult_words"`
+	ModeDistribution     []StatisticsBreakdownItem `json:"mode_distribution"`
+	Glossary             map[string]string         `json:"glossary"`
+}
+
 type DailyDynamicReviewPrompt struct {
 	ID         uuid.UUID                  `json:"id"`
 	UserID     uuid.UUID                  `json:"user_id"`
@@ -391,8 +428,6 @@ type DailyDynamicReviewPrompt struct {
 	CreatedAt  time.Time                  `json:"created_at"`
 	UpdatedAt  time.Time                  `json:"updated_at"`
 }
-
-
 
 type Mode4ReviewSourceWord struct {
 	WordID         uuid.UUID    `json:"word_id"`
@@ -455,8 +490,6 @@ type Mode4WeakPassagePayload struct {
 	PlainPassageText      string `json:"plain_passage_text"`
 	MarkedPassageMarkdown string `json:"marked_passage_markdown"`
 }
-
-
 
 type PoolGenerationCounts struct {
 	DueReview int `json:"due_review"`

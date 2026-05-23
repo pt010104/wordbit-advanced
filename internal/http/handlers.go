@@ -118,6 +118,24 @@ func (h *Handler) TestLLM(w nethttp.ResponseWriter, r *nethttp.Request) {
 	})
 }
 
+func (h *Handler) GetStatistics(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.statistics == nil {
+		writeError(w, errors.New("statistics service unavailable"))
+		return
+	}
+	stats, err := h.statistics.GetUserStatistics(r.Context(), user.ID, r.URL.Query().Get("range"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, stats)
+}
+
 func (h *Handler) ListDictionaryWords(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)
 	if err != nil {

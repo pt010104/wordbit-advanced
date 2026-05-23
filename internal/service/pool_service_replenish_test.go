@@ -442,6 +442,9 @@ func (r *replenishEventRepo) Insert(ctx context.Context, event domain.LearningEv
 func (r *replenishEventRepo) ListRecentByPoolItem(ctx context.Context, itemID uuid.UUID) ([]domain.LearningEvent, error) {
 	return nil, nil
 }
+func (r *replenishEventRepo) ListByUserTimeRange(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time) ([]domain.LearningEvent, error) {
+	return nil, nil
+}
 
 type replenishLLMRepo struct{}
 

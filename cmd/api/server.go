@@ -45,6 +45,7 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	settings := service.NewSettingsService(repos.Settings)
 	wordSets := service.NewWordSetService(repos.WordSets, repos.Settings, repos.States)
 	dictionary := service.NewDictionaryService(repos.Settings, repos.Words, repos.States, repos.Pools, wordSets, clock)
+	statistics := service.NewStatisticsService(repos.Settings, repos.Words, repos.States, repos.Events, clock)
 	deepseekClient := deepseek.NewClient(cfg.DeepSeek, logger)
 	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, deepseekClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	poolService.SetWordSetService(wordSets)
@@ -56,7 +57,7 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, deepseekClient, clock, logger)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
-	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, mode4Service, dynamicReviewService, wordSets, repos.LLMRuns, deepseekClient, apihttp.BuildInfo{
+	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, mode4Service, dynamicReviewService, wordSets, statistics, repos.LLMRuns, deepseekClient, apihttp.BuildInfo{
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,

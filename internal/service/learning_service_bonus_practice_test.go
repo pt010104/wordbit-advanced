@@ -34,6 +34,20 @@ func (r *captureEventRepo) ListRecentByPoolItem(ctx context.Context, itemID uuid
 	return events, nil
 }
 
+func (r *captureEventRepo) ListByUserTimeRange(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time) ([]domain.LearningEvent, error) {
+	events := make([]domain.LearningEvent, 0, len(r.events))
+	for _, event := range r.events {
+		if event.UserID != userID {
+			continue
+		}
+		if event.EventTime.Before(start) || !event.EventTime.Before(end) {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
+
 func TestSubmitReviewBonusPracticeDoesNotChangeNextReviewAt(t *testing.T) {
 	t.Parallel()
 

@@ -77,6 +77,7 @@ type PoolRepository interface {
 type LearningEventRepository interface {
 	Insert(ctx context.Context, event domain.LearningEvent) error
 	ListRecentByPoolItem(ctx context.Context, itemID uuid.UUID) ([]domain.LearningEvent, error)
+	ListByUserTimeRange(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time) ([]domain.LearningEvent, error)
 }
 
 type LLMRunRepository interface {

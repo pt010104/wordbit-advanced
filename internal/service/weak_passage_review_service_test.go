@@ -208,6 +208,9 @@ func (r *mode4TestEventRepo) Insert(ctx context.Context, event domain.LearningEv
 func (r *mode4TestEventRepo) ListRecentByPoolItem(ctx context.Context, itemID uuid.UUID) ([]domain.LearningEvent, error) {
 	return nil, nil
 }
+func (r *mode4TestEventRepo) ListByUserTimeRange(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time) ([]domain.LearningEvent, error) {
+	return nil, nil
+}
 
 type mode4TestLLMRepo struct {
 	runs []domain.LLMGenerationRun

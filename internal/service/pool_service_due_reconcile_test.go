@@ -258,3 +258,7 @@ func (m *memoryEventRepoForPoolTests) Insert(ctx context.Context, event domain.L
 func (m *memoryEventRepoForPoolTests) ListRecentByPoolItem(ctx context.Context, itemID uuid.UUID) ([]domain.LearningEvent, error) {
 	return nil, nil
 }
+
+func (m *memoryEventRepoForPoolTests) ListByUserTimeRange(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time) ([]domain.LearningEvent, error) {
+	return nil, nil
+}
