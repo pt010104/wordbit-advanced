@@ -273,7 +273,7 @@ func (s *WeakPassageReviewService) generatePassageIfEligible(ctx context.Context
 		AcceptedCount:  acceptedCountForMode4(status, len(selected)),
 		Attempt:        nextGeneration,
 		Status:         status,
-		Provider:       domain.DefaultGeminiProvider,
+		Provider:       domain.DefaultLLMProvider,
 		Model:          "dynamic",
 		Prompt:         mode4PromptFamily,
 		RawResponse: domain.JSONMap{

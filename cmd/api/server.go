@@ -14,7 +14,7 @@ import (
 	"wordbit-advanced-app/backend/internal/config"
 	"wordbit-advanced-app/backend/internal/database"
 	apihttp "wordbit-advanced-app/backend/internal/http"
-	"wordbit-advanced-app/backend/internal/integrations/gemini"
+	deepseek "wordbit-advanced-app/backend/internal/integrations/gemini"
 	"wordbit-advanced-app/backend/internal/repository/postgres"
 	"wordbit-advanced-app/backend/internal/scheduler"
 	"wordbit-advanced-app/backend/internal/service"
@@ -45,15 +45,15 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	settings := service.NewSettingsService(repos.Settings)
 	wordSets := service.NewWordSetService(repos.WordSets, repos.Settings, repos.States)
 	dictionary := service.NewDictionaryService(repos.Settings, repos.Words, repos.States, repos.Pools, wordSets, clock)
-	geminiClient := gemini.NewClient(cfg.Gemini, logger)
-	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, geminiClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
+	deepseekClient := deepseek.NewClient(cfg.DeepSeek, logger)
+	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, deepseekClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	poolService.SetWordSetService(wordSets)
 	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	var mode4Service *service.WeakPassageReviewService
 	if cfg.Mode4Enabled {
-		mode4Service = service.NewWeakPassageReviewService(repos.Words, repos.States, repos.Mode4Reviews, repos.Events, repos.LLMRuns, geminiClient, clock, logger)
+		mode4Service = service.NewWeakPassageReviewService(repos.Words, repos.States, repos.Mode4Reviews, repos.Events, repos.LLMRuns, deepseekClient, clock, logger)
 	}
-	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, geminiClient, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, deepseekClient, clock, logger)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
 	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, mode4Service, dynamicReviewService, wordSets, repos.LLMRuns, apihttp.BuildInfo{

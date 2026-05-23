@@ -1,4 +1,4 @@
-package gemini
+package deepseek
 
 import (
 	"context"
@@ -29,10 +29,10 @@ type Client struct {
 	sleep           func(time.Duration)
 }
 
-func NewClient(cfg config.GeminiConfig, logger *slog.Logger) *Client {
+func NewClient(cfg config.DeepSeekConfig, logger *slog.Logger) *Client {
 	models := append([]string(nil), cfg.Models...)
 	if len(models) == 0 {
-		models = []string{"gemini-2.0-flash"}
+		models = []string{"deepseek-v4-flash"}
 	}
 	return &Client{
 		baseURL:         strings.TrimRight(cfg.BaseURL, "/"),
@@ -52,72 +52,67 @@ func NewClient(cfg config.GeminiConfig, logger *slog.Logger) *Client {
 	}
 }
 
-type generateRequest struct {
-	SystemInstruction contentBlock     `json:"systemInstruction"`
-	Contents          []contentBlock   `json:"contents"`
-	GenerationConfig  generationConfig `json:"generationConfig"`
+type chatCompletionRequest struct {
+	Model          string         `json:"model"`
+	Messages       []chatMessage  `json:"messages"`
+	Temperature    float64        `json:"temperature,omitempty"`
+	MaxTokens      int            `json:"max_tokens,omitempty"`
+	ResponseFormat responseFormat `json:"response_format"`
+	Stream         bool           `json:"stream"`
 }
 
-type contentBlock struct {
-	Role  string `json:"role,omitempty"`
-	Parts []part `json:"parts"`
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
-type part struct {
-	Text string `json:"text"`
+type responseFormat struct {
+	Type string `json:"type"`
 }
 
-type generationConfig struct {
-	Temperature      float64 `json:"temperature"`
-	ResponseMimeType string  `json:"responseMimeType"`
-	MaxOutputTokens  int     `json:"maxOutputTokens"`
-}
-
-type generateResponse struct {
-	Candidates []struct {
-		Content struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
-		} `json:"content"`
-		FinishReason string `json:"finishReason"`
-	} `json:"candidates"`
+type chatCompletionResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
 }
 
 func (c *Client) GenerateCandidates(ctx context.Context, input service.GenerationInput) ([]domain.CandidateWord, string, error) {
-	body := generateRequest{
-		SystemInstruction: contentBlock{
-			Parts: []part{{Text: systemInstruction}},
+	body := chatCompletionRequest{
+		Messages: []chatMessage{
+			{Role: "system", Content: systemInstruction},
+			{Role: "user", Content: buildPrompt(input)},
 		},
-		Contents: []contentBlock{{
-			Role:  "user",
-			Parts: []part{{Text: buildPrompt(input)}},
-		}},
-		GenerationConfig: generationConfig{
-			Temperature:      c.temperature,
-			ResponseMimeType: "application/json",
-			MaxOutputTokens:  c.maxOutputTokens,
-		},
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, "", fmt.Errorf("marshal gemini request: %w", err)
+		Temperature:    c.temperature,
+		MaxTokens:      c.maxOutputTokens,
+		ResponseFormat: responseFormat{Type: "json_object"},
+		Stream:         false,
 	}
 
-	result, err := executeJSON(c, ctx, payload, requestOperation{
-		requestLog:       "gemini generate request",
-		requestFailedLog: "gemini generate request failed",
-		readFailedLog:    "gemini generate response read failed",
-		serverErrorLog:   "gemini generate server error",
-		clientErrorLog:   "gemini generate client error",
-		parseFailedLog:   "gemini generate parse failed",
-		successLog:       "gemini generate response",
-		createErrPrefix:  "create gemini request",
-		requestErrPrefix: "gemini request failed",
-		readErrPrefix:    "read gemini response",
-		serverErrPrefix:  "gemini server error",
-		clientErrPrefix:  "gemini error",
-		parseErrPrefix:   "parse gemini response",
+	result, err := executeJSON(c, ctx, func(model string) ([]byte, error) {
+		requestBody := body
+		requestBody.Model = model
+		payload, err := json.Marshal(requestBody)
+		if err != nil {
+			return nil, fmt.Errorf("marshal deepseek request: %w", err)
+		}
+		return payload, nil
+	}, requestOperation{
+		requestLog:       "deepseek generate request",
+		requestFailedLog: "deepseek generate request failed",
+		readFailedLog:    "deepseek generate response read failed",
+		serverErrorLog:   "deepseek generate server error",
+		clientErrorLog:   "deepseek generate client error",
+		parseFailedLog:   "deepseek generate parse failed",
+		successLog:       "deepseek generate response",
+		createErrPrefix:  "create deepseek request",
+		requestErrPrefix: "deepseek request failed",
+		readErrPrefix:    "read deepseek response",
+		serverErrPrefix:  "deepseek server error",
+		clientErrPrefix:  "deepseek error",
+		parseErrPrefix:   "parse deepseek response",
 		extraFields: []any{
 			"requested_count", input.RequestedCount,
 		},
@@ -129,7 +124,7 @@ func (c *Client) GenerateCandidates(ctx context.Context, input service.Generatio
 	parsed := result.value
 	for i := range parsed {
 		if parsed[i].SourceProvider == "" {
-			parsed[i].SourceProvider = domain.DefaultGeminiProvider
+			parsed[i].SourceProvider = domain.DefaultLLMProvider
 		}
 		if parsed[i].SourceMetadata == nil {
 			parsed[i].SourceMetadata = domain.JSONMap{}
@@ -140,42 +135,40 @@ func (c *Client) GenerateCandidates(ctx context.Context, input service.Generatio
 	return parsed, result.text, nil
 }
 
-
-
 func (c *Client) GenerateMode4WeakPassage(ctx context.Context, input service.Mode4PassageGenerationInput) (domain.Mode4WeakPassagePayload, string, error) {
-	body := generateRequest{
-		SystemInstruction: contentBlock{
-			Parts: []part{{Text: mode4WeakPassageSystemInstruction}},
+	body := chatCompletionRequest{
+		Messages: []chatMessage{
+			{Role: "system", Content: mode4WeakPassageSystemInstruction},
+			{Role: "user", Content: buildMode4WeakPassagePrompt(input)},
 		},
-		Contents: []contentBlock{{
-			Role:  "user",
-			Parts: []part{{Text: buildMode4WeakPassagePrompt(input)}},
-		}},
-		GenerationConfig: generationConfig{
-			Temperature:      c.temperature,
-			ResponseMimeType: "application/json",
-			MaxOutputTokens:  c.maxOutputTokens,
-		},
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return domain.Mode4WeakPassagePayload{}, "", fmt.Errorf("marshal gemini mode4 request: %w", err)
+		Temperature:    c.temperature,
+		MaxTokens:      c.maxOutputTokens,
+		ResponseFormat: responseFormat{Type: "json_object"},
+		Stream:         false,
 	}
 
-	result, err := executeJSON(c, ctx, payload, requestOperation{
-		requestLog:       "gemini mode4 generate request",
-		requestFailedLog: "gemini mode4 generate request failed",
-		readFailedLog:    "gemini mode4 response read failed",
-		serverErrorLog:   "gemini mode4 server error",
-		clientErrorLog:   "gemini mode4 client error",
-		parseFailedLog:   "gemini mode4 parse failed",
-		successLog:       "gemini mode4 response",
-		createErrPrefix:  "create gemini mode4 request",
-		requestErrPrefix: "gemini mode4 request failed",
-		readErrPrefix:    "read gemini mode4 response",
-		serverErrPrefix:  "gemini mode4 server error",
-		clientErrPrefix:  "gemini mode4 error",
-		parseErrPrefix:   "parse gemini mode4 response",
+	result, err := executeJSON(c, ctx, func(model string) ([]byte, error) {
+		requestBody := body
+		requestBody.Model = model
+		payload, err := json.Marshal(requestBody)
+		if err != nil {
+			return nil, fmt.Errorf("marshal deepseek mode4 request: %w", err)
+		}
+		return payload, nil
+	}, requestOperation{
+		requestLog:       "deepseek mode4 generate request",
+		requestFailedLog: "deepseek mode4 generate request failed",
+		readFailedLog:    "deepseek mode4 response read failed",
+		serverErrorLog:   "deepseek mode4 server error",
+		clientErrorLog:   "deepseek mode4 client error",
+		parseFailedLog:   "deepseek mode4 parse failed",
+		successLog:       "deepseek mode4 response",
+		createErrPrefix:  "create deepseek mode4 request",
+		requestErrPrefix: "deepseek mode4 request failed",
+		readErrPrefix:    "read deepseek mode4 response",
+		serverErrPrefix:  "deepseek mode4 server error",
+		clientErrPrefix:  "deepseek mode4 error",
+		parseErrPrefix:   "parse deepseek mode4 response",
 		extraFields: []any{
 			"target_count", len(input.TargetWords),
 		},
@@ -187,39 +180,39 @@ func (c *Client) GenerateMode4WeakPassage(ctx context.Context, input service.Mod
 }
 
 func (c *Client) GenerateDynamicReviewPrompts(ctx context.Context, input service.DynamicReviewPromptGenerationInput) (domain.DynamicReviewPromptBatchPayload, string, error) {
-	body := generateRequest{
-		SystemInstruction: contentBlock{
-			Parts: []part{{Text: dynamicReviewSystemInstruction}},
+	body := chatCompletionRequest{
+		Messages: []chatMessage{
+			{Role: "system", Content: dynamicReviewSystemInstruction},
+			{Role: "user", Content: buildDynamicReviewPrompt(input)},
 		},
-		Contents: []contentBlock{{
-			Role:  "user",
-			Parts: []part{{Text: buildDynamicReviewPrompt(input)}},
-		}},
-		GenerationConfig: generationConfig{
-			Temperature:      c.temperature,
-			ResponseMimeType: "application/json",
-			MaxOutputTokens:  c.maxOutputTokens,
-		},
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return domain.DynamicReviewPromptBatchPayload{}, "", fmt.Errorf("marshal gemini dynamic review request: %w", err)
+		Temperature:    c.temperature,
+		MaxTokens:      c.maxOutputTokens,
+		ResponseFormat: responseFormat{Type: "json_object"},
+		Stream:         false,
 	}
 
-	result, err := executeJSON(c, ctx, payload, requestOperation{
-		requestLog:       "gemini dynamic review request",
-		requestFailedLog: "gemini dynamic review request failed",
-		readFailedLog:    "gemini dynamic review response read failed",
-		serverErrorLog:   "gemini dynamic review server error",
-		clientErrorLog:   "gemini dynamic review client error",
-		parseFailedLog:   "gemini dynamic review parse failed",
-		successLog:       "gemini dynamic review response",
-		createErrPrefix:  "create gemini dynamic review request",
-		requestErrPrefix: "gemini dynamic review request failed",
-		readErrPrefix:    "read gemini dynamic review response",
-		serverErrPrefix:  "gemini dynamic review server error",
-		clientErrPrefix:  "gemini dynamic review error",
-		parseErrPrefix:   "parse gemini dynamic review response",
+	result, err := executeJSON(c, ctx, func(model string) ([]byte, error) {
+		requestBody := body
+		requestBody.Model = model
+		payload, err := json.Marshal(requestBody)
+		if err != nil {
+			return nil, fmt.Errorf("marshal deepseek dynamic review request: %w", err)
+		}
+		return payload, nil
+	}, requestOperation{
+		requestLog:       "deepseek dynamic review request",
+		requestFailedLog: "deepseek dynamic review request failed",
+		readFailedLog:    "deepseek dynamic review response read failed",
+		serverErrorLog:   "deepseek dynamic review server error",
+		clientErrorLog:   "deepseek dynamic review client error",
+		parseFailedLog:   "deepseek dynamic review parse failed",
+		successLog:       "deepseek dynamic review response",
+		createErrPrefix:  "create deepseek dynamic review request",
+		requestErrPrefix: "deepseek dynamic review request failed",
+		readErrPrefix:    "read deepseek dynamic review response",
+		serverErrPrefix:  "deepseek dynamic review server error",
+		clientErrPrefix:  "deepseek dynamic review error",
+		parseErrPrefix:   "parse deepseek dynamic review response",
 		extraFields: []any{
 			"item_count", len(input.Items),
 		},
@@ -286,22 +279,21 @@ Exclude confusable groups: %s
 
 const systemInstruction = `
 You generate backend-ingestable English vocabulary data for a production vocabulary learning service.
-Always return valid JSON.
-Do not wrap the JSON in markdown fences.
+Always return valid json.
+Do not wrap the json in markdown fences.
 `
-
 
 const mode4WeakPassageSystemInstruction = `
 You generate reusable weak-word review passages for a production vocabulary learning service.
-Always return valid JSON only.
-Do not wrap the JSON in markdown fences.
+Always return valid json only.
+Do not wrap the json in markdown fences.
 Do not ask follow-up questions.
 `
 
 const dynamicReviewSystemInstruction = `
 You generate fresh prompt-only overrides for vocabulary review cards in a production learning service.
-Always return valid JSON only.
-Do not wrap the JSON in markdown fences.
+Always return valid json only.
+Do not wrap the json in markdown fences.
 Do not reveal the answer word, canonical form, or lemma in the prompt.
 Do not ask follow-up questions.
 `

@@ -1,13 +1,13 @@
 # WordBit Advanced Backend
 
-Production-minded Go backend for a vocabulary learning system. It owns daily pool generation, SRS scheduling, Gemini-driven candidate generation, deduplication, weak-word resurfacing, and learning-event persistence.
+Production-minded Go backend for a vocabulary learning system. It owns daily pool generation, SRS scheduling, DeepSeek-driven candidate generation, deduplication, weak-word resurfacing, and learning-event persistence.
 
 ## Stack
 
 - Go `chi` HTTP API
 - PostgreSQL with SQL migrations
 - `pgxpool` repositories
-- Google Gemini via direct REST client
+- DeepSeek via OpenAI-compatible REST client
 - Structured JSON logging with `slog`
 - In-process cron scheduler for daily-pool prewarm, dynamic-review prewarm, and weakness refresh
 - Docker and docker-compose for local/VPS deployment
@@ -41,9 +41,9 @@ backend/
 ## Local Setup
 
 1. Copy `.env.example` to `.env`.
-2. Set `GEMINI_API_KEY` or `GEMINI_API_KEY_FILE`.
-3. Set `GEMINI_MODEL` and optionally `GEMINI_MODEL_2` / `GEMINI_MODEL_3` if you want automatic fallback rotation.
-4. Set `GEMINI_RPM_LIMIT` / `GEMINI_RPD_LIMIT` to match your current Gemini tier if you want the backend to skip locally exhausted models before making live requests.
+2. Set `DS_KEY` or `DS_KEY_FILE`.
+3. Set `DS_MODEL` and optionally `DS_MODEL_2` / `DS_MODEL_3` if you want automatic fallback rotation. The default is `deepseek-v4-flash`.
+4. Set `DS_RPM_LIMIT` / `DS_RPD_LIMIT` if you want the backend to skip locally exhausted models before making live requests.
 5. Set `CRON_DAILY_POOL_PREWARM_SCHEDULE` if you want to adjust how often the backend pre-creates the next local-day pool for active users. The default is every minute.
 6. `CRON_PREWARM_SCHEDULE` still controls dynamic-review prompt prewarm, and `CRON_WEAKNESS_SCHEDULE` controls weakness refresh.
 7. For local auth, keep `DEV_AUTH_BYPASS=true`.
@@ -83,9 +83,9 @@ make test-integration
 - Build with `docker build -t wordbit-backend .`
 - Run with environment variables injected by your VPS orchestrator or `.env`
 - Set `DEV_AUTH_BYPASS=false` and configure `AUTH_JWKS_URL`, `AUTH_ISSUER`, and `AUTH_AUDIENCE`
-- Set `GEMINI_API_KEY` through secrets or environment injection
-- Use `GEMINI_MODEL`, `GEMINI_MODEL_2`, and `GEMINI_MODEL_3` to configure fallback model rotation
-- Use `GEMINI_RPM_LIMIT` and `GEMINI_RPD_LIMIT` to match the request quotas of your current Gemini plan
+- Set `DS_KEY` through secrets or environment injection
+- Use `DS_MODEL`, `DS_MODEL_2`, and `DS_MODEL_3` to configure fallback model rotation
+- Use `DS_RPM_LIMIT` and `DS_RPD_LIMIT` to match the request quotas of your current DeepSeek plan
 - Use `CRON_DAILY_POOL_PREWARM_SCHEDULE` to control how often active users get the next-day pool pre-created
 - `CRON_PREWARM_SCHEDULE` now controls only dynamic-review prompt prewarm
 - `AUTO_MIGRATE=true` is enabled by default for simple VPS deployment; disable it if you prefer an explicit migration step

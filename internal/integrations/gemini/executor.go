@@ -1,4 +1,4 @@
-package gemini
+package deepseek
 
 import (
 	"bytes"
@@ -17,6 +17,7 @@ import (
 const defaultRateLimitCooldown = 30 * time.Second
 
 type responseParser[T any] func([]byte) (T, string, error)
+type requestFactory func(string) ([]byte, error)
 
 type requestOperation struct {
 	requestLog       string
@@ -217,11 +218,11 @@ func newRateLimitError(unavailable []modelAvailability) error {
 	}
 
 	return &rateLimitError{
-		message: fmt.Sprintf("%s: all configured Gemini models are unavailable: %s", domain.ErrRateLimited.Error(), strings.Join(parts, "; ")),
+		message: fmt.Sprintf("%s: all configured DeepSeek models are unavailable: %s", domain.ErrRateLimited.Error(), strings.Join(parts, "; ")),
 	}
 }
 
-func executeJSON[T any](c *Client, ctx context.Context, payload []byte, operation requestOperation, parse responseParser[T]) (executionResult[T], error) {
+func executeJSON[T any](c *Client, ctx context.Context, buildPayload requestFactory, operation requestOperation, parse responseParser[T]) (executionResult[T], error) {
 	var result executionResult[T]
 	unavailable := make([]modelAvailability, 0, len(c.models))
 
@@ -229,7 +230,7 @@ func executeJSON[T any](c *Client, ctx context.Context, payload []byte, operatio
 		reserved, availability := c.quotaCache.reserve(model, c.now())
 		if !reserved {
 			unavailable = append(unavailable, availability)
-			c.logger.Info("gemini model unavailable locally",
+			c.logger.Info("deepseek model unavailable locally",
 				"model", model,
 				"available_at", availability.availableAt.UTC().Format(time.RFC3339),
 				"reason", availability.reason,
@@ -237,7 +238,7 @@ func executeJSON[T any](c *Client, ctx context.Context, payload []byte, operatio
 			continue
 		}
 
-		modelResult, rotate, rotatedModel, err := executeOnModel(c, ctx, model, payload, operation, parse)
+		modelResult, rotate, rotatedModel, err := executeOnModel(c, ctx, model, buildPayload, operation, parse)
 		if err == nil {
 			return modelResult, nil
 		}
@@ -251,19 +252,23 @@ func executeJSON[T any](c *Client, ctx context.Context, payload []byte, operatio
 	}
 
 	err := newRateLimitError(unavailable)
-	c.logger.Warn("gemini request failed: all configured models unavailable",
+	c.logger.Warn("deepseek request failed: all configured models unavailable",
 		"model_count", len(c.models),
 		"error", err,
 	)
 	return result, err
 }
 
-func executeOnModel[T any](c *Client, ctx context.Context, model string, payload []byte, operation requestOperation, parse responseParser[T]) (executionResult[T], bool, modelAvailability, error) {
+func executeOnModel[T any](c *Client, ctx context.Context, model string, buildPayload requestFactory, operation requestOperation, parse responseParser[T]) (executionResult[T], bool, modelAvailability, error) {
 	var result executionResult[T]
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, model, c.apiKey)
+	url := fmt.Sprintf("%s/chat/completions", c.baseURL)
 	var lastErr error
 
 	for attempt := 1; attempt <= maxInt(c.maxRetries, 1); attempt++ {
+		payload, payloadErr := buildPayload(model)
+		if payloadErr != nil {
+			return result, false, modelAvailability{}, payloadErr
+		}
 		start := time.Now()
 		c.logger.Info(operation.requestLog, c.logFields(model, attempt, len(payload), operation.extraFields)...)
 
@@ -272,6 +277,7 @@ func executeOnModel[T any](c *Client, ctx context.Context, model string, payload
 			return result, false, modelAvailability{}, fmt.Errorf("%s: %w", operation.createErrPrefix, err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -313,7 +319,7 @@ func executeOnModel[T any](c *Client, ctx context.Context, model string, payload
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
-			retryAfter, reason := parseGeminiRateLimit(rawBytes)
+			retryAfter, reason := parseDeepSeekRateLimit(rawBytes, resp.Header.Get("Retry-After"))
 			availability := c.quotaCache.markRateLimited(model, c.now(), retryAfter, reason)
 			c.logger.Warn(operation.clientErrorLog,
 				c.errorLogFields(model, attempt, time.Since(start), operation.extraFields,
@@ -396,53 +402,42 @@ func (c *Client) successLogFields(model string, attempt int, duration time.Durat
 	return fields
 }
 
-type geminiErrorEnvelope struct {
+type deepSeekErrorEnvelope struct {
 	Error struct {
-		Message string            `json:"message"`
-		Details []json.RawMessage `json:"details"`
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    any    `json:"code"`
 	} `json:"error"`
 }
 
-type geminiErrorDetail struct {
-	Type       string `json:"@type"`
-	RetryDelay string `json:"retryDelay"`
-	Violations []struct {
-		QuotaMetric     string            `json:"quotaMetric"`
-		QuotaID         string            `json:"quotaId"`
-		QuotaDimensions map[string]string `json:"quotaDimensions"`
-	} `json:"violations"`
-}
-
-func parseGeminiRateLimit(raw []byte) (time.Duration, string) {
-	var envelope geminiErrorEnvelope
+func parseDeepSeekRateLimit(raw []byte, retryAfterHeader string) (time.Duration, string) {
+	var envelope deepSeekErrorEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return defaultRateLimitCooldown, ""
+		return parseRetryAfter(retryAfterHeader), ""
 	}
 
-	retryAfter := defaultRateLimitCooldown
+	retryAfter := parseRetryAfter(retryAfterHeader)
 	reason := strings.TrimSpace(envelope.Error.Message)
-	for _, detailRaw := range envelope.Error.Details {
-		var detail geminiErrorDetail
-		if err := json.Unmarshal(detailRaw, &detail); err != nil {
-			continue
-		}
-		if detail.Type == "type.googleapis.com/google.rpc.RetryInfo" && detail.RetryDelay != "" {
-			if parsed, err := time.ParseDuration(detail.RetryDelay); err == nil && parsed > 0 {
-				retryAfter = parsed
-			}
-		}
-		if detail.Type == "type.googleapis.com/google.rpc.QuotaFailure" && len(detail.Violations) > 0 {
-			violation := detail.Violations[0]
-			switch {
-			case violation.QuotaMetric != "" && violation.QuotaID != "":
-				reason = fmt.Sprintf("%s (%s)", violation.QuotaMetric, violation.QuotaID)
-			case violation.QuotaMetric != "":
-				reason = violation.QuotaMetric
-			case violation.QuotaID != "":
-				reason = violation.QuotaID
-			}
-		}
+	if reason == "" && strings.TrimSpace(envelope.Error.Type) != "" {
+		reason = envelope.Error.Type
+	}
+	if reason == "" && envelope.Error.Code != nil {
+		reason = fmt.Sprint(envelope.Error.Code)
 	}
 
 	return retryAfter, reason
+}
+
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultRateLimitCooldown
+	}
+	if seconds, err := time.ParseDuration(value + "s"); err == nil && seconds > 0 {
+		return seconds
+	}
+	if duration, err := time.ParseDuration(value); err == nil && duration > 0 {
+		return duration
+	}
+	return defaultRateLimitCooldown
 }

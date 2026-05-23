@@ -513,7 +513,7 @@ type rateLimitedGenerator struct {
 
 func (g *rateLimitedGenerator) GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error) {
 	g.calls++
-	return nil, `{"error":"rate limited"}`, fmt.Errorf("%w: gemini unavailable", domain.ErrRateLimited)
+	return nil, `{"error":"rate limited"}`, fmt.Errorf("%w: deepseek unavailable", domain.ErrRateLimited)
 }
 
 type emptyGenerator struct {

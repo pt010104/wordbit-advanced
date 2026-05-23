@@ -1,11 +1,11 @@
-package gemini
+package deepseek
 
 import "testing"
 
 func TestParseGenerateResponseWithFenceWrappedJSON(t *testing.T) {
 	t.Parallel()
 
-	body := []byte("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"```json\\n{\\\"words\\\":[{\\\"word\\\":\\\"sustain\\\",\\\"canonical_form\\\":\\\"sustain\\\",\\\"lemma\\\":\\\"sustain\\\",\\\"level\\\":\\\"B2\\\",\\\"topic\\\":\\\"Environment\\\",\\\"english_meaning\\\":\\\"maintain\\\",\\\"vietnamese_meaning\\\":\\\"duy trì\\\",\\\"common_rate\\\":\\\"common\\\"}]}\\n```\"}]}}]}")
+	body := []byte("{\"choices\":[{\"message\":{\"content\":\"```json\\n{\\\"words\\\":[{\\\"word\\\":\\\"sustain\\\",\\\"canonical_form\\\":\\\"sustain\\\",\\\"lemma\\\":\\\"sustain\\\",\\\"level\\\":\\\"B2\\\",\\\"topic\\\":\\\"Environment\\\",\\\"english_meaning\\\":\\\"maintain\\\",\\\"vietnamese_meaning\\\":\\\"duy trì\\\",\\\"common_rate\\\":\\\"common\\\"}]}\\n```\"}}]}")
 
 	words, raw, err := parseGenerateResponse(body)
 	if err != nil {
@@ -22,10 +22,10 @@ func TestParseGenerateResponseWithFenceWrappedJSON(t *testing.T) {
 	}
 }
 
-func TestParseGenerateResponseWithMultipleParts(t *testing.T) {
+func TestParseGenerateResponseWithEmbeddedJSON(t *testing.T) {
 	t.Parallel()
 
-	body := []byte("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"{\\\"words\\\":[{\\\"word\\\":\\\"sustain\\\",\"},{\"text\":\"\\\"canonical_form\\\":\\\"sustain\\\",\\\"lemma\\\":\\\"sustain\\\",\\\"level\\\":\\\"B2\\\",\\\"topic\\\":\\\"Environment\\\",\\\"english_meaning\\\":\\\"maintain\\\",\\\"vietnamese_meaning\\\":\\\"duy trì\\\",\\\"common_rate\\\":\\\"formal\\\"}]}\"}]}}]}")
+	body := []byte("{\"choices\":[{\"message\":{\"content\":\"{\\\"words\\\":[{\\\"word\\\":\\\"sustain\\\",\\\"canonical_form\\\":\\\"sustain\\\",\\\"lemma\\\":\\\"sustain\\\",\\\"level\\\":\\\"B2\\\",\\\"topic\\\":\\\"Environment\\\",\\\"english_meaning\\\":\\\"maintain\\\",\\\"vietnamese_meaning\\\":\\\"duy trì\\\",\\\"common_rate\\\":\\\"formal\\\"}]}\"}}]}")
 
 	words, raw, err := parseGenerateResponse(body)
 	if err != nil {

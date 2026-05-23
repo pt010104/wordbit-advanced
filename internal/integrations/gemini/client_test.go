@@ -1,14 +1,14 @@
-package gemini
+package deepseek
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +22,7 @@ func TestClientRotatesAfter429AndSkipsCooledDownModel(t *testing.T) {
 
 	counts := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		model := modelFromPath(r.URL.Path)
+		model := modelFromRequest(t, r)
 		counts[model]++
 
 		switch model {
@@ -77,7 +77,7 @@ func TestClientReturnsRateLimitedWhenAllModelsUnavailable(t *testing.T) {
 
 	counts := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		model := modelFromPath(r.URL.Path)
+		model := modelFromRequest(t, r)
 		counts[model]++
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(rateLimitBody("45s")))
@@ -108,7 +108,7 @@ func TestClientRetriesServerErrorsOnSameModel(t *testing.T) {
 
 	counts := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		model := modelFromPath(r.URL.Path)
+		model := modelFromRequest(t, r)
 		counts[model]++
 		if counts[model] < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -144,7 +144,7 @@ func TestClientSkipsModelWhenLocalRPMLimitReached(t *testing.T) {
 
 	counts := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		model := modelFromPath(r.URL.Path)
+		model := modelFromRequest(t, r)
 		counts[model]++
 		word := "climate"
 		if model == "model-b" {
@@ -187,7 +187,7 @@ func TestClientSkipsModelWhenLocalRPMLimitReached(t *testing.T) {
 
 func newTestClient(baseURL string, models []string, rpmLimit int, rpdLimit int, maxRetries int) *Client {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	client := NewClient(config.GeminiConfig{
+	client := NewClient(config.DeepSeekConfig{
 		BaseURL:         baseURL,
 		Models:          models,
 		APIKey:          "test-key",
@@ -202,19 +202,37 @@ func newTestClient(baseURL string, models []string, rpmLimit int, rpdLimit int, 
 	return client
 }
 
-func modelFromPath(path string) string {
-	path = strings.TrimPrefix(path, "/models/")
-	path = strings.TrimSuffix(path, ":generateContent")
-	return path
+func modelFromRequest(t *testing.T, r *http.Request) string {
+	t.Helper()
+
+	if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+		t.Fatalf("expected bearer auth header, got %q", got)
+	}
+	if r.URL.Path != "/chat/completions" {
+		t.Fatalf("unexpected path %q", r.URL.Path)
+	}
+
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	return payload.Model
 }
 
 func candidateResponseBody(word string) string {
 	inner := fmt.Sprintf(`{"words":[{"word":"%s","canonical_form":"%s","lemma":"%s","level":"B1","topic":"Environment","english_meaning":"meaning","vietnamese_meaning":"nghia"}]}`,
 		word, word, word,
 	)
-	return fmt.Sprintf(`{"candidates":[{"content":{"parts":[{"text":%q}]}}]}`, inner)
+	return fmt.Sprintf(`{"choices":[{"message":{"content":%q}}]}`, inner)
 }
 
 func rateLimitBody(retryDelay string) string {
-	return fmt.Sprintf(`{"error":{"code":429,"message":"Quota exceeded","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_requests","quotaId":"GenerateRequestsPerMinute"}]},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":%q}]}}`, retryDelay)
+	return fmt.Sprintf(`{"error":{"message":"rate_limit_exceeded","type":"rate_limit","code":429,"retry_after":%q}}`, retryDelay)
+}
+
+func testExerciseEnvelope(t *testing.T, payload string) []byte {
+	t.Helper()
+	return []byte(fmt.Sprintf(`{"choices":[{"message":{"content":%q}}]}`, payload))
 }

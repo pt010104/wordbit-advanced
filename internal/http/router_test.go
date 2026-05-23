@@ -309,8 +309,6 @@ func (m *memoryLLMRepo) ListRecentByUser(ctx context.Context, userID uuid.UUID, 
 	return nil, nil
 }
 
-
-
 type staticGenerator struct{}
 
 func (g *staticGenerator) GenerateCandidates(ctx context.Context, input service.GenerationInput) ([]domain.CandidateWord, string, error) {
@@ -351,7 +349,7 @@ func (g *staticGenerator) GenerateCandidates(ctx context.Context, input service.
 type failingGenerator struct{}
 
 func (g *failingGenerator) GenerateCandidates(ctx context.Context, input service.GenerationInput) ([]domain.CandidateWord, string, error) {
-	return nil, "", errors.New("gemini unavailable")
+	return nil, "", errors.New("deepseek unavailable")
 }
 
 type memoryDynamicReviewPromptRepo struct {
@@ -628,5 +626,3 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 		t.Fatalf("expected 500 for empty initial pool generation, got %d body=%s", resp.Code, resp.Body.String())
 	}
 }
-
-

@@ -74,7 +74,7 @@ func TestCreateAndReadDailyPoolAgainstPostgres(t *testing.T) {
 		Topic:             "Environment",
 		EnglishMeaning:    "maintain",
 		VietnameseMeaning: "duy trì",
-		SourceProvider:    domain.DefaultGeminiProvider,
+		SourceProvider:    domain.DefaultLLMProvider,
 	})
 	if err != nil {
 		t.Fatalf("upsert word: %v", err)

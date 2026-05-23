@@ -1,4 +1,4 @@
-package gemini
+package deepseek
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ func parseGenerateResponse(body []byte) ([]domain.CandidateWord, string, error) 
 		Candidates []domain.CandidateWord `json:"candidates"`
 	}
 	if err := json.Unmarshal([]byte(clean), &wrapped); err != nil {
-		return nil, clean, fmt.Errorf("decode gemini payload: %w", err)
+		return nil, clean, fmt.Errorf("decode deepseek payload: %w", err)
 	}
 	if len(wrapped.Words) > 0 {
 		return wrapped.Words, clean, nil
@@ -33,22 +33,18 @@ func parseGenerateResponse(body []byte) ([]domain.CandidateWord, string, error) 
 	if len(wrapped.Candidates) > 0 {
 		return wrapped.Candidates, clean, nil
 	}
-	return nil, clean, fmt.Errorf("gemini payload did not include words")
+	return nil, clean, fmt.Errorf("deepseek payload did not include words")
 }
 
 func extractGenerateJSONText(body []byte) (string, error) {
-	var response generateResponse
+	var response chatCompletionResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return "", fmt.Errorf("decode gemini envelope: %w", err)
+		return "", fmt.Errorf("decode deepseek envelope: %w", err)
 	}
-	if len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("gemini response had no text candidates")
+	if len(response.Choices) == 0 || strings.TrimSpace(response.Choices[0].Message.Content) == "" {
+		return "", fmt.Errorf("deepseek response had no text content")
 	}
-	var textBuilder strings.Builder
-	for _, part := range response.Candidates[0].Content.Parts {
-		textBuilder.WriteString(part.Text)
-	}
-	return cleanupGeneratedJSON(textBuilder.String()), nil
+	return cleanupGeneratedJSON(response.Choices[0].Message.Content), nil
 }
 
 func cleanupGeneratedJSON(value string) string {

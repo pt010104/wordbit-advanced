@@ -1081,7 +1081,7 @@ func (s *PoolService) generateNewWords(
 			AcceptedCount:    len(result.Accepted),
 			Attempt:          attempt,
 			Status:           status,
-			Provider:         domain.DefaultGeminiProvider,
+			Provider:         domain.DefaultLLMProvider,
 			Model:            "dynamic",
 			Prompt:           "candidate generation",
 			RawResponse:      domain.JSONMap{"text": raw},

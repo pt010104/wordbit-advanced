@@ -1,4 +1,4 @@
-package gemini
+package deepseek
 
 import "testing"
 
@@ -6,14 +6,10 @@ func TestParseMode4WeakPassageGenerateResponse(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{
-  "candidates": [
+  "choices": [
     {
-      "content": {
-        "parts": [
-          {
-            "text": "{\"plain_passage_text\":\"Alpha met beta before gamma.\",\"marked_passage_markdown\":\"**alpha** met **beta** before **gamma**.\"}"
-          }
-        ]
+      "message": {
+        "content": "{\"plain_passage_text\":\"Alpha met beta before gamma.\",\"marked_passage_markdown\":\"**alpha** met **beta** before **gamma**.\"}"
       }
     }
   ]
@@ -35,14 +31,10 @@ func TestParseMode4WeakPassageGenerateResponseRejectsMissingFields(t *testing.T)
 	t.Parallel()
 
 	body := []byte(`{
-  "candidates": [
+  "choices": [
     {
-      "content": {
-        "parts": [
-          {
-            "text": "{\"plain_passage_text\":\"\",\"marked_passage_markdown\":\"\"}"
-          }
-        ]
+      "message": {
+        "content": "{\"plain_passage_text\":\"\",\"marked_passage_markdown\":\"\"}"
       }
     }
   ]

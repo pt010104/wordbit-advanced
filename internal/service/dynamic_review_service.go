@@ -224,7 +224,7 @@ func (s *DynamicReviewService) generateAndPersistChunk(
 		AcceptedCount:  acceptedCount,
 		Attempt:        attempt + 1,
 		Status:         status,
-		Provider:       domain.DefaultGeminiProvider,
+		Provider:       domain.DefaultLLMProvider,
 		Model:          "dynamic",
 		Prompt:         dynamicReviewPromptFamily,
 		RawResponse: domain.JSONMap{

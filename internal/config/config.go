@@ -26,12 +26,12 @@ type Config struct {
 	HTTPReadTimeout             time.Duration
 	HTTPWriteTimeout            time.Duration
 	HTTPIdleTimeout             time.Duration
-	Gemini                      GeminiConfig
+	DeepSeek                    DeepSeekConfig
 	Auth                        AuthConfig
 	Scheduler                   SchedulerConfig
 }
 
-type GeminiConfig struct {
+type DeepSeekConfig struct {
 	BaseURL         string
 	Models          []string
 	APIKey          string
@@ -61,35 +61,35 @@ type SchedulerConfig struct {
 }
 
 func Load() (Config, error) {
-	_ = godotenv.Load(".env")
+	_ = godotenv.Load(".env", "backend/.env")
 
 	cfg := Config{
-		AppEnv:                      envString("APP_ENV", "development"),
-		Port:                        envString("PORT", "8080"),
-		LogLevel:                    envString("LOG_LEVEL", "info"),
-		DatabaseURL:                 envString("DATABASE_URL", ""),
-		DefaultTimezone:             envString("DEFAULT_TIMEZONE", domain.DefaultTimezone),
-		AdminToken:                  envString("ADMIN_TOKEN", ""),
-		AutoMigrate:                 envBool("AUTO_MIGRATE", true),
+		AppEnv:          envString("APP_ENV", "development"),
+		Port:            envString("PORT", "8080"),
+		LogLevel:        envString("LOG_LEVEL", "info"),
+		DatabaseURL:     envString("DATABASE_URL", ""),
+		DefaultTimezone: envString("DEFAULT_TIMEZONE", domain.DefaultTimezone),
+		AdminToken:      envString("ADMIN_TOKEN", ""),
+		AutoMigrate:     envBool("AUTO_MIGRATE", true),
 		// Mode 4 (weak passage review) is hard-disabled at the product level.
 		// The flag is retained in config for future re-enablement but defaults to false
 		// and is forced to false regardless of MODE4_ENABLED env to make it impossible
 		// to surface mode 4 cards or background generation in production.
-		Mode4Enabled: false,
+		Mode4Enabled:                false,
 		MemoryCauseInferenceEnabled: envBool("MEMORY_CAUSE_INFERENCE_ENABLED", true),
 		HTTPReadTimeout:             envDuration("HTTP_READ_TIMEOUT", 10*time.Second),
 		HTTPWriteTimeout:            envDuration("HTTP_WRITE_TIMEOUT", 45*time.Second),
 		HTTPIdleTimeout:             envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
-		Gemini: GeminiConfig{
-			BaseURL:         envString("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
-			Models:          buildGeminiModels(),
-			APIKey:          resolveSecret("GEMINI_API_KEY", "GEMINI_API_KEY_FILE"),
-			Timeout:         envDuration("GEMINI_TIMEOUT", 20*time.Second),
-			MaxRetries:      envInt("GEMINI_MAX_RETRIES", 3),
-			Temperature:     envFloat("GEMINI_TEMPERATURE", 0.4),
-			MaxOutputTokens: envInt("GEMINI_MAX_OUTPUT_TOKENS", 4096),
-			RPMLimit:        envInt("GEMINI_RPM_LIMIT", 0),
-			RPDLimit:        envInt("GEMINI_RPD_LIMIT", 0),
+		DeepSeek: DeepSeekConfig{
+			BaseURL:         envString("DS_BASE_URL", "https://api.deepseek.com"),
+			Models:          buildDeepSeekModels(),
+			APIKey:          resolveSecret("DS_KEY", "DS_KEY_FILE"),
+			Timeout:         envDuration("DS_TIMEOUT", 20*time.Second),
+			MaxRetries:      envInt("DS_MAX_RETRIES", 3),
+			Temperature:     envFloat("DS_TEMPERATURE", 0.4),
+			MaxOutputTokens: envInt("DS_MAX_OUTPUT_TOKENS", 4096),
+			RPMLimit:        envInt("DS_RPM_LIMIT", 0),
+			RPDLimit:        envInt("DS_RPD_LIMIT", 0),
 		},
 		Auth: AuthConfig{
 			DevBypass:  envBool("DEV_AUTH_BYPASS", false),
@@ -116,17 +116,17 @@ func Load() (Config, error) {
 			return Config{}, errors.New("AUTH_JWKS_URL, AUTH_ISSUER, and AUTH_AUDIENCE are required unless DEV_AUTH_BYPASS=true")
 		}
 	}
-	if cfg.Gemini.APIKey == "" {
-		return Config{}, errors.New("GEMINI_API_KEY or GEMINI_API_KEY_FILE is required")
+	if cfg.DeepSeek.APIKey == "" {
+		return Config{}, errors.New("DS_KEY or DS_KEY_FILE is required")
 	}
 	return cfg, nil
 }
 
-func buildGeminiModels() []string {
+func buildDeepSeekModels() []string {
 	candidates := []string{
-		envString("GEMINI_MODEL", "gemini-2.0-flash"),
-		strings.TrimSpace(os.Getenv("GEMINI_MODEL_2")),
-		strings.TrimSpace(os.Getenv("GEMINI_MODEL_3")),
+		envString("DS_MODEL", "deepseek-v4-flash"),
+		strings.TrimSpace(os.Getenv("DS_MODEL_2")),
+		strings.TrimSpace(os.Getenv("DS_MODEL_3")),
 	}
 	models := make([]string, 0, len(candidates))
 	seen := make(map[string]struct{}, len(candidates))

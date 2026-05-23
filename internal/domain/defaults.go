@@ -5,7 +5,7 @@ import "github.com/google/uuid"
 const (
 	DefaultTimezone          = "Asia/Ho_Chi_Minh"
 	DefaultDailyNewWordLimit = 10
-	DefaultGeminiProvider    = "google-gemini"
+	DefaultLLMProvider       = "deepseek"
 )
 
 func DefaultUserSettings(userID uuid.UUID) UserSettings {
