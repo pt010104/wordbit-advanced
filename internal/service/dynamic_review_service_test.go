@@ -186,6 +186,28 @@ func (r *dynamicReviewPromptRepoStub) ListByLocalDate(ctx context.Context, userI
 	return out, nil
 }
 
+func (r *dynamicReviewPromptRepoStub) ListLatestForUserWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) ([]domain.DailyDynamicReviewPrompt, error) {
+	wordIDSet := make(map[uuid.UUID]struct{}, len(wordIDs))
+	for _, id := range wordIDs {
+		wordIDSet[id] = struct{}{}
+	}
+	out := make([]domain.DailyDynamicReviewPrompt, 0)
+	seen := make(map[dynamicReviewKey]struct{})
+	for i := len(r.prompts) - 1; i >= 0; i-- {
+		prompt := r.prompts[i]
+		if prompt.UserID == userID {
+			if _, ok := wordIDSet[prompt.WordID]; ok {
+				key := dynamicReviewKey{WordID: prompt.WordID, ReviewMode: prompt.ReviewMode}
+				if _, duplicated := seen[key]; !duplicated {
+					seen[key] = struct{}{}
+					out = append(out, prompt)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
 func (r *dynamicReviewPromptRepoStub) UpsertBatch(ctx context.Context, prompts []domain.DailyDynamicReviewPrompt) ([]domain.DailyDynamicReviewPrompt, error) {
 	for _, prompt := range prompts {
 		replaced := false
@@ -294,5 +316,46 @@ func testDynamicPoolItem(word domain.Word, itemType domain.PoolItemType, reviewM
 		Status:     domain.PoolItemStatusPending,
 		IsReview:   true,
 		Word:       &wordCopy,
+	}
+}
+
+func TestDynamicReviewOverlayReusesHistoricalPromptFallback(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	word := testDynamicReviewWord("forecast")
+
+	repo := &dynamicReviewPromptRepoStub{
+		prompts: []domain.DailyDynamicReviewPrompt{{
+			ID:         uuid.New(),
+			UserID:     userID,
+			LocalDate:  "2026-03-22",
+			WordID:     word.ID,
+			ReviewMode: domain.ReviewModeMultipleChoice,
+			Payload: domain.DynamicReviewPromptPayload{
+				PromptText:  "This is a historical prompt text from yesterday.",
+				Source:      dynamicReviewPromptSource,
+				GeneratedAt: "2026-03-22T10:00:00Z",
+			},
+		}},
+	}
+	service := NewDynamicReviewService(repo, &dynamicReviewLLMRepoStub{}, &dynamicReviewGeneratorStub{}, dynamicReviewClock{now: time.Now().UTC()}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+
+	items, err := service.OverlayPoolItems(context.Background(), userID, "2026-03-23", []domain.DailyLearningPoolItem{
+		testDynamicPoolItem(word, domain.PoolItemTypeReview, domain.ReviewModeMultipleChoice, 1),
+	})
+	if err != nil {
+		t.Fatalf("OverlayPoolItems() error = %v", err)
+	}
+	if items[0].Metadata == nil || items[0].Metadata[dynamicReviewMetadataKey] == nil {
+		t.Fatalf("expected item to fallback and reuse historical dynamic prompt metadata")
+	}
+
+	metadata, ok := items[0].Metadata[dynamicReviewMetadataKey].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected metadata format")
+	}
+	if metadata["prompt_text"] != "This is a historical prompt text from yesterday." {
+		t.Fatalf("expected prompt_text from yesterday, got %v", metadata["prompt_text"])
 	}
 }

@@ -368,6 +368,28 @@ func (m *memoryDynamicReviewPromptRepo) ListByLocalDate(ctx context.Context, use
 	return out, nil
 }
 
+func (m *memoryDynamicReviewPromptRepo) ListLatestForUserWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) ([]domain.DailyDynamicReviewPrompt, error) {
+	wordIDSet := make(map[uuid.UUID]struct{}, len(wordIDs))
+	for _, id := range wordIDs {
+		wordIDSet[id] = struct{}{}
+	}
+	out := make([]domain.DailyDynamicReviewPrompt, 0)
+	seen := make(map[string]struct{})
+	for i := len(m.prompts) - 1; i >= 0; i-- {
+		prompt := m.prompts[i]
+		if prompt.UserID == userID {
+			if _, ok := wordIDSet[prompt.WordID]; ok {
+				key := prompt.WordID.String() + ":" + string(prompt.ReviewMode)
+				if _, duplicated := seen[key]; !duplicated {
+					seen[key] = struct{}{}
+					out = append(out, prompt)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
 func (m *memoryDynamicReviewPromptRepo) UpsertBatch(ctx context.Context, prompts []domain.DailyDynamicReviewPrompt) ([]domain.DailyDynamicReviewPrompt, error) {
 	for _, prompt := range prompts {
 		replaced := false

@@ -112,6 +112,7 @@ type Mode4PassageGenerator interface {
 
 type DynamicReviewPromptRepository interface {
 	ListByLocalDate(ctx context.Context, userID uuid.UUID, localDate string) ([]domain.DailyDynamicReviewPrompt, error)
+	ListLatestForUserWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) ([]domain.DailyDynamicReviewPrompt, error)
 	UpsertBatch(ctx context.Context, prompts []domain.DailyDynamicReviewPrompt) ([]domain.DailyDynamicReviewPrompt, error)
 }
 

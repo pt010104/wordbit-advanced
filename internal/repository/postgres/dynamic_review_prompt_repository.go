@@ -37,6 +37,33 @@ func (r *DynamicReviewPromptRepository) ListByLocalDate(ctx context.Context, use
 	return prompts, rows.Err()
 }
 
+func (r *DynamicReviewPromptRepository) ListLatestForUserWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) ([]domain.DailyDynamicReviewPrompt, error) {
+	if len(wordIDs) == 0 {
+		return []domain.DailyDynamicReviewPrompt{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT ON (word_id, review_mode) id, user_id, local_date, word_id, review_mode, payload_json, llm_run_id, created_at, updated_at
+		FROM daily_dynamic_review_prompts
+		WHERE user_id = $1
+		  AND word_id = ANY($2)
+		ORDER BY word_id, review_mode, local_date DESC, created_at DESC
+	`, userID, wordIDs)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+
+	var prompts []domain.DailyDynamicReviewPrompt
+	for rows.Next() {
+		prompt, scanErr := scanDynamicReviewPrompt(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		prompts = append(prompts, prompt)
+	}
+	return prompts, rows.Err()
+}
+
 func (r *DynamicReviewPromptRepository) UpsertBatch(ctx context.Context, prompts []domain.DailyDynamicReviewPrompt) ([]domain.DailyDynamicReviewPrompt, error) {
 	if len(prompts) == 0 {
 		return []domain.DailyDynamicReviewPrompt{}, nil

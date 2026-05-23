@@ -61,7 +61,7 @@ func NewDynamicReviewService(
 }
 
 func (s *DynamicReviewService) OverlayPoolItems(ctx context.Context, userID uuid.UUID, localDate string, items []domain.DailyLearningPoolItem) ([]domain.DailyLearningPoolItem, error) {
-	promptMap, err := s.loadPromptMap(ctx, userID, localDate)
+	promptMap, err := s.loadPromptMapWithFallback(ctx, userID, localDate, items)
 	if err != nil {
 		return nil, err
 	}
@@ -69,11 +69,11 @@ func (s *DynamicReviewService) OverlayPoolItems(ctx context.Context, userID uuid
 }
 
 func (s *DynamicReviewService) OverlayCardOnly(ctx context.Context, userID uuid.UUID, localDate string, item domain.DailyLearningPoolItem) (domain.DailyLearningPoolItem, bool, error) {
-	promptMap, err := s.loadPromptMap(ctx, userID, localDate)
+	promptMap, err := s.loadPromptMapWithFallback(ctx, userID, localDate, []domain.DailyLearningPoolItem{item})
 	if err != nil {
 		return domain.DailyLearningPoolItem{}, false, err
 	}
-	prompt, ok := promptMap[dynamicReviewKey{WordID: item.WordID, ReviewMode: item.ReviewMode}]
+	prompt, ok := lookupPrompt(item, promptMap)
 	if !ok {
 		return copyPoolItem(item), false, nil
 	}
@@ -281,6 +281,52 @@ func (s *DynamicReviewService) loadPromptMap(ctx context.Context, userID uuid.UU
 	return promptMap, nil
 }
 
+func (s *DynamicReviewService) loadPromptMapWithFallback(ctx context.Context, userID uuid.UUID, localDate string, items []domain.DailyLearningPoolItem) (map[dynamicReviewKey]domain.DailyDynamicReviewPrompt, error) {
+	promptMap, err := s.loadPromptMap(ctx, userID, localDate)
+	if err != nil {
+		return nil, err
+	}
+
+	var missingWordIDs []uuid.UUID
+	seenMissing := make(map[uuid.UUID]struct{})
+	for _, item := range items {
+		if item.ReviewMode == domain.ReviewModeBuildWord {
+			mcKey := dynamicReviewKey{WordID: item.WordID, ReviewMode: domain.ReviewModeMultipleChoice}
+			if _, ok := promptMap[mcKey]; ok {
+				continue
+			}
+		} else {
+			key := dynamicReviewKey{WordID: item.WordID, ReviewMode: item.ReviewMode}
+			if _, ok := promptMap[key]; ok {
+				continue
+			}
+		}
+
+		if _, seen := seenMissing[item.WordID]; !seen {
+			missingWordIDs = append(missingWordIDs, item.WordID)
+			seenMissing[item.WordID] = struct{}{}
+		}
+	}
+
+	if len(missingWordIDs) == 0 {
+		return promptMap, nil
+	}
+
+	historical, err := s.promptRepo.ListLatestForUserWords(ctx, userID, missingWordIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, prompt := range historical {
+		key := dynamicReviewKey{WordID: prompt.WordID, ReviewMode: prompt.ReviewMode}
+		if _, ok := promptMap[key]; !ok {
+			promptMap[key] = prompt
+		}
+	}
+
+	return promptMap, nil
+}
+
 func selectDynamicReviewCandidates(items []domain.DailyLearningPoolItem) []dynamicReviewCandidate {
 	seen := map[dynamicReviewKey]struct{}{}
 	candidates := make([]dynamicReviewCandidate, 0)
@@ -317,7 +363,7 @@ func selectDynamicReviewCandidates(items []domain.DailyLearningPoolItem) []dynam
 func overlayDynamicPrompts(items []domain.DailyLearningPoolItem, promptMap map[dynamicReviewKey]domain.DailyDynamicReviewPrompt) []domain.DailyLearningPoolItem {
 	out := make([]domain.DailyLearningPoolItem, 0, len(items))
 	for _, item := range items {
-		prompt, ok := promptMap[dynamicReviewKey{WordID: item.WordID, ReviewMode: item.ReviewMode}]
+		prompt, ok := lookupPrompt(item, promptMap)
 		if !ok {
 			out = append(out, copyPoolItem(item))
 			continue
@@ -325,6 +371,22 @@ func overlayDynamicPrompts(items []domain.DailyLearningPoolItem, promptMap map[d
 		out = append(out, applyDynamicPrompt(item, prompt.Payload))
 	}
 	return out
+}
+
+func lookupPrompt(item domain.DailyLearningPoolItem, promptMap map[dynamicReviewKey]domain.DailyDynamicReviewPrompt) (domain.DailyDynamicReviewPrompt, bool) {
+	key := dynamicReviewKey{WordID: item.WordID, ReviewMode: item.ReviewMode}
+	if prompt, ok := promptMap[key]; ok {
+		return prompt, true
+	}
+
+	if item.ReviewMode == domain.ReviewModeBuildWord {
+		mcKey := dynamicReviewKey{WordID: item.WordID, ReviewMode: domain.ReviewModeMultipleChoice}
+		if prompt, ok := promptMap[mcKey]; ok {
+			return prompt, true
+		}
+	}
+
+	return domain.DailyDynamicReviewPrompt{}, false
 }
 
 func applyDynamicPrompt(item domain.DailyLearningPoolItem, payload domain.DynamicReviewPromptPayload) domain.DailyLearningPoolItem {
