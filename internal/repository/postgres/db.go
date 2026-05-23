@@ -31,7 +31,6 @@ type Repositories struct {
 	Pools                *PoolRepository
 	Events               *LearningEventRepository
 	LLMRuns              *LLMRunRepository
-	ExercisePacks        *ExercisePackRepository
 	Mode4Reviews         *Mode4ReviewRepository
 	DynamicReviewPrompts *DynamicReviewPromptRepository
 	WordSets             *WordSetRepository
@@ -46,7 +45,6 @@ func NewRepositories(pool *pgxpool.Pool) *Repositories {
 		Pools:                &PoolRepository{pool: pool},
 		Events:               &LearningEventRepository{pool: pool},
 		LLMRuns:              &LLMRunRepository{pool: pool},
-		ExercisePacks:        &ExercisePackRepository{pool: pool},
 		Mode4Reviews:         &Mode4ReviewRepository{pool: pool},
 		DynamicReviewPrompts: &DynamicReviewPromptRepository{pool: pool},
 		WordSets:             &WordSetRepository{pool: pool},
@@ -409,47 +407,7 @@ func scanRun(row pgx.Row) (domain.LLMGenerationRun, error) {
 	return run, mapError(err)
 }
 
-func scanContextExercisePack(row pgx.Row) (domain.ContextExercisePack, error) {
-	var pack domain.ContextExercisePack
-	var localDate time.Time
-	var userID uuid.NullUUID
-	var llmRunID uuid.NullUUID
-	var sourceWordsJSON []byte
-	var payloadJSON []byte
-	err := row.Scan(
-		&pack.ID,
-		&userID,
-		&localDate,
-		&pack.Topic,
-		&pack.CEFRLevel,
-		&pack.PackType,
-		&pack.ClusterHash,
-		&sourceWordsJSON,
-		&payloadJSON,
-		&pack.Status,
-		&llmRunID,
-		&pack.CreatedAt,
-		&pack.UpdatedAt,
-	)
-	if userID.Valid {
-		pack.UserID = &userID.UUID
-	}
-	if llmRunID.Valid {
-		pack.LLMRunID = &llmRunID.UUID
-	}
-	pack.LocalDate = localDate.Format("2006-01-02")
-	if len(sourceWordsJSON) > 0 {
-		if err := json.Unmarshal(sourceWordsJSON, &pack.SourceWords); err != nil {
-			return domain.ContextExercisePack{}, mapError(err)
-		}
-	}
-	if len(payloadJSON) > 0 {
-		if err := json.Unmarshal(payloadJSON, &pack.Payload); err != nil {
-			return domain.ContextExercisePack{}, mapError(err)
-		}
-	}
-	return pack, mapError(err)
-}
+
 
 func scanMode4ReviewPassage(row pgx.Row) (domain.Mode4ReviewPassage, error) {
 	var passage domain.Mode4ReviewPassage

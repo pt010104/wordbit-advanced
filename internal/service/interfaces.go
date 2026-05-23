@@ -90,11 +90,7 @@ type CandidateGenerator interface {
 	GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error)
 }
 
-type ExercisePackRepository interface {
-	GetByClusterHash(ctx context.Context, userID uuid.UUID, localDate string, clusterHash string, packType domain.ExercisePackType) (domain.ContextExercisePack, error)
-	GetLatestReadyByLocalDate(ctx context.Context, userID uuid.UUID, localDate string, packType domain.ExercisePackType) (domain.ContextExercisePack, error)
-	Create(ctx context.Context, pack domain.ContextExercisePack) (domain.ContextExercisePack, error)
-}
+
 
 type Mode4ReviewRepository interface {
 	GetOrCreateState(ctx context.Context, userID uuid.UUID) (domain.Mode4ReviewState, error)
@@ -108,9 +104,7 @@ type Mode4ReviewRepository interface {
 	UpdatePassageStatus(ctx context.Context, userID uuid.UUID, passageID uuid.UUID, status domain.Mode4ReviewPassageStatus, completedAt *time.Time) (domain.Mode4ReviewPassage, error)
 }
 
-type ExercisePackGenerator interface {
-	GenerateContextExercisePack(ctx context.Context, input ExercisePackGenerationInput) (domain.ContextExercisePayload, string, error)
-}
+
 
 type Mode4PassageGenerator interface {
 	GenerateMode4WeakPassage(ctx context.Context, input Mode4PassageGenerationInput) (domain.Mode4WeakPassagePayload, string, error)

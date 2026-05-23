@@ -370,19 +370,6 @@ func (h *Handler) GenerateDynamicReviewPrompts(w nethttp.ResponseWriter, r *neth
 	writeJSON(w, nethttp.StatusOK, result)
 }
 
-func (h *Handler) StartExercise(w nethttp.ResponseWriter, r *nethttp.Request) {
-	user, err := currentUser(r)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	response, err := h.exercise.StartSession(r.Context(), user)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, nethttp.StatusOK, response)
-}
 
 func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)

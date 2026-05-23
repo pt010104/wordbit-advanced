@@ -19,13 +19,7 @@ type GenerationInput struct {
 	ExcludeGroupKeys  []string
 }
 
-type ExercisePackGenerationInput struct {
-	UserID       uuid.UUID
-	LocalDate    string
-	Topic        string
-	CEFRLevel    domain.CEFRLevel
-	ClusterWords []domain.Word
-}
+
 
 type Mode4PassageGenerationInput struct {
 	UserID      uuid.UUID

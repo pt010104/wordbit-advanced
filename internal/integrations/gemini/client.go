@@ -140,50 +140,7 @@ func (c *Client) GenerateCandidates(ctx context.Context, input service.Generatio
 	return parsed, result.text, nil
 }
 
-func (c *Client) GenerateContextExercisePack(ctx context.Context, input service.ExercisePackGenerationInput) (domain.ContextExercisePayload, string, error) {
-	body := generateRequest{
-		SystemInstruction: contentBlock{
-			Parts: []part{{Text: exerciseSystemInstruction}},
-		},
-		Contents: []contentBlock{{
-			Role:  "user",
-			Parts: []part{{Text: buildExercisePrompt(input)}},
-		}},
-		GenerationConfig: generationConfig{
-			Temperature:      c.temperature,
-			ResponseMimeType: "application/json",
-			MaxOutputTokens:  c.maxOutputTokens,
-		},
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return domain.ContextExercisePayload{}, "", fmt.Errorf("marshal gemini exercise request: %w", err)
-	}
 
-	result, err := executeJSON(c, ctx, payload, requestOperation{
-		requestLog:       "gemini exercise generate request",
-		requestFailedLog: "gemini exercise generate request failed",
-		readFailedLog:    "gemini exercise response read failed",
-		serverErrorLog:   "gemini exercise generate server error",
-		clientErrorLog:   "gemini exercise generate client error",
-		parseFailedLog:   "gemini exercise generate parse failed",
-		successLog:       "gemini exercise generate response",
-		createErrPrefix:  "create gemini exercise request",
-		requestErrPrefix: "gemini exercise request failed",
-		readErrPrefix:    "read gemini exercise response",
-		serverErrPrefix:  "gemini exercise server error",
-		clientErrPrefix:  "gemini exercise error",
-		parseErrPrefix:   "parse gemini exercise response",
-		extraFields: []any{
-			"cluster_size", len(input.ClusterWords),
-			"topic", input.Topic,
-		},
-	}, parseExerciseGenerateResponse)
-	if err != nil {
-		return domain.ContextExercisePayload{}, result.raw, err
-	}
-	return result.value, result.text, nil
-}
 
 func (c *Client) GenerateMode4WeakPassage(ctx context.Context, input service.Mode4PassageGenerationInput) (domain.Mode4WeakPassagePayload, string, error) {
 	body := generateRequest{
@@ -333,12 +290,6 @@ Always return valid JSON.
 Do not wrap the JSON in markdown fences.
 `
 
-const exerciseSystemInstruction = `
-You generate reusable context-cluster vocabulary exercise packs for a production vocabulary learning service.
-Always return valid JSON only.
-Do not wrap the JSON in markdown fences.
-Do not ask follow-up questions.
-`
 
 const mode4WeakPassageSystemInstruction = `
 You generate reusable weak-word review passages for a production vocabulary learning service.
@@ -354,67 +305,6 @@ Do not wrap the JSON in markdown fences.
 Do not reveal the answer word, canonical form, or lemma in the prompt.
 Do not ask follow-up questions.
 `
-
-func buildExercisePrompt(input service.ExercisePackGenerationInput) string {
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf(`
-Generate one reusable English vocabulary exercise pack for weak-word review.
-
-Requirements:
-- pack_type must be "context_cluster_challenge"
-- topic should stay coherent and realistic
-- CEFR level should be %s
-- use all selected cluster words exactly as study targets
-- produce exactly %d questions
-- every selected word must be targeted by at least one question
-- use only closed-form questions
-- allowed question types: best_fit, meaning_match, definition_match, sentence_usage, passage_understanding, confusable_choice
-- every question must have exactly 4 options
-- every question must have exactly 1 correct answer and it must match one of the options exactly
-- keep the passage and explanations natural and CEFR-appropriate
-- return strict JSON only
-
-Output format:
-{
-  "pack_id": "",
-  "topic": "string",
-  "cefr_level": "B1|B2|C1|C2",
-  "pack_type": "context_cluster_challenge",
-  "cluster_words": ["word1", "word2"],
-  "title": "string",
-  "passage": "string",
-  "questions": [
-    {
-      "id": "q1",
-      "type": "best_fit|meaning_match|definition_match|sentence_usage|passage_understanding|confusable_choice",
-      "target_word": "string",
-      "prompt": "string",
-      "options": ["a", "b", "c", "d"],
-      "answer": "string",
-      "explanation": "string"
-    }
-  ],
-  "summary_tip": "string"
-}
-Selected weak words:
-`, input.CEFRLevel, len(input.ClusterWords)))
-	for index, word := range input.ClusterWords {
-		builder.WriteString(fmt.Sprintf(`
-%d. word="%s"
-   normalized_form="%s"
-   canonical_form="%s"
-   lemma="%s"
-   part_of_speech="%s"
-   topic="%s"
-   level="%s"
-   english_meaning="%s"
-   vietnamese_meaning="%s"
-   example_sentence_1="%s"
-   example_sentence_2="%s"
-`, index+1, word.Word, word.NormalizedForm, word.CanonicalForm, word.Lemma, word.PartOfSpeech, word.Topic, word.Level, word.EnglishMeaning, word.VietnameseMeaning, word.ExampleSentence1, word.ExampleSentence2))
-	}
-	return builder.String()
-}
 
 func buildMode4WeakPassagePrompt(input service.Mode4PassageGenerationInput) string {
 	var builder strings.Builder
