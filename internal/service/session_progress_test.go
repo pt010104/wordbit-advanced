@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -35,15 +36,16 @@ func TestFindNextCardForSessionFollowsReviewNewReviewBlocks(t *testing.T) {
 	finalProgress := newSessionProgress("session-1")
 	finalProgress.SessionReviewCompleted = catchUpSessionReviewRunCap
 	finalProgress.SessionNewCompleted = catchUpSessionNewRunCap
-	finalProgress.SessionTotalCompleted = catchUpSessionReviewRunCap + catchUpSessionNewRunCap
-	finalProgress.PreferredKind = completedCardKindReview
+	finalProgress.SessionTotalCompleted = catchUpSessionTotalCap
+	finalProgress.SessionComplete = true
+	finalProgress.SessionCompleteReason = sessionCompleteReasonTotalCap
 	item, _, reason = findNextCardForSession(items, now, finalProgress, true, 5)
-	if reason != "" || item == nil || item.ItemType != domain.PoolItemTypeReview {
-		t.Fatalf("final block selected item=%v reason=%q, want review", item, reason)
+	if item != nil || reason != sessionCompleteReasonTotalCap {
+		t.Fatalf("final block selected item=%v reason=%q, want session complete", item, reason)
 	}
 }
 
-func TestFindNextCardForSessionCompletesWhenNewBlockHasNoNewCards(t *testing.T) {
+func TestFindNextCardForSessionFallsBackToReviewWhenNewBlockHasNoNewCards(t *testing.T) {
 	now := time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC)
 	progress := newSessionProgress("session-1")
 	progress.SessionReviewCompleted = catchUpSessionReviewRunCap
@@ -57,8 +59,53 @@ func TestFindNextCardForSessionCompletesWhenNewBlockHasNoNewCards(t *testing.T) 
 		true,
 		5,
 	)
-	if item != nil || reason != sessionCompleteReasonNoNew {
-		t.Fatalf("selected item=%v reason=%q, want no-new complete", item, reason)
+	if reason != "" || item == nil || item.ItemType != domain.PoolItemTypeReview {
+		t.Fatalf("selected item=%v reason=%q, want review fallback", item, reason)
+	}
+}
+
+func TestBuildSessionProgressUsesOnlyCurrentSessionID(t *testing.T) {
+	userID := uuid.New()
+	poolID := uuid.New()
+	oldReviewID := uuid.New()
+	oldNewID := uuid.New()
+	currentReviewID := uuid.New()
+	currentNewID := uuid.New()
+	now := time.Date(2026, 5, 24, 1, 0, 0, 0, time.UTC)
+
+	service := &PoolService{
+		eventRepo: &memorySessionEventRepo{
+			events: []domain.LearningEvent{
+				{UserID: userID, PoolItemID: &oldReviewID, EventType: domain.EventTypeReviewAnswer, EventTime: now.Add(-30 * time.Minute), ClientSessionID: "old-session"},
+				{UserID: userID, PoolItemID: &oldNewID, EventType: domain.EventTypeFirstExposure, EventTime: now.Add(-25 * time.Minute), ClientSessionID: "old-session"},
+				{UserID: userID, PoolItemID: &currentReviewID, EventType: domain.EventTypeReviewAnswer, EventTime: now.Add(-10 * time.Minute), ClientSessionID: "current-session"},
+				{UserID: userID, PoolItemID: &currentNewID, EventType: domain.EventTypeFirstExposure, EventTime: now.Add(-5 * time.Minute), ClientSessionID: "current-session"},
+			},
+		},
+	}
+
+	progress, err := service.buildSessionProgress(
+		t.Context(),
+		userID,
+		"current-session",
+		domain.DailyLearningPool{
+			ID:        poolID,
+			LocalDate: "2026-05-24",
+			Timezone:  domain.DefaultTimezone,
+		},
+		[]domain.DailyLearningPoolItem{
+			testSessionReviewItem(oldReviewID, 1),
+			testSessionNewItem(oldNewID, 2),
+			testSessionReviewItem(currentReviewID, 3),
+			testSessionNewItem(currentNewID, 4),
+		},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("buildSessionProgress() error = %v", err)
+	}
+	if progress.SessionTotalCompleted != 2 || progress.SessionReviewCompleted != 1 || progress.SessionNewCompleted != 1 {
+		t.Fatalf("unexpected progress: %+v", progress)
 	}
 }
 
@@ -97,4 +144,53 @@ func testSessionPoolItem(itemType domain.PoolItemType, ordinal int) domain.Daily
 		Status:   domain.PoolItemStatusPending,
 		IsReview: itemType != domain.PoolItemTypeNew,
 	}
+}
+
+func testSessionReviewItem(id uuid.UUID, ordinal int) domain.DailyLearningPoolItem {
+	return domain.DailyLearningPoolItem{
+		ID:       id,
+		WordID:   uuid.New(),
+		ItemType: domain.PoolItemTypeReview,
+		Ordinal:  ordinal,
+		Status:   domain.PoolItemStatusPending,
+		IsReview: true,
+	}
+}
+
+func testSessionNewItem(id uuid.UUID, ordinal int) domain.DailyLearningPoolItem {
+	return domain.DailyLearningPoolItem{
+		ID:       id,
+		WordID:   uuid.New(),
+		ItemType: domain.PoolItemTypeNew,
+		Ordinal:  ordinal,
+		Status:   domain.PoolItemStatusPending,
+		IsReview: false,
+	}
+}
+
+type memorySessionEventRepo struct {
+	events []domain.LearningEvent
+}
+
+func (m *memorySessionEventRepo) Insert(ctx context.Context, event domain.LearningEvent) error {
+	m.events = append(m.events, event)
+	return nil
+}
+
+func (m *memorySessionEventRepo) ListRecentByPoolItem(ctx context.Context, itemID uuid.UUID) ([]domain.LearningEvent, error) {
+	return nil, nil
+}
+
+func (m *memorySessionEventRepo) ListByUserTimeRange(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time) ([]domain.LearningEvent, error) {
+	out := make([]domain.LearningEvent, 0, len(m.events))
+	for _, event := range m.events {
+		if event.UserID != userID {
+			continue
+		}
+		if event.EventTime.Before(start) || !event.EventTime.Before(end) {
+			continue
+		}
+		out = append(out, event)
+	}
+	return out, nil
 }

@@ -12,7 +12,7 @@ import (
 const (
 	catchUpSessionReviewRunCap = 5
 	catchUpSessionNewRunCap    = 5
-	catchUpSessionTotalCap     = 15
+	catchUpSessionTotalCap     = 10
 )
 
 const (
@@ -92,39 +92,7 @@ func (s *PoolService) buildSessionProgress(
 	if sessionID == "" {
 		return progress, nil
 	}
-
-	var sessionKinds []completedCardKind
-	totalCompleted := len(dayKinds)
-	if totalCompleted > 0 {
-		remainder := totalCompleted % 15
-		sessionCompletedCount := remainder
-		if remainder == 0 {
-			// Find the last event's session ID to see if we've transitioned to a new session
-			var lastEventSessionID string
-			for i := len(dayEvents) - 1; i >= 0; i-- {
-				event := dayEvents[i]
-				_, isUndone := undoneClientEventIDs[event.ClientEventID]
-				if isUndone {
-					continue
-				}
-				_, ok := completedKindForEvent(event, itemKinds)
-				if !ok {
-					continue
-				}
-				lastEventSessionID = event.ClientSessionID
-				break
-			}
-			if sessionID == lastEventSessionID {
-				sessionCompletedCount = 15
-			} else {
-				sessionCompletedCount = 0
-			}
-		}
-
-		if sessionCompletedCount > 0 {
-			sessionKinds = dayKinds[totalCompleted-sessionCompletedCount:]
-		}
-	}
+	sessionKinds := completedKindsForEvents(dayEvents, itemKinds, undoneClientEventIDs, sessionID)
 
 	for _, kind := range sessionKinds {
 		progress.SessionTotalCompleted++
@@ -213,35 +181,18 @@ func nextSessionKind(kinds []completedCardKind) (completedCardKind, bool, string
 	if len(kinds) >= catchUpSessionTotalCap {
 		return "", true, sessionCompleteReasonTotalCap
 	}
-	firstNew := -1
-	for i, kind := range kinds {
-		if kind == completedCardKindNew {
-			firstNew = i
-			break
-		}
-	}
-	if firstNew < 0 {
-		if countKind(kinds, completedCardKindReview) < catchUpSessionReviewRunCap {
-			return completedCardKindReview, false, ""
-		}
-		return completedCardKindNew, false, ""
-	}
 
-	idx := firstNew
-	newBlockCount := 0
-	for idx < len(kinds) && kinds[idx] == completedCardKindNew {
-		newBlockCount++
-		idx++
-	}
-	if idx == len(kinds) && newBlockCount < catchUpSessionNewRunCap {
-		return completedCardKindNew, false, ""
-	}
-
-	finalReviewCount := countKind(kinds[idx:], completedCardKindReview)
-	if finalReviewCount < catchUpSessionReviewRunCap {
+	reviewCount := countKind(kinds, completedCardKindReview)
+	if reviewCount < catchUpSessionReviewRunCap {
 		return completedCardKindReview, false, ""
 	}
-	return "", true, sessionCompleteReasonTotalCap
+
+	newCount := countKind(kinds, completedCardKindNew)
+	if newCount < catchUpSessionNewRunCap {
+		return completedCardKindNew, false, ""
+	}
+
+	return completedCardKindReview, false, ""
 }
 
 func countKind(kinds []completedCardKind, target completedCardKind) int {
