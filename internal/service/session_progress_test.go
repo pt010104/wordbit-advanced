@@ -147,8 +147,8 @@ func TestActionableItemsRemainingCountsOnlySelectableWords(t *testing.T) {
 		},
 	}, now, 4, 5)
 
-	if count != 2 {
-		t.Fatalf("actionableItemsRemaining() = %d, want 2", count)
+	if count != 3 {
+		t.Fatalf("actionableItemsRemaining() = %d, want 3", count)
 	}
 }
 
@@ -203,19 +203,20 @@ func TestPracticeItemsRemainingCountsOnlyPracticeWords(t *testing.T) {
 		},
 	}, now)
 
-	if count != 2 {
-		t.Fatalf("practiceItemsRemaining() = %d, want 2", count)
+	if count != 1 {
+		t.Fatalf("practiceItemsRemaining() = %d, want 1", count)
 	}
 }
 
-func TestFindNextCardForSessionDoesNotSelectPracticeItems(t *testing.T) {
+func TestFindNextCardForSessionSelectsShortTermReviewItems(t *testing.T) {
 	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
 	futureDue := now.Add(10 * time.Minute)
+	shortTermWordID := uuid.New()
 
 	item, nextDue, reason := findNextCardForSession([]domain.DailyLearningPoolItem{
 		{
 			ID:       uuid.New(),
-			WordID:   uuid.New(),
+			WordID:   shortTermWordID,
 			ItemType: domain.PoolItemTypeShortTerm,
 			Status:   domain.PoolItemStatusPending,
 			IsReview: true,
@@ -230,23 +231,16 @@ func TestFindNextCardForSessionDoesNotSelectPracticeItems(t *testing.T) {
 		},
 	}, now, newSessionProgress("session-1"), true, 10)
 
-	if item != nil || reason != "" || nextDue == nil || !nextDue.Equal(futureDue) {
-		t.Fatalf("findNextCardForSession() item=%v nextDue=%v reason=%q, want future main due only", item, nextDue, reason)
+	if reason != "" || item == nil || item.WordID != shortTermWordID || nextDue != nil {
+		t.Fatalf("findNextCardForSession() item=%v nextDue=%v reason=%q, want short_term item as main review", item, nextDue, reason)
 	}
 }
 
-func TestFindNextPracticeCardForSessionSelectsPracticeItems(t *testing.T) {
+func TestFindNextPracticeCardForSessionSelectsWeakPracticeItems(t *testing.T) {
 	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
-	shortTermWordID := uuid.New()
+	weakWordID := uuid.New()
 
 	item, reason := findNextPracticeCardForSession([]domain.DailyLearningPoolItem{
-		{
-			ID:       uuid.New(),
-			WordID:   shortTermWordID,
-			ItemType: domain.PoolItemTypeShortTerm,
-			Status:   domain.PoolItemStatusPending,
-			IsReview: true,
-		},
 		{
 			ID:       uuid.New(),
 			WordID:   uuid.New(),
@@ -254,10 +248,17 @@ func TestFindNextPracticeCardForSessionSelectsPracticeItems(t *testing.T) {
 			Status:   domain.PoolItemStatusPending,
 			IsReview: true,
 		},
+		{
+			ID:       uuid.New(),
+			WordID:   weakWordID,
+			ItemType: domain.PoolItemTypeWeak,
+			Status:   domain.PoolItemStatusPending,
+			BonusPractice: true,
+		},
 	}, now, newSessionProgress("practice-session"))
 
-	if reason != "" || item == nil || item.WordID != shortTermWordID {
-		t.Fatalf("findNextPracticeCardForSession() item=%v reason=%q, want short_term practice item", item, reason)
+	if reason != "" || item == nil || item.WordID != weakWordID {
+		t.Fatalf("findNextPracticeCardForSession() item=%v reason=%q, want weak practice item", item, reason)
 	}
 }
 

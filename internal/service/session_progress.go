@@ -270,15 +270,15 @@ func IsReviewPracticeItem(item domain.DailyLearningPoolItem) bool {
 }
 
 func IsMainReviewItem(item domain.DailyLearningPoolItem) bool {
-	return item.ItemType == domain.PoolItemTypeReview
+	return item.ItemType == domain.PoolItemTypeReview ||
+		item.ItemType == domain.PoolItemTypeShortTerm
 }
 
 func IsPracticeItem(item domain.DailyLearningPoolItem) bool {
 	if item.BonusPractice {
 		return true
 	}
-	return item.ItemType == domain.PoolItemTypeShortTerm ||
-		item.ItemType == domain.PoolItemTypeWeak
+	return item.ItemType == domain.PoolItemTypeWeak
 }
 
 func totalReviewPracticeItems(items []domain.DailyLearningPoolItem) int {
