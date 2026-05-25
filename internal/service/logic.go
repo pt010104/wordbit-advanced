@@ -95,8 +95,7 @@ func SelectWordConstructionMode(state domain.UserWordState) domain.ReviewMode {
 		state.ReviewCount +
 		state.WrongCount +
 		state.HintUsedCount +
-		state.SpellingIssueCount +
-		state.LearningStage
+		state.SpellingIssueCount
 	if state.LastSeenAt != nil {
 		seed += int(state.LastSeenAt.Unix() / 60)
 	}

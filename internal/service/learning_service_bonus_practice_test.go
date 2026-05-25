@@ -1377,3 +1377,124 @@ func TestSubmitReviewWithoutBehaviorSignalsStillWorks(t *testing.T) {
 		t.Fatalf("SubmitReview returned error for compatibility payload: %v", err)
 	}
 }
+
+func TestSubmitRevealDeduplicatesHintStep(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 11, 0, 0, 0, time.UTC)
+
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			wordID: {
+				UserID: userID,
+				WordID: wordID,
+				Status: domain.WordStatusReview,
+			},
+		},
+	}
+	poolRepo := &replenishPoolRepo{
+		items: []domain.DailyLearningPoolItem{{
+			ID:         itemID,
+			UserID:     userID,
+			WordID:     wordID,
+			ItemType:   domain.PoolItemTypeReview,
+			ReviewMode: domain.ReviewModeBuildWord,
+			Status:     domain.PoolItemStatusPending,
+			IsReview:   true,
+		}},
+	}
+	eventRepo := &captureEventRepo{}
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, eventRepo, nil, replenishClock{now: now}, nil, true)
+
+	req := RevealRequest{
+		PoolItemID:     itemID,
+		Kind:           domain.RevealKindHint,
+		ModeUsed:       domain.ReviewModeBuildWord,
+		ResponseTimeMs: 1000,
+		ClientEventID:  "hint-step-1a",
+		HintStep:       1,
+	}
+	if err := service.SubmitReveal(context.Background(), domain.User{ID: userID}, req); err != nil {
+		t.Fatalf("first SubmitReveal returned error: %v", err)
+	}
+	req.ClientEventID = "hint-step-1b"
+	if err := service.SubmitReveal(context.Background(), domain.User{ID: userID}, req); err != nil {
+		t.Fatalf("duplicate SubmitReveal returned error: %v", err)
+	}
+
+	updated := stateRepo.states[wordID]
+	if updated.HintUsedCount != 1 {
+		t.Fatalf("expected hint count to be deduplicated to 1, got %d", updated.HintUsedCount)
+	}
+	if len(eventRepo.events) != 1 {
+		t.Fatalf("expected one hint event, got %d", len(eventRepo.events))
+	}
+	if got := hintStepFromPayload(eventRepo.events[0].Payload); got != 1 {
+		t.Fatalf("expected hint_step payload 1, got %d", got)
+	}
+}
+
+func TestSubmitReviewWordConstructionStruggleBoostsSpellingSignal(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	wordID := uuid.New()
+	itemID := uuid.New()
+	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
+	nextReview := now.Add(24 * time.Hour)
+
+	stateRepo := &replenishStateRepo{
+		states: map[uuid.UUID]domain.UserWordState{
+			wordID: {
+				UserID:          userID,
+				WordID:          wordID,
+				Status:          domain.WordStatusReview,
+				NextReviewAt:    &nextReview,
+				IntervalSeconds: int((24 * time.Hour).Seconds()),
+				Stability:       1.4,
+				Difficulty:      0.3,
+				WeaknessScore:   0.2,
+			},
+		},
+	}
+	poolRepo := &replenishPoolRepo{
+		items: []domain.DailyLearningPoolItem{{
+			ID:         itemID,
+			UserID:     userID,
+			WordID:     wordID,
+			ItemType:   domain.PoolItemTypeReview,
+			ReviewMode: domain.ReviewModeBuildWord,
+			Status:     domain.PoolItemStatusPending,
+			IsReview:   true,
+		}},
+	}
+	service := NewLearningService(&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)}, stateRepo, poolRepo, &captureEventRepo{}, nil, replenishClock{now: now}, nil, true)
+
+	answerCorrect := true
+	if err := service.SubmitReview(context.Background(), domain.User{ID: userID}, ReviewRequest{
+		PoolItemID:     itemID,
+		Rating:         domain.RatingMedium,
+		ModeUsed:       domain.ReviewModeBuildWord,
+		ResponseTimeMs: 2500,
+		ClientEventID:  "build-word-hinted",
+		AnswerCorrect:  &answerCorrect,
+		UsedHint:       true,
+		HintCount:      2,
+	}); err != nil {
+		t.Fatalf("SubmitReview returned error: %v", err)
+	}
+
+	updated := stateRepo.states[wordID]
+	if updated.LastMemoryCause != domain.MemoryCauseSpellingIssue {
+		t.Fatalf("expected spelling_issue, got %s", updated.LastMemoryCause)
+	}
+	if updated.SpellingIssueCount != 1 {
+		t.Fatalf("expected spelling issue count 1, got %d", updated.SpellingIssueCount)
+	}
+	if updated.WeaknessScore <= 0.2 {
+		t.Fatalf("expected weakness score to increase, got %.2f", updated.WeaknessScore)
+	}
+}
