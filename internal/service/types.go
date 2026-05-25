@@ -19,8 +19,6 @@ type GenerationInput struct {
 	ExcludeGroupKeys  []string
 }
 
-
-
 type Mode4PassageGenerationInput struct {
 	UserID      uuid.UUID
 	LocalDate   string

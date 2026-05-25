@@ -195,6 +195,44 @@ func nextSessionKind(kinds []completedCardKind) (completedCardKind, bool, string
 	return completedCardKindReview, false, ""
 }
 
+type selectableSessionCandidates struct {
+	review  []domain.DailyLearningPoolItem
+	new     []domain.DailyLearningPoolItem
+	nextDue *time.Time
+}
+
+func collectSelectableSessionCandidates(
+	items []domain.DailyLearningPoolItem,
+	now time.Time,
+	dailyNewCompleted int,
+	effectiveNewLimit int,
+) selectableSessionCandidates {
+	newCapReached := effectiveNewLimit >= 0 && dailyNewCompleted >= effectiveNewLimit
+	candidates := selectableSessionCandidates{
+		review: make([]domain.DailyLearningPoolItem, 0),
+		new:    make([]domain.DailyLearningPoolItem, 0),
+	}
+	for _, item := range items {
+		if item.Status != domain.PoolItemStatusPending {
+			continue
+		}
+		if item.DueAt != nil && item.DueAt.After(now) {
+			if candidates.nextDue == nil || item.DueAt.Before(*candidates.nextDue) {
+				candidates.nextDue = item.DueAt
+			}
+			continue
+		}
+		if IsReviewPracticeItem(item) {
+			candidates.review = append(candidates.review, item)
+			continue
+		}
+		if item.ItemType == domain.PoolItemTypeNew && !newCapReached {
+			candidates.new = append(candidates.new, item)
+		}
+	}
+	return candidates
+}
+
 func countKind(kinds []completedCardKind, target completedCardKind) int {
 	count := 0
 	for _, kind := range kinds {
@@ -228,18 +266,13 @@ func totalDueReviewPracticeItems(shortTermStates []domain.UserWordState, reviewS
 	return len(shortTermStates) + len(reviewStates) + len(weakStates)
 }
 
-func actionableItemsRemaining(items []domain.DailyLearningPoolItem, now time.Time) int {
+func actionableItemsRemaining(items []domain.DailyLearningPoolItem, now time.Time, dailyNewCompleted int, effectiveNewLimit int) int {
+	candidates := collectSelectableSessionCandidates(items, now, dailyNewCompleted, effectiveNewLimit)
 	remainingWordIDs := make(map[uuid.UUID]struct{})
-	for _, item := range items {
-		if item.Status != domain.PoolItemStatusPending {
-			continue
-		}
-		if item.DueAt != nil && item.DueAt.After(now) {
-			continue
-		}
-		if item.BonusPractice || item.ItemType == domain.PoolItemTypeShortTerm {
-			continue
-		}
+	for _, item := range candidates.review {
+		remainingWordIDs[item.WordID] = struct{}{}
+	}
+	for _, item := range candidates.new {
 		remainingWordIDs[item.WordID] = struct{}{}
 	}
 	return len(remainingWordIDs)

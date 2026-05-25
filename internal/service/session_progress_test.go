@@ -109,13 +109,12 @@ func TestBuildSessionProgressUsesOnlyCurrentSessionID(t *testing.T) {
 	}
 }
 
-func TestActionableItemsRemainingCountsOnlyMainLearningWords(t *testing.T) {
+func TestActionableItemsRemainingCountsOnlySelectableWords(t *testing.T) {
 	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
 	mainReviewWordID := uuid.New()
 	mainNewWordID := uuid.New()
 	shortTermWordID := uuid.New()
 	bonusWordID := uuid.New()
-	weakWordID := uuid.New()
 
 	count := actionableItemsRemaining([]domain.DailyLearningPoolItem{
 		{
@@ -146,17 +145,34 @@ func TestActionableItemsRemainingCountsOnlyMainLearningWords(t *testing.T) {
 			IsReview:      true,
 			BonusPractice: true,
 		},
+	}, now, 5, 5)
+
+	if count != 3 {
+		t.Fatalf("actionableItemsRemaining() = %d, want 3", count)
+	}
+}
+
+func TestActionableItemsRemainingExcludesNewWordsWhenDailyCapReached(t *testing.T) {
+	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
+
+	count := actionableItemsRemaining([]domain.DailyLearningPoolItem{
 		{
 			ID:       uuid.New(),
-			WordID:   weakWordID,
+			WordID:   uuid.New(),
+			ItemType: domain.PoolItemTypeNew,
+			Status:   domain.PoolItemStatusPending,
+		},
+		{
+			ID:       uuid.New(),
+			WordID:   uuid.New(),
 			ItemType: domain.PoolItemTypeWeak,
 			Status:   domain.PoolItemStatusPending,
 			IsReview: true,
 		},
-	}, now)
+	}, now, 10, 10)
 
-	if count != 3 {
-		t.Fatalf("actionableItemsRemaining() = %d, want 3", count)
+	if count != 1 {
+		t.Fatalf("actionableItemsRemaining() = %d, want 1 when new cap reached", count)
 	}
 }
 

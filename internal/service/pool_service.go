@@ -311,7 +311,7 @@ func (s *PoolService) nextCardFromView(
 	}
 	comebackMode := isComebackPool(view.Pool, view.Items)
 	effectiveNewLimit := dailyNewWordLimit
-	pendingDue := actionableItemsRemaining(view.Items, now)
+	pendingDue := actionableItemsRemaining(view.Items, now, progress.DailyNewCompleted, effectiveNewLimit)
 	item, nextDue, completeReason := findNextCardForSession(view.Items, now, progress, comebackMode, effectiveNewLimit)
 	if item != nil || completeReason != "" {
 		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, item, nextDue, completeReason), false, nil
@@ -681,31 +681,10 @@ func findNextCardForSession(
 		return nil, nil, progress.SessionCompleteReason
 	}
 
-	newCapReached := effectiveNewLimit >= 0 && progress.DailyNewCompleted >= effectiveNewLimit
-	var nextDue *time.Time
-	reviewCandidates := make([]domain.DailyLearningPoolItem, 0)
-	newCandidates := make([]domain.DailyLearningPoolItem, 0)
-	for _, item := range items {
-		if item.Status != domain.PoolItemStatusPending {
-			continue
-		}
-		if item.DueAt != nil && item.DueAt.After(now) {
-			if nextDue == nil || item.DueAt.Before(*nextDue) {
-				nextDue = item.DueAt
-			}
-			continue
-		}
-		if IsReviewPracticeItem(item) {
-			reviewCandidates = append(reviewCandidates, item)
-			continue
-		}
-		if item.ItemType == domain.PoolItemTypeNew && !newCapReached {
-			newCandidates = append(newCandidates, item)
-		}
-	}
+	candidates := collectSelectableSessionCandidates(items, now, progress.DailyNewCompleted, effectiveNewLimit)
 
-	reviewCandidate := bestActionableItem(reviewCandidates)
-	newCandidate := bestActionableItem(newCandidates)
+	reviewCandidate := bestActionableItem(candidates.review)
+	newCandidate := bestActionableItem(candidates.new)
 	if progress.SessionID == "" {
 		if reviewCandidate != nil {
 			return reviewCandidate, nil, ""
@@ -713,7 +692,7 @@ func findNextCardForSession(
 		if newCandidate != nil {
 			return newCandidate, nil, ""
 		}
-		return nil, nextDue, ""
+		return nil, candidates.nextDue, ""
 	}
 
 	if progress.PreferredKind == completedCardKindNew {
@@ -723,7 +702,7 @@ func findNextCardForSession(
 		if reviewCandidate != nil {
 			return reviewCandidate, nil, ""
 		}
-		return nil, nextDue, ""
+		return nil, candidates.nextDue, ""
 	}
 
 	// Preferred kind is review
@@ -733,7 +712,7 @@ func findNextCardForSession(
 	if newCandidate != nil {
 		return newCandidate, nil, ""
 	}
-	return nil, nextDue, ""
+	return nil, candidates.nextDue, ""
 }
 
 func bestActionableItem(items []domain.DailyLearningPoolItem) *domain.DailyLearningPoolItem {
