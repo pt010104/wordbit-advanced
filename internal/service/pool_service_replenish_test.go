@@ -677,7 +677,7 @@ func TestGetNextCardReplenishesUnknownDailySlotsAtPoolEnd(t *testing.T) {
 		true,
 	)
 
-	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "")
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "", false)
 	if err != nil {
 		t.Fatalf("GetNextCard returned error: %v", err)
 	}
@@ -823,7 +823,7 @@ func TestGetNextCardReplenishesBufferedNewWordBatchAtPoolEnd(t *testing.T) {
 		true,
 	)
 
-	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "")
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "", false)
 	if err != nil {
 		t.Fatalf("GetNextCard returned error: %v", err)
 	}
@@ -1018,7 +1018,7 @@ func TestGetNextCardReplenishesWeakFallbackWhenPoolIsExhausted(t *testing.T) {
 		true,
 	)
 
-	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "")
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "", false)
 	if err != nil {
 		t.Fatalf("GetNextCard returned error: %v", err)
 	}
@@ -1138,7 +1138,7 @@ func TestGetNextCardPrioritizesUnknownReplenishmentBeforeBonusPractice(t *testin
 		true,
 	)
 
-	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "")
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "", false)
 	if err != nil {
 		t.Fatalf("GetNextCard returned error: %v", err)
 	}
@@ -1244,7 +1244,7 @@ func TestGetNextCardReusesStoredBankWordsBeforeGeneratingAgain(t *testing.T) {
 		true,
 	)
 
-	firstCard, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "")
+	firstCard, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "", false)
 	if err != nil {
 		t.Fatalf("first GetNextCard returned error: %v", err)
 	}
@@ -1262,7 +1262,7 @@ func TestGetNextCardReusesStoredBankWordsBeforeGeneratingAgain(t *testing.T) {
 	stateRepo.states[appendedWordID] = domain.UserWordState{UserID: userID, WordID: appendedWordID, Status: domain.WordStatusKnown}
 	poolRepo.items[len(poolRepo.items)-1].Status = domain.PoolItemStatusCompleted
 
-	secondCard, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "")
+	secondCard, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "", false)
 	if err != nil {
 		t.Fatalf("second GetNextCard returned error: %v", err)
 	}
@@ -1357,7 +1357,7 @@ func TestGetNextCardCreatesBonusPracticeFromFutureReviewItem(t *testing.T) {
 		true,
 	)
 
-	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "")
+	card, err := service.GetNextCard(context.Background(), domain.User{ID: userID}, "", false)
 	if err != nil {
 		t.Fatalf("GetNextCard returned error: %v", err)
 	}

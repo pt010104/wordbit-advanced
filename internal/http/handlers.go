@@ -439,7 +439,12 @@ func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	sessionID := r.URL.Query().Get("session_id")
-	card, err := h.pools.GetNextCard(r.Context(), user, sessionID)
+	practiceRequested := false
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("practice"))) {
+	case "1", "true", "yes":
+		practiceRequested = true
+	}
+	card, err := h.pools.GetNextCard(r.Context(), user, sessionID, practiceRequested)
 	if err != nil {
 		writeError(w, err)
 		return

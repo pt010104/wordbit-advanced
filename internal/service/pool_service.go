@@ -230,7 +230,7 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 	}, nil
 }
 
-func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, sessionID string) (CardResponse, error) {
+func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, sessionID string, practiceRequested bool) (CardResponse, error) {
 	view, err := s.GetOrCreateDailyPool(ctx, user)
 	if err != nil {
 		return CardResponse{}, err
@@ -248,52 +248,67 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 		s.logger.Warn("filter daily pool by active set for next card", "user_id", user.ID, "error", filterErr)
 		visibleView = view
 	}
-	card, shouldReplenish, err := s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit)
+	card, err := s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
 	if err != nil {
 		return CardResponse{}, err
 	}
-	if !shouldReplenish {
-		return card, nil
-	}
 
-	if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
-		return CardResponse{}, replenishErr
-	} else if replenished {
-		view, err = s.GetOrCreateDailyPool(ctx, user)
-		if err != nil {
-			return CardResponse{}, err
+	if practiceRequested {
+		if card.PoolItem != nil || card.PendingPracticeCount > 0 {
+			return card, nil
 		}
-		visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
-		if filterErr != nil {
-			visibleView = view
+		if replenished, replenishErr := s.replenishBonusPracticeItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+			return CardResponse{}, replenishErr
+		} else if !replenished {
+			return card, nil
 		}
-		card, shouldReplenish, err = s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit)
-		if err != nil {
-			return CardResponse{}, err
+	} else {
+		if card.SessionComplete && card.PendingPracticeCount > 0 {
+			return card, nil
 		}
-		if !shouldReplenish {
+		if sessionID == "" && card.PoolItem == nil && !card.SessionComplete {
+			if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+				return CardResponse{}, replenishErr
+			} else if replenished {
+				view, err = s.GetOrCreateDailyPool(ctx, user)
+				if err != nil {
+					return CardResponse{}, err
+				}
+				visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
+				if filterErr != nil {
+					visibleView = view
+				}
+				card, err = s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
+				if err != nil {
+					return CardResponse{}, err
+				}
+				if card.PoolItem != nil || (card.SessionComplete && card.PendingPracticeCount > 0) {
+					return card, nil
+				}
+			}
+		}
+		if !card.SessionComplete || card.PendingPracticeCount > 0 {
+			return card, nil
+		}
+		if replenished, replenishErr := s.replenishBonusPracticeItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+			return CardResponse{}, replenishErr
+		} else if !replenished {
 			return card, nil
 		}
 	}
 
-	if replenished, replenishErr := s.replenishBonusPracticeItems(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
-		return CardResponse{}, replenishErr
-	} else if replenished {
-		view, err = s.GetOrCreateDailyPool(ctx, user)
-		if err != nil {
-			return CardResponse{}, err
-		}
-		visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
-		if filterErr != nil {
-			visibleView = view
-		}
-		card, _, err = s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit)
-		if err != nil {
-			return CardResponse{}, err
-		}
-		return card, nil
+	view, err = s.GetOrCreateDailyPool(ctx, user)
+	if err != nil {
+		return CardResponse{}, err
 	}
-
+	visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
+	if filterErr != nil {
+		visibleView = view
+	}
+	card, err = s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
+	if err != nil {
+		return CardResponse{}, err
+	}
 	return card, nil
 }
 
@@ -304,22 +319,30 @@ func (s *PoolService) nextCardFromView(
 	now time.Time,
 	sessionID string,
 	dailyNewWordLimit int,
-) (CardResponse, bool, error) {
+	practiceRequested bool,
+) (CardResponse, error) {
 	progress, err := s.buildSessionProgress(ctx, userID, sessionID, view.Pool, view.Items, now)
 	if err != nil {
-		return CardResponse{}, false, err
+		return CardResponse{}, err
 	}
 	comebackMode := isComebackPool(view.Pool, view.Items)
 	effectiveNewLimit := dailyNewWordLimit
 	pendingDue := actionableItemsRemaining(view.Items, now, progress.DailyNewCompleted, effectiveNewLimit)
+	pendingPractice := practiceItemsRemaining(view.Items, now)
 	item, nextDue, completeReason := findNextCardForSession(view.Items, now, progress, comebackMode, effectiveNewLimit)
+	if practiceRequested {
+		item, completeReason = findNextPracticeCardForSession(view.Items, now, progress)
+		if item != nil {
+			nextDue = nil
+		}
+	}
 	if item != nil || completeReason != "" {
-		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, item, nextDue, completeReason), false, nil
+		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, pendingPractice, item, nextDue, completeReason), nil
 	}
-	if sessionID != "" && nextDue == nil {
-		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, nil, nil, sessionCompleteReasonNoCards), false, nil
+	if sessionID != "" {
+		return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, pendingPractice, nil, nextDue, sessionCompleteReasonNoCards), nil
 	}
-	return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, nil, nextDue, ""), true, nil
+	return buildCardResponse(view.Pool.LocalDate, progress, comebackMode, pendingDue, pendingPractice, nil, nextDue, ""), nil
 }
 
 func buildCardResponse(
@@ -327,6 +350,7 @@ func buildCardResponse(
 	progress sessionProgress,
 	comebackMode bool,
 	pendingDueCount int,
+	pendingPracticeCount int,
 	item *domain.DailyLearningPoolItem,
 	nextDue *time.Time,
 	completeReason string,
@@ -350,6 +374,7 @@ func buildCardResponse(
 		SessionReviewCompleted: progress.SessionReviewCompleted,
 		SessionNewCompleted:    progress.SessionNewCompleted,
 		PendingDueCount:        pendingDueCount,
+		PendingPracticeCount:   pendingPracticeCount,
 		NextDueAt:              nextDue,
 		PoolItem:               item,
 	}
@@ -713,6 +738,21 @@ func findNextCardForSession(
 		return newCandidate, nil, ""
 	}
 	return nil, candidates.nextDue, ""
+}
+
+func findNextPracticeCardForSession(
+	items []domain.DailyLearningPoolItem,
+	now time.Time,
+	progress sessionProgress,
+) (*domain.DailyLearningPoolItem, string) {
+	if progress.SessionComplete {
+		return nil, progress.SessionCompleteReason
+	}
+	candidates := collectSelectablePracticeCandidates(items, now)
+	if len(candidates.items) == 0 {
+		return nil, ""
+	}
+	return bestActionableItem(candidates.items), ""
 }
 
 func bestActionableItem(items []domain.DailyLearningPoolItem) *domain.DailyLearningPoolItem {

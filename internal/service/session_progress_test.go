@@ -145,10 +145,10 @@ func TestActionableItemsRemainingCountsOnlySelectableWords(t *testing.T) {
 			IsReview:      true,
 			BonusPractice: true,
 		},
-	}, now, 5, 5)
+	}, now, 4, 5)
 
-	if count != 3 {
-		t.Fatalf("actionableItemsRemaining() = %d, want 3", count)
+	if count != 2 {
+		t.Fatalf("actionableItemsRemaining() = %d, want 2", count)
 	}
 }
 
@@ -171,8 +171,93 @@ func TestActionableItemsRemainingExcludesNewWordsWhenDailyCapReached(t *testing.
 		},
 	}, now, 10, 10)
 
-	if count != 1 {
-		t.Fatalf("actionableItemsRemaining() = %d, want 1 when new cap reached", count)
+	if count != 0 {
+		t.Fatalf("actionableItemsRemaining() = %d, want 0 when only practice remains after new cap", count)
+	}
+}
+
+func TestPracticeItemsRemainingCountsOnlyPracticeWords(t *testing.T) {
+	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
+
+	count := practiceItemsRemaining([]domain.DailyLearningPoolItem{
+		{
+			ID:       uuid.New(),
+			WordID:   uuid.New(),
+			ItemType: domain.PoolItemTypeReview,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+		},
+		{
+			ID:       uuid.New(),
+			WordID:   uuid.New(),
+			ItemType: domain.PoolItemTypeShortTerm,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+		},
+		{
+			ID:            uuid.New(),
+			WordID:        uuid.New(),
+			ItemType:      domain.PoolItemTypeWeak,
+			Status:        domain.PoolItemStatusPending,
+			BonusPractice: true,
+		},
+	}, now)
+
+	if count != 2 {
+		t.Fatalf("practiceItemsRemaining() = %d, want 2", count)
+	}
+}
+
+func TestFindNextCardForSessionDoesNotSelectPracticeItems(t *testing.T) {
+	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
+	futureDue := now.Add(10 * time.Minute)
+
+	item, nextDue, reason := findNextCardForSession([]domain.DailyLearningPoolItem{
+		{
+			ID:       uuid.New(),
+			WordID:   uuid.New(),
+			ItemType: domain.PoolItemTypeShortTerm,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+		},
+		{
+			ID:       uuid.New(),
+			WordID:   uuid.New(),
+			ItemType: domain.PoolItemTypeReview,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+			DueAt:    &futureDue,
+		},
+	}, now, newSessionProgress("session-1"), true, 10)
+
+	if item != nil || reason != "" || nextDue == nil || !nextDue.Equal(futureDue) {
+		t.Fatalf("findNextCardForSession() item=%v nextDue=%v reason=%q, want future main due only", item, nextDue, reason)
+	}
+}
+
+func TestFindNextPracticeCardForSessionSelectsPracticeItems(t *testing.T) {
+	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
+	shortTermWordID := uuid.New()
+
+	item, reason := findNextPracticeCardForSession([]domain.DailyLearningPoolItem{
+		{
+			ID:       uuid.New(),
+			WordID:   shortTermWordID,
+			ItemType: domain.PoolItemTypeShortTerm,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+		},
+		{
+			ID:       uuid.New(),
+			WordID:   uuid.New(),
+			ItemType: domain.PoolItemTypeReview,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+		},
+	}, now, newSessionProgress("practice-session"))
+
+	if reason != "" || item == nil || item.WordID != shortTermWordID {
+		t.Fatalf("findNextPracticeCardForSession() item=%v reason=%q, want short_term practice item", item, reason)
 	}
 }
 

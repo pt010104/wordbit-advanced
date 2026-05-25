@@ -110,7 +110,7 @@ func (s *PoolService) buildSessionProgress(
 func buildPoolItemKindMap(items []domain.DailyLearningPoolItem) map[uuid.UUID]completedCardKind {
 	out := make(map[uuid.UUID]completedCardKind, len(items))
 	for _, item := range items {
-		if IsReviewPracticeItem(item) {
+		if IsMainReviewItem(item) || IsPracticeItem(item) {
 			out[item.ID] = completedCardKindReview
 			continue
 		}
@@ -222,12 +222,34 @@ func collectSelectableSessionCandidates(
 			}
 			continue
 		}
-		if IsReviewPracticeItem(item) {
+		if IsMainReviewItem(item) {
 			candidates.review = append(candidates.review, item)
 			continue
 		}
 		if item.ItemType == domain.PoolItemTypeNew && !newCapReached {
 			candidates.new = append(candidates.new, item)
+		}
+	}
+	return candidates
+}
+
+type selectablePracticeCandidates struct {
+	items []domain.DailyLearningPoolItem
+}
+
+func collectSelectablePracticeCandidates(items []domain.DailyLearningPoolItem, now time.Time) selectablePracticeCandidates {
+	candidates := selectablePracticeCandidates{
+		items: make([]domain.DailyLearningPoolItem, 0),
+	}
+	for _, item := range items {
+		if item.Status != domain.PoolItemStatusPending {
+			continue
+		}
+		if item.DueAt != nil && item.DueAt.After(now) {
+			continue
+		}
+		if IsPracticeItem(item) {
+			candidates.items = append(candidates.items, item)
 		}
 	}
 	return candidates
@@ -244,11 +266,18 @@ func countKind(kinds []completedCardKind, target completedCardKind) int {
 }
 
 func IsReviewPracticeItem(item domain.DailyLearningPoolItem) bool {
+	return IsMainReviewItem(item) || IsPracticeItem(item)
+}
+
+func IsMainReviewItem(item domain.DailyLearningPoolItem) bool {
+	return item.ItemType == domain.PoolItemTypeReview
+}
+
+func IsPracticeItem(item domain.DailyLearningPoolItem) bool {
 	if item.BonusPractice {
 		return true
 	}
-	return item.IsReview || item.ItemType == domain.PoolItemTypeReview ||
-		item.ItemType == domain.PoolItemTypeShortTerm ||
+	return item.ItemType == domain.PoolItemTypeShortTerm ||
 		item.ItemType == domain.PoolItemTypeWeak
 }
 
@@ -273,6 +302,15 @@ func actionableItemsRemaining(items []domain.DailyLearningPoolItem, now time.Tim
 		remainingWordIDs[item.WordID] = struct{}{}
 	}
 	for _, item := range candidates.new {
+		remainingWordIDs[item.WordID] = struct{}{}
+	}
+	return len(remainingWordIDs)
+}
+
+func practiceItemsRemaining(items []domain.DailyLearningPoolItem, now time.Time) int {
+	candidates := collectSelectablePracticeCandidates(items, now)
+	remainingWordIDs := make(map[uuid.UUID]struct{})
+	for _, item := range candidates.items {
 		remainingWordIDs[item.WordID] = struct{}{}
 	}
 	return len(remainingWordIDs)

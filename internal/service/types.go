@@ -64,6 +64,7 @@ type CardResponse struct {
 	SessionReviewCompleted int                                `json:"session_review_completed"`
 	SessionNewCompleted    int                                `json:"session_new_completed"`
 	PendingDueCount        int                                `json:"pending_due_count"`
+	PendingPracticeCount   int                                `json:"pending_practice_count"`
 	NextDueAt              *time.Time                         `json:"next_due_at,omitempty"`
 	PoolItem               *domain.DailyLearningPoolItem      `json:"pool_item,omitempty"`
 	Mode4                  *domain.Mode4WeakPassageReviewCard `json:"mode4,omitempty"`
