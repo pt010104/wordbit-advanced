@@ -229,7 +229,7 @@ func totalDueReviewPracticeItems(shortTermStates []domain.UserWordState, reviewS
 }
 
 func actionableItemsRemaining(items []domain.DailyLearningPoolItem, now time.Time) int {
-	count := 0
+	remainingWordIDs := make(map[uuid.UUID]struct{})
 	for _, item := range items {
 		if item.Status != domain.PoolItemStatusPending {
 			continue
@@ -237,7 +237,10 @@ func actionableItemsRemaining(items []domain.DailyLearningPoolItem, now time.Tim
 		if item.DueAt != nil && item.DueAt.After(now) {
 			continue
 		}
-		count++
+		if item.BonusPractice || item.ItemType == domain.PoolItemTypeShortTerm {
+			continue
+		}
+		remainingWordIDs[item.WordID] = struct{}{}
 	}
-	return count
+	return len(remainingWordIDs)
 }

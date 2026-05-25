@@ -201,12 +201,23 @@ func (r *WordStateRepository) ListDictionaryEntries(ctx context.Context, userID 
 		args = append(args, pattern)
 	}
 
-	baseQuery += fmt.Sprintf(`
+	orderBy := `
 		ORDER BY
-			CASE WHEN s.status = 'known' THEN COALESCE(s.known_at, s.updated_at) ELSE COALESCE(s.next_review_at, s.updated_at) END DESC NULLS LAST,
+			CASE WHEN s.status = 'known' THEN 1 ELSE 0 END ASC,
+			COALESCE(s.next_review_at, s.updated_at) ASC NULLS LAST,
 			LOWER(w.word) ASC
+	`
+	if filter == domain.DictionaryFilterKnown {
+		orderBy = `
+		ORDER BY
+			COALESCE(s.known_at, s.updated_at) DESC NULLS LAST,
+			LOWER(w.word) ASC
+	`
+	}
+	baseQuery += fmt.Sprintf(`
+		%s
 		LIMIT $%d OFFSET $%d
-	`, len(args)+1, len(args)+2)
+	`, orderBy, len(args)+1, len(args)+2)
 	args = append(args, limit, offset)
 
 	rows, err := r.pool.Query(ctx, baseQuery, args...)

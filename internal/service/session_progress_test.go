@@ -109,6 +109,57 @@ func TestBuildSessionProgressUsesOnlyCurrentSessionID(t *testing.T) {
 	}
 }
 
+func TestActionableItemsRemainingCountsOnlyMainLearningWords(t *testing.T) {
+	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
+	mainReviewWordID := uuid.New()
+	mainNewWordID := uuid.New()
+	shortTermWordID := uuid.New()
+	bonusWordID := uuid.New()
+	weakWordID := uuid.New()
+
+	count := actionableItemsRemaining([]domain.DailyLearningPoolItem{
+		{
+			ID:       uuid.New(),
+			WordID:   mainReviewWordID,
+			ItemType: domain.PoolItemTypeReview,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+		},
+		{
+			ID:       uuid.New(),
+			WordID:   mainNewWordID,
+			ItemType: domain.PoolItemTypeNew,
+			Status:   domain.PoolItemStatusPending,
+		},
+		{
+			ID:       uuid.New(),
+			WordID:   shortTermWordID,
+			ItemType: domain.PoolItemTypeShortTerm,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+		},
+		{
+			ID:            uuid.New(),
+			WordID:        bonusWordID,
+			ItemType:      domain.PoolItemTypeWeak,
+			Status:        domain.PoolItemStatusPending,
+			IsReview:      true,
+			BonusPractice: true,
+		},
+		{
+			ID:       uuid.New(),
+			WordID:   weakWordID,
+			ItemType: domain.PoolItemTypeWeak,
+			Status:   domain.PoolItemStatusPending,
+			IsReview: true,
+		},
+	}, now)
+
+	if count != 3 {
+		t.Fatalf("actionableItemsRemaining() = %d, want 3", count)
+	}
+}
+
 func TestCompletedKindsForEventsSkipsUndoneAnswerEvent(t *testing.T) {
 	poolItemID := uuid.New()
 	events := []domain.LearningEvent{
