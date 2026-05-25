@@ -330,6 +330,9 @@ func (s *PoolService) nextCardFromView(
 	pendingDue := actionableItemsRemaining(view.Items, now, progress.DailyNewCompleted, effectiveNewLimit)
 	pendingPractice := practiceItemsRemaining(view.Items, now)
 	item, nextDue, completeReason := findNextCardForSession(view.Items, now, progress, comebackMode, effectiveNewLimit)
+	if nextDue == nil {
+		nextDue = collectSelectableSessionCandidates(view.Items, now, progress.DailyNewCompleted, effectiveNewLimit).nextDue
+	}
 	if practiceRequested {
 		item, completeReason = findNextPracticeCardForSession(view.Items, now, progress)
 		if item != nil {

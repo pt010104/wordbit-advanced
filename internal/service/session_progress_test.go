@@ -261,6 +261,56 @@ func TestFindNextPracticeCardForSessionSelectsPracticeItems(t *testing.T) {
 	}
 }
 
+func TestFindNextCardForCompletedSessionStillExposesNearestNextDue(t *testing.T) {
+	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
+	nextDue := now.Add(12 * time.Minute)
+
+	events := make([]domain.LearningEvent, 0, catchUpSessionTotalCap)
+	for i := 0; i < catchUpSessionTotalCap; i++ {
+		events = append(events, domain.LearningEvent{
+			UserID:          uuid.New(),
+			EventType:       domain.EventTypeReviewAnswer,
+			EventTime:       now.Add(-time.Duration(i+1) * time.Minute),
+			ClientSessionID: "session-1",
+		})
+	}
+	service := &PoolService{
+		eventRepo: &memorySessionEventRepo{events: events},
+	}
+	card, err := service.nextCardFromView(
+		context.Background(),
+		uuid.New(),
+		DailyPoolView{
+			Pool: domain.DailyLearningPool{
+				LocalDate: "2026-05-25",
+				Timezone:  domain.DefaultTimezone,
+			},
+			Items: []domain.DailyLearningPoolItem{
+				{
+					ID:       uuid.New(),
+					WordID:   uuid.New(),
+					ItemType: domain.PoolItemTypeReview,
+					Status:   domain.PoolItemStatusPending,
+					DueAt:    &nextDue,
+				},
+			},
+		},
+		now,
+		"session-1",
+		10,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("nextCardFromView() error = %v", err)
+	}
+	if card.NextDueAt == nil || !card.NextDueAt.Equal(nextDue) {
+		t.Fatalf("nextCardFromView() nextDueAt = %v, want %v", card.NextDueAt, nextDue)
+	}
+	if !card.SessionComplete {
+		t.Fatalf("nextCardFromView() sessionComplete = false, want true")
+	}
+}
+
 func TestCompletedKindsForEventsSkipsUndoneAnswerEvent(t *testing.T) {
 	poolItemID := uuid.New()
 	events := []domain.LearningEvent{
