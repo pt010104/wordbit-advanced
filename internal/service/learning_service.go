@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -163,6 +164,10 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 	if req.AnswerCorrect != nil {
 		answerCorrect = *req.AnswerCorrect
 	}
+	hintCount := req.HintCount
+	if req.UsedHint && hintCount <= 0 {
+		hintCount = 1
+	}
 	inferredCause := domain.MemoryCause("")
 	if s.memoryCauseInferenceEnabled && item.Word != nil {
 		inferredCause = InferMemoryCause(MemoryCauseInput{
@@ -193,10 +198,16 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 	if s.memoryCauseInferenceEnabled {
 		state = ApplyMemoryCause(state, inferredCause, req.ResponseTimeMs, answerCorrect)
 	}
+	if !item.BonusPractice {
+		state = ApplyWordConstructionStruggle(state, req.ModeUsed, answerCorrect, hintCount, req.ResponseTimeMs)
+	}
 	payload["answer_correct"] = answerCorrect
 	payload["revealed_meaning_before_answer"] = req.RevealedMeaningBeforeAnswer
 	payload["revealed_example_before_answer"] = req.RevealedExampleBeforeAnswer
 	payload["used_hint"] = req.UsedHint
+	if hintCount > 0 {
+		payload["hint_count"] = hintCount
+	}
 	if req.InputMethod != "" {
 		payload["input_method"] = req.InputMethod
 	}
@@ -254,6 +265,20 @@ func (s *LearningService) SubmitReveal(ctx context.Context, user domain.User, re
 	default:
 		return fmt.Errorf("%w: unsupported reveal kind", domain.ErrValidation)
 	}
+	if req.HintStep < 0 {
+		return fmt.Errorf("%w: hint step cannot be negative", domain.ErrValidation)
+	}
+	payload := domain.JSONMap{}
+	if req.Kind == domain.RevealKindHint && req.HintStep > 0 {
+		duplicated, err := s.hasRecordedHintStep(ctx, item.ID, req.HintStep)
+		if err != nil {
+			return err
+		}
+		if duplicated {
+			return nil
+		}
+		payload["hint_step"] = req.HintStep
+	}
 	if !item.BonusPractice {
 		state, err := s.stateRepo.Get(ctx, user.ID, item.WordID)
 		if err == nil {
@@ -291,10 +316,48 @@ func (s *LearningService) SubmitReveal(ctx context.Context, user domain.User, re
 		PoolItemID:     &item.ID,
 		EventType:      eventType,
 		EventTime:      now,
+		Payload:        payload,
 		ResponseTimeMs: req.ResponseTimeMs,
 		ModeUsed:       req.ModeUsed,
 		ClientEventID:  req.ClientEventID,
 	})
+}
+
+func (s *LearningService) hasRecordedHintStep(ctx context.Context, poolItemID uuid.UUID, hintStep int) (bool, error) {
+	events, err := s.eventRepo.ListRecentByPoolItem(ctx, poolItemID)
+	if err != nil {
+		return false, err
+	}
+	for _, event := range events {
+		if event.EventType != domain.EventTypeHintUsage {
+			continue
+		}
+		if hintStepFromPayload(event.Payload) == hintStep {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func hintStepFromPayload(payload domain.JSONMap) int {
+	raw, ok := payload["hint_step"]
+	if !ok {
+		return 0
+	}
+	switch value := raw.(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case string:
+		parsed, err := strconv.Atoi(value)
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
 }
 
 func (s *LearningService) SubmitPronunciation(ctx context.Context, user domain.User, req PronunciationRequest) error {

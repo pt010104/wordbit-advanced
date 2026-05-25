@@ -90,6 +90,7 @@ type ReviewRequest struct {
 	RevealedMeaningBeforeAnswer      bool
 	RevealedExampleBeforeAnswer      bool
 	UsedHint                         bool
+	HintCount                        int
 	InputMethod                      domain.ReviewInputMethod
 	NormalizedTypedAnswer            string
 	SelectedChoiceWordID             *uuid.UUID
@@ -102,6 +103,7 @@ type RevealRequest struct {
 	ModeUsed       domain.ReviewMode
 	ResponseTimeMs int
 	ClientEventID  string
+	HintStep       int
 }
 
 type PronunciationRequest struct {

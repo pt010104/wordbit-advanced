@@ -587,6 +587,7 @@ func (h *Handler) SubmitReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		RevealedMeaningBeforeAnswer      bool                     `json:"revealed_meaning_before_answer"`
 		RevealedExampleBeforeAnswer      bool                     `json:"revealed_example_before_answer"`
 		UsedHint                         bool                     `json:"used_hint"`
+		HintCount                        int                      `json:"hint_count"`
 		InputMethod                      domain.ReviewInputMethod `json:"input_method"`
 		NormalizedTypedAnswer            string                   `json:"normalized_typed_answer"`
 		SelectedChoiceWordID             string                   `json:"selected_choice_word_id"`
@@ -616,6 +617,7 @@ func (h *Handler) SubmitReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		RevealedMeaningBeforeAnswer:      payload.RevealedMeaningBeforeAnswer,
 		RevealedExampleBeforeAnswer:      payload.RevealedExampleBeforeAnswer,
 		UsedHint:                         payload.UsedHint,
+		HintCount:                        payload.HintCount,
 		InputMethod:                      payload.InputMethod,
 		NormalizedTypedAnswer:            payload.NormalizedTypedAnswer,
 		SelectedChoiceWordID:             selectedChoiceWordID,
@@ -686,6 +688,7 @@ func (h *Handler) SubmitReveal(w nethttp.ResponseWriter, r *nethttp.Request) {
 		ModeUsed       domain.ReviewMode `json:"mode_used"`
 		ResponseTimeMs int               `json:"response_time_ms"`
 		ClientEventID  string            `json:"client_event_id"`
+		HintStep       int               `json:"hint_step"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, domain.ErrValidation)
@@ -697,6 +700,7 @@ func (h *Handler) SubmitReveal(w nethttp.ResponseWriter, r *nethttp.Request) {
 		ModeUsed:       payload.ModeUsed,
 		ResponseTimeMs: payload.ResponseTimeMs,
 		ClientEventID:  payload.ClientEventID,
+		HintStep:       payload.HintStep,
 	}); err != nil {
 		writeError(w, err)
 		return
