@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -15,10 +16,11 @@ type WordSetService struct {
 	wordSets WordSetRepository
 	settings SettingsRepository
 	states   WordStateRepository
+	clock    Clock
 }
 
-func NewWordSetService(wordSets WordSetRepository, settings SettingsRepository, states WordStateRepository) *WordSetService {
-	return &WordSetService{wordSets: wordSets, settings: settings, states: states}
+func NewWordSetService(wordSets WordSetRepository, settings SettingsRepository, states WordStateRepository, clock Clock) *WordSetService {
+	return &WordSetService{wordSets: wordSets, settings: settings, states: states, clock: clock}
 }
 
 type WordSetUpsertInput struct {
@@ -31,7 +33,22 @@ func (s *WordSetService) List(ctx context.Context, userID uuid.UUID) ([]domain.W
 	if _, err := s.EnsureDefault(ctx, userID); err != nil {
 		return nil, err
 	}
-	return s.wordSets.List(ctx, userID)
+	sets, err := s.wordSets.List(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	defaultSet, err := s.wordSets.GetDefault(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	dueCounts, err := s.computeDueCounts(ctx, userID, defaultSet.ID)
+	if err != nil {
+		return nil, err
+	}
+	for idx := range sets {
+		sets[idx].DueCount = dueCounts[sets[idx].ID]
+	}
+	return sets, nil
 }
 
 func (s *WordSetService) EnsureDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error) {
@@ -175,4 +192,55 @@ func normalizeWordSetMode(value domain.WordSetMode) (domain.WordSetMode, error) 
 	default:
 		return "", errors.New("invalid word set mode")
 	}
+}
+
+func (s *WordSetService) computeDueCounts(ctx context.Context, userID uuid.UUID, defaultSetID uuid.UUID) (map[uuid.UUID]int, error) {
+	now := time.Now().UTC()
+	if s.clock != nil {
+		now = s.clock.Now()
+	}
+
+	shortTermStates, err := s.states.ListDueWithinWindow(ctx, userID, time.Time{}, now, true)
+	if err != nil {
+		return nil, err
+	}
+	reviewStates, err := s.states.ListDueWithinWindow(ctx, userID, time.Time{}, now, false)
+	if err != nil {
+		return nil, err
+	}
+
+	wordIDs := make([]uuid.UUID, 0, len(shortTermStates)+len(reviewStates))
+	seenWords := make(map[uuid.UUID]struct{}, len(shortTermStates)+len(reviewStates))
+	for _, state := range shortTermStates {
+		if _, seen := seenWords[state.WordID]; seen {
+			continue
+		}
+		seenWords[state.WordID] = struct{}{}
+		wordIDs = append(wordIDs, state.WordID)
+	}
+	for _, state := range reviewStates {
+		if _, seen := seenWords[state.WordID]; seen {
+			continue
+		}
+		seenWords[state.WordID] = struct{}{}
+		wordIDs = append(wordIDs, state.WordID)
+	}
+	if len(wordIDs) == 0 {
+		return map[uuid.UUID]int{}, nil
+	}
+
+	setMap, err := s.states.GetWordSetIDsForWords(ctx, userID, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	counts := make(map[uuid.UUID]int)
+	for _, wordID := range wordIDs {
+		setID, ok := setMap[wordID]
+		if !ok {
+			setID = defaultSetID
+		}
+		counts[setID]++
+	}
+	return counts, nil
 }

@@ -159,6 +159,7 @@ type WordSet struct {
 	Icon      string      `json:"icon,omitempty"`
 	Mode      WordSetMode `json:"mode"`
 	IsDefault bool        `json:"is_default"`
+	DueCount  int         `json:"due_count,omitempty"`
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 }

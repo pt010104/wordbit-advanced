@@ -248,7 +248,11 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 		s.logger.Warn("filter daily pool by active set for next card", "user_id", user.ID, "error", filterErr)
 		visibleView = view
 	}
-	card, err := s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
+	selectionView := visibleView
+	if practiceRequested {
+		selectionView = view
+	}
+	card, err := s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
 	if err != nil {
 		return CardResponse{}, err
 	}
@@ -278,7 +282,11 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 				if filterErr != nil {
 					visibleView = view
 				}
-				card, err = s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
+				selectionView = visibleView
+				if practiceRequested {
+					selectionView = view
+				}
+				card, err = s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
 				if err != nil {
 					return CardResponse{}, err
 				}
@@ -305,7 +313,11 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 	if filterErr != nil {
 		visibleView = view
 	}
-	card, err = s.nextCardFromView(ctx, user.ID, visibleView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
+	selectionView = visibleView
+	if practiceRequested {
+		selectionView = view
+	}
+	card, err = s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
 	if err != nil {
 		return CardResponse{}, err
 	}
@@ -333,7 +345,7 @@ func (s *PoolService) nextCardFromView(
 	if nextDue == nil {
 		nextDue = collectSelectableSessionCandidates(view.Items, now, progress.DailyNewCompleted, effectiveNewLimit).nextDue
 	}
-	if practiceRequested {
+	if practiceRequested && item == nil && completeReason == "" {
 		item, completeReason = findNextPracticeCardForSession(view.Items, now, progress)
 		if item != nil {
 			nextDue = nil

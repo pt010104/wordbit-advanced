@@ -43,7 +43,7 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	clock := service.RealClock{}
 	identity := service.NewIdentityService(repos.Users, clock)
 	settings := service.NewSettingsService(repos.Settings)
-	wordSets := service.NewWordSetService(repos.WordSets, repos.Settings, repos.States)
+	wordSets := service.NewWordSetService(repos.WordSets, repos.Settings, repos.States, clock)
 	dictionary := service.NewDictionaryService(repos.Settings, repos.Words, repos.States, repos.Pools, wordSets, clock)
 	statistics := service.NewStatisticsService(repos.Settings, repos.Words, repos.States, repos.Events, clock)
 	deepseekClient := deepseek.NewClient(cfg.DeepSeek, logger)
