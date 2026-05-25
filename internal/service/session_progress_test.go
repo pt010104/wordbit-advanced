@@ -249,10 +249,10 @@ func TestFindNextPracticeCardForSessionSelectsWeakPracticeItems(t *testing.T) {
 			IsReview: true,
 		},
 		{
-			ID:       uuid.New(),
-			WordID:   weakWordID,
-			ItemType: domain.PoolItemTypeWeak,
-			Status:   domain.PoolItemStatusPending,
+			ID:            uuid.New(),
+			WordID:        weakWordID,
+			ItemType:      domain.PoolItemTypeWeak,
+			Status:        domain.PoolItemStatusPending,
 			BonusPractice: true,
 		},
 	}, now, newSessionProgress("practice-session"))
