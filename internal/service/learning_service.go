@@ -19,6 +19,7 @@ type LearningService struct {
 	poolRepo                    PoolRepository
 	eventRepo                   LearningEventRepository
 	quotaManager                UnknownDailyQuotaManager
+	wordSets                    *WordSetService
 	clock                       Clock
 	logger                      *slog.Logger
 	memoryCauseInferenceEnabled bool
@@ -46,6 +47,10 @@ func NewLearningService(
 	}
 }
 
+func (s *LearningService) SetWordSetService(wordSets *WordSetService) {
+	s.wordSets = wordSets
+}
+
 func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.User, req FirstExposureRequest) error {
 	item, err := s.poolRepo.GetPoolItem(ctx, user.ID, req.PoolItemID)
 	if err != nil {
@@ -57,6 +62,10 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 
 	now := s.clock.Now()
 	previousState, hadPreviousState, err := s.loadExistingStateSnapshot(ctx, user.ID, item.WordID)
+	if err != nil {
+		return err
+	}
+	wordSetID, err := s.resolveWordSetIDForFirstExposure(ctx, user.ID, previousState, hadPreviousState)
 	if err != nil {
 		return err
 	}
@@ -72,7 +81,7 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 			return err
 		}
 	case domain.ExposureActionKnown:
-		state := s.initStateFromSnapshot(user.ID, item.WordID, previousState, hadPreviousState, now)
+		state := s.initStateFromSnapshot(user.ID, item.WordID, previousState, hadPreviousState, wordSetID, now)
 		state = ApplyFirstExposureKnown(state, now, req.ResponseTimeMs)
 		if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
 			return err
@@ -81,7 +90,7 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 			return err
 		}
 	case domain.ExposureActionUnknown:
-		state := s.initStateFromSnapshot(user.ID, item.WordID, previousState, hadPreviousState, now)
+		state := s.initStateFromSnapshot(user.ID, item.WordID, previousState, hadPreviousState, wordSetID, now)
 		state = ApplyFirstExposureUnknown(state, now, req.ResponseTimeMs)
 		if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
 			return err
@@ -94,17 +103,18 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 		} else if followUpID != uuid.Nil {
 			createdItemIDs = append(createdItemIDs, followUpID)
 		}
-		if s.quotaManager != nil {
-			mutation, recErr := s.quotaManager.ReconcileUnknownDailyBuffer(ctx, user)
-			if recErr != nil {
-				s.logger.Warn("reconcile unknown daily buffer", "error", recErr)
-			} else {
-				createdItemIDs = append(createdItemIDs, mutation.CreatedItemIDs...)
-				deletedPendingNewItems = append(deletedPendingNewItems, mutation.DeletedPendingNewItems...)
-			}
-		}
 	default:
 		return fmt.Errorf("%w: unsupported action", domain.ErrValidation)
+	}
+
+	if s.quotaManager != nil {
+		mutation, recErr := s.quotaManager.MaintainNewWordBuffer(ctx, user)
+		if recErr != nil {
+			s.logger.Warn("maintain new word buffer", "error", recErr)
+		} else {
+			createdItemIDs = append(createdItemIDs, mutation.CreatedItemIDs...)
+			deletedPendingNewItems = append(deletedPendingNewItems, mutation.DeletedPendingNewItems...)
+		}
 	}
 
 	appendUndoSnapshotPayload(payload, previousState, hadPreviousState, createdItemIDs, deletedPendingNewItems)
@@ -122,6 +132,26 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 		return err
 	}
 	return nil
+}
+
+func (s *LearningService) resolveWordSetIDForFirstExposure(
+	ctx context.Context,
+	userID uuid.UUID,
+	previousState *domain.UserWordState,
+	hadPreviousState bool,
+) (*uuid.UUID, error) {
+	if hadPreviousState && previousState != nil {
+		return previousState.WordSetID, nil
+	}
+	if s.wordSets == nil {
+		return nil, nil
+	}
+	activeSet, err := s.wordSets.ResolveActiveSet(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	setID := activeSet.ID
+	return &setID, nil
 }
 
 func (s *LearningService) markFirstExposureDontLearn(

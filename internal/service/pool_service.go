@@ -249,9 +249,6 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 		visibleView = view
 	}
 	selectionView := visibleView
-	if practiceRequested {
-		selectionView = view
-	}
 	card, err := s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
 	if err != nil {
 		return CardResponse{}, err
@@ -270,30 +267,27 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 		if card.SessionComplete && card.PendingPracticeCount > 0 {
 			return card, nil
 		}
-		if sessionID == "" && card.PoolItem == nil && !card.SessionComplete {
-			if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
-				return CardResponse{}, replenishErr
-			} else if replenished {
-				view, err = s.GetOrCreateDailyPool(ctx, user)
-				if err != nil {
-					return CardResponse{}, err
+			if sessionID == "" && card.PoolItem == nil && !card.SessionComplete {
+				if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+					return CardResponse{}, replenishErr
+				} else if replenished {
+					view, err = s.GetOrCreateDailyPool(ctx, user)
+					if err != nil {
+						return CardResponse{}, err
+					}
+					visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
+					if filterErr != nil {
+						visibleView = view
+					}
+					selectionView = visibleView
+					card, err = s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
+					if err != nil {
+						return CardResponse{}, err
+					}
+					if card.PoolItem != nil || (card.SessionComplete && card.PendingPracticeCount > 0) {
+						return card, nil
+					}
 				}
-				visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
-				if filterErr != nil {
-					visibleView = view
-				}
-				selectionView = visibleView
-				if practiceRequested {
-					selectionView = view
-				}
-				card, err = s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
-				if err != nil {
-					return CardResponse{}, err
-				}
-				if card.PoolItem != nil || (card.SessionComplete && card.PendingPracticeCount > 0) {
-					return card, nil
-				}
-			}
 		}
 		if !card.SessionComplete || card.PendingPracticeCount > 0 {
 			return card, nil
@@ -314,9 +308,6 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 		visibleView = view
 	}
 	selectionView = visibleView
-	if practiceRequested {
-		selectionView = view
-	}
 	card, err = s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
 	if err != nil {
 		return CardResponse{}, err
@@ -401,6 +392,14 @@ func (s *PoolService) ReconcileUnknownDailyBuffer(ctx context.Context, user doma
 		return UnknownDailyBufferMutation{}, err
 	}
 	return s.reconcileUnknownDailyBuffer(ctx, user.ID, view.Pool, view.Items)
+}
+
+func (s *PoolService) MaintainNewWordBuffer(ctx context.Context, user domain.User) (UnknownDailyBufferMutation, error) {
+	view, err := s.GetOrCreateDailyPool(ctx, user)
+	if err != nil {
+		return UnknownDailyBufferMutation{}, err
+	}
+	return s.maintainNewWordBuffer(ctx, user.ID, view.Pool, view.Items, s.clock.Now())
 }
 
 func (s *PoolService) replenishBonusPracticeItems(
@@ -639,6 +638,42 @@ func (s *PoolService) reconcileUnknownDailyBuffer(
 	)
 	return UnknownDailyBufferMutation{
 		DeletedPendingNewItems: deletedItems,
+	}, nil
+}
+
+func (s *PoolService) maintainNewWordBuffer(
+	ctx context.Context,
+	userID uuid.UUID,
+	pool domain.DailyLearningPool,
+	items []domain.DailyLearningPoolItem,
+	now time.Time,
+) (UnknownDailyBufferMutation, error) {
+	settings, err := s.settingsRepo.Get(ctx, userID)
+	if err != nil {
+		return UnknownDailyBufferMutation{}, err
+	}
+	dailyLimit, prefetchBatchSize := effectiveNewWordBufferLimits(settings.DailyNewWordLimit, isComebackPool(pool, items))
+	bufferState, err := s.inspectNewWordBufferState(ctx, userID, dailyLimit, prefetchBatchSize, items)
+	if err != nil {
+		return UnknownDailyBufferMutation{}, err
+	}
+
+	if bufferState.DailyLimit <= 0 || bufferState.LearnedNewCount >= bufferState.DailyLimit {
+		return s.reconcileUnknownDailyBuffer(ctx, userID, pool, items)
+	}
+	if bufferState.PrefetchBatchSize <= 0 || len(bufferState.PendingNewItems) > 0 {
+		return UnknownDailyBufferMutation{}, nil
+	}
+
+	replenished, createdItemIDs, err := s.replenishUnknownDailySlots(ctx, userID, pool, items, now)
+	if err != nil {
+		return UnknownDailyBufferMutation{}, err
+	}
+	if !replenished {
+		return UnknownDailyBufferMutation{}, nil
+	}
+	return UnknownDailyBufferMutation{
+		CreatedItemIDs: createdItemIDs,
 	}, nil
 }
 
@@ -1044,6 +1079,7 @@ func (s *PoolService) generateNewWords(
 	acceptedNames := []string{}
 	rejections := map[string][]string{}
 	exclusionWords, exclusionLemmas, exclusionGroups := BuildGenerationExclusions(existingWords, existingStates, seedItems)
+	promptExclusionWords, promptExclusionLemmas, promptExclusionGroups := BuildGenerationPromptExclusions(existingWords, existingStates, seedItems)
 	var lastGenerationErr error
 
 	bankExcludeWordIDs := append(extractStateWordIDs(existingStates), extractPoolWordIDs(seedItems)...)
@@ -1088,9 +1124,9 @@ func (s *PoolService) generateNewWords(
 			Topic:             topic,
 			RequestedCount:    requested,
 			PreferredLanguage: settings.PreferredMeaningLanguage,
-			ExcludeWords:      append([]string{}, exclusionWords...),
-			ExcludeLemmas:     append([]string{}, exclusionLemmas...),
-			ExcludeGroupKeys:  append([]string{}, exclusionGroups...),
+			ExcludeWords:      append([]string{}, promptExclusionWords...),
+			ExcludeLemmas:     append([]string{}, promptExclusionLemmas...),
+			ExcludeGroupKeys:  append([]string{}, promptExclusionGroups...),
 		}
 
 		candidates, raw, genErr := s.generator.GenerateCandidates(ctx, input)
@@ -1182,6 +1218,10 @@ func (s *PoolService) generateNewWords(
 			addNonEmptySlice(&exclusionWords, word.CanonicalForm)
 			addNonEmptySlice(&exclusionLemmas, word.Lemma)
 			addNonEmptySlice(&exclusionGroups, word.ConfusableGroupKey)
+			addNonEmptySlice(&promptExclusionWords, word.Word)
+			addNonEmptySlice(&promptExclusionWords, word.CanonicalForm)
+			addNonEmptySlice(&promptExclusionLemmas, word.Lemma)
+			addNonEmptySlice(&promptExclusionGroups, word.ConfusableGroupKey)
 		}
 	}
 

@@ -356,7 +356,7 @@ func TestSubmitReviewBonusPracticeRepeatedRevealAndReviewDoesNotInflateWeakness(
 	}
 }
 
-func TestSubmitFirstExposureKnownDoesNotAppendReplacementNewCard(t *testing.T) {
+func TestSubmitFirstExposureKnownAppendsReplacementNewCards(t *testing.T) {
 	t.Parallel()
 
 	userID := uuid.New()
@@ -455,18 +455,27 @@ func TestSubmitFirstExposureKnownDoesNotAppendReplacementNewCard(t *testing.T) {
 		t.Fatalf("SubmitFirstExposure returned error: %v", err)
 	}
 
-	if generator.calls != 0 {
-		t.Fatalf("expected no replacement generation after known exposure, got %d calls", generator.calls)
+	if generator.calls != 1 {
+		t.Fatalf("expected replacement generation after known exposure, got %d calls", generator.calls)
 	}
-	if len(poolRepo.items) != 1 {
-		t.Fatalf("expected no replacement new card appended, got %d pool items", len(poolRepo.items))
+	if len(poolRepo.items) != 3 {
+		t.Fatalf("expected replacement new cards appended, got %d pool items", len(poolRepo.items))
 	}
 	if poolRepo.items[0].Status != domain.PoolItemStatusCompleted {
 		t.Fatalf("expected original card to be marked completed, got %#v", poolRepo.items[0])
 	}
+	pendingNew := 0
+	for _, item := range poolRepo.items[1:] {
+		if item.ItemType == domain.PoolItemTypeNew && item.Status == domain.PoolItemStatusPending {
+			pendingNew++
+		}
+	}
+	if pendingNew != 2 {
+		t.Fatalf("expected 2 replacement pending new cards, got %d", pendingNew)
+	}
 }
 
-func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingState(t *testing.T) {
+func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingStateAndRefillsBuffer(t *testing.T) {
 	t.Parallel()
 
 	userID := uuid.New()
@@ -574,11 +583,20 @@ func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingState(t *testing.T)
 	if _, ok := stateRepo.states[wordID]; ok {
 		t.Fatalf("expected no persisted state for discarded word")
 	}
-	if len(poolRepo.items) != 1 {
-		t.Fatalf("expected discarded card to stay completed without replacement, got %d items", len(poolRepo.items))
+	if len(poolRepo.items) != 3 {
+		t.Fatalf("expected discarded card to be replaced with new pending cards, got %d items", len(poolRepo.items))
 	}
 	if poolRepo.items[0].WordID != wordID || poolRepo.items[0].Status != domain.PoolItemStatusCompleted {
 		t.Fatalf("expected original discarded card to stay completed for undo, got %#v", poolRepo.items[0])
+	}
+	pendingNew := 0
+	for _, item := range poolRepo.items[1:] {
+		if item.ItemType == domain.PoolItemTypeNew && item.Status == domain.PoolItemStatusPending {
+			pendingNew++
+		}
+	}
+	if pendingNew != 2 {
+		t.Fatalf("expected 2 replacement pending new cards after dont_learn, got %d", pendingNew)
 	}
 }
 

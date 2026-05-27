@@ -314,9 +314,9 @@ Requirements:
 	- formal: more academic, professional, or formal-register vocabulary that is still useful but less everyday
 	- rare: uncommon or lower-frequency vocabulary that an advanced learner may still encounter
 
-	Exclude normalized words: %s
-	Exclude lemmas: %s
-Exclude confusable groups: %s
+	Highest-priority words to avoid reusing from today's pool and recent study history: %s
+	Highest-priority lemmas to avoid: %s
+Highest-priority confusable groups to avoid: %s
 `, input.RequestedCount, input.CEFRLevel, input.Topic, strings.Join(input.ExcludeWords, ", "), strings.Join(input.ExcludeLemmas, ", "), strings.Join(input.ExcludeGroupKeys, ", "))
 }
 
@@ -429,17 +429,11 @@ Requested review prompts:
 %d. word_id="%s"
    review_mode="%s"
    word="%s"
-   normalized_form="%s"
-   canonical_form="%s"
-   lemma="%s"
    part_of_speech="%s"
-   level="%s"
    topic="%s"
    english_meaning="%s"
-   vietnamese_meaning="%s"
    example_sentence_1="%s"
-   example_sentence_2="%s"
-`, index+1, item.WordID, item.ReviewMode, item.Word.Word, item.Word.NormalizedForm, item.Word.CanonicalForm, item.Word.Lemma, item.Word.PartOfSpeech, item.Word.Level, item.Word.Topic, item.Word.EnglishMeaning, item.Word.VietnameseMeaning, item.Word.ExampleSentence1, item.Word.ExampleSentence2))
+`, index+1, item.WordID, item.ReviewMode, item.Word.Word, item.Word.PartOfSpeech, item.Word.Topic, item.Word.EnglishMeaning, item.Word.ExampleSentence1))
 	}
 	return builder.String()
 }

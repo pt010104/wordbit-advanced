@@ -123,6 +123,7 @@ type PromptTester interface {
 
 type UnknownDailyQuotaManager interface {
 	ReconcileUnknownDailyBuffer(ctx context.Context, user domain.User) (UnknownDailyBufferMutation, error)
+	MaintainNewWordBuffer(ctx context.Context, user domain.User) (UnknownDailyBufferMutation, error)
 }
 
 type Clock interface {

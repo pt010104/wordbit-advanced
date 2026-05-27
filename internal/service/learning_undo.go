@@ -135,7 +135,7 @@ func (s *LearningService) loadExistingStateSnapshot(ctx context.Context, userID 
 	return nil, false, err
 }
 
-func (s *LearningService) initStateFromSnapshot(userID uuid.UUID, wordID uuid.UUID, previousState *domain.UserWordState, hadPreviousState bool, now time.Time) domain.UserWordState {
+func (s *LearningService) initStateFromSnapshot(userID uuid.UUID, wordID uuid.UUID, previousState *domain.UserWordState, hadPreviousState bool, wordSetID *uuid.UUID, now time.Time) domain.UserWordState {
 	if hadPreviousState && previousState != nil {
 		return *previousState
 	}
@@ -145,6 +145,7 @@ func (s *LearningService) initStateFromSnapshot(userID uuid.UUID, wordID uuid.UU
 		Status:     domain.WordStatusLearning,
 		Difficulty: 0.5,
 		Stability:  0.5,
+		WordSetID:  wordSetID,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}

@@ -213,6 +213,112 @@ func BuildGenerationExclusions(words []domain.Word, states []domain.UserWordStat
 	return mapKeys(wordSet), mapKeys(lemmaSet), mapKeys(groupSet)
 }
 
+const (
+	generationPromptWordExclusionCap  = 60
+	generationPromptLemmaExclusionCap = 40
+	generationPromptGroupExclusionCap = 30
+)
+
+func BuildGenerationPromptExclusions(words []domain.Word, states []domain.UserWordState, poolItems []domain.DailyLearningPoolItem) (wordsOut []string, lemmas []string, groups []string) {
+	wordByID := make(map[uuid.UUID]domain.Word, len(words))
+	for _, word := range words {
+		wordByID[word.ID] = word
+	}
+
+	seenWordValues := map[string]struct{}{}
+	seenLemmaValues := map[string]struct{}{}
+	seenGroupValues := map[string]struct{}{}
+
+	addWord := func(value string) {
+		if len(wordsOut) >= generationPromptWordExclusionCap {
+			return
+		}
+		normalized := NormalizeWord(value)
+		if normalized == "" {
+			return
+		}
+		if _, exists := seenWordValues[normalized]; exists {
+			return
+		}
+		seenWordValues[normalized] = struct{}{}
+		wordsOut = append(wordsOut, normalized)
+	}
+	addLemma := func(value string) {
+		if len(lemmas) >= generationPromptLemmaExclusionCap {
+			return
+		}
+		normalized := NormalizeWord(value)
+		if normalized == "" {
+			return
+		}
+		if _, exists := seenLemmaValues[normalized]; exists {
+			return
+		}
+		seenLemmaValues[normalized] = struct{}{}
+		lemmas = append(lemmas, normalized)
+	}
+	addGroup := func(value string) {
+		if len(groups) >= generationPromptGroupExclusionCap {
+			return
+		}
+		normalized := NormalizeWord(value)
+		if normalized == "" {
+			return
+		}
+		if _, exists := seenGroupValues[normalized]; exists {
+			return
+		}
+		seenGroupValues[normalized] = struct{}{}
+		groups = append(groups, normalized)
+	}
+	addWordSummary := func(word domain.Word) {
+		addWord(word.Word)
+		addWord(word.CanonicalForm)
+		addLemma(word.Lemma)
+		addGroup(word.ConfusableGroupKey)
+	}
+
+	for _, item := range poolItems {
+		if item.Word != nil {
+			addWordSummary(*item.Word)
+			continue
+		}
+		if word, ok := wordByID[item.WordID]; ok {
+			addWordSummary(word)
+		}
+	}
+
+	sortedStates := append([]domain.UserWordState(nil), states...)
+	sort.SliceStable(sortedStates, func(i int, j int) bool {
+		return generationPromptStateRecency(sortedStates[i]).After(generationPromptStateRecency(sortedStates[j]))
+	})
+	for _, state := range sortedStates {
+		word, ok := wordByID[state.WordID]
+		if !ok {
+			continue
+		}
+		addWordSummary(word)
+		if len(wordsOut) >= generationPromptWordExclusionCap &&
+			len(lemmas) >= generationPromptLemmaExclusionCap &&
+			len(groups) >= generationPromptGroupExclusionCap {
+			break
+		}
+	}
+
+	return wordsOut, lemmas, groups
+}
+
+func generationPromptStateRecency(state domain.UserWordState) time.Time {
+	switch {
+	case state.LastSeenAt != nil:
+		return state.LastSeenAt.UTC()
+	case state.FirstSeenAt != nil:
+		return state.FirstSeenAt.UTC()
+	default:
+		return state.UpdatedAt.UTC()
+	}
+}
+
 func mapKeys(values map[string]struct{}) []string {
 	out := make([]string, 0, len(values))
 	for key := range values {

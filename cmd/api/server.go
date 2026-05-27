@@ -50,6 +50,7 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	poolService := service.NewPoolService(repos.Settings, repos.Words, repos.States, repos.Pools, repos.Events, repos.LLMRuns, deepseekClient, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	poolService.SetWordSetService(wordSets)
 	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
+	learningService.SetWordSetService(wordSets)
 	var mode4Service *service.WeakPassageReviewService
 	if cfg.Mode4Enabled {
 		mode4Service = service.NewWeakPassageReviewService(repos.Words, repos.States, repos.Mode4Reviews, repos.Events, repos.LLMRuns, deepseekClient, clock, logger)

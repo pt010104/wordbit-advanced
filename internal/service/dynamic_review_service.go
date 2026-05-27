@@ -17,6 +17,7 @@ const (
 	dynamicReviewPromptFamily    = "dynamic_review_mode23"
 	dynamicReviewPromptSource    = "llm_daily_mode23"
 	dynamicReviewPromptChunkSize = 25
+	dynamicReviewPromptCooldown  = 2
 	dynamicReviewTriggerPrewarm  = "prewarm"
 	dynamicReviewTriggerBackfill = "backfill"
 	dynamicReviewMetadataKey     = "dynamic_review"
@@ -122,9 +123,18 @@ func (s *DynamicReviewService) ensurePrompts(
 		return 0, err
 	}
 
+	historical, err := s.promptRepo.ListLatestForUserWords(ctx, userID, dynamicReviewCandidateWordIDs(candidates))
+	if err != nil {
+		return 0, err
+	}
+	cooldownWords := buildDynamicReviewCooldownWordSet(localDate, historical)
+
 	missing := make([]dynamicReviewCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		if _, ok := existing[candidate.key()]; ok {
+			continue
+		}
+		if _, cooldown := cooldownWords[candidate.WordID]; cooldown {
 			continue
 		}
 		missing = append(missing, candidate)
@@ -485,6 +495,44 @@ func dynamicReviewChunkTopic(chunk []dynamicReviewCandidate) string {
 		return ""
 	}
 	return chunk[0].Word.Topic
+}
+
+func dynamicReviewCandidateWordIDs(candidates []dynamicReviewCandidate) []uuid.UUID {
+	if len(candidates) == 0 {
+		return nil
+	}
+	wordIDs := make([]uuid.UUID, 0, len(candidates))
+	seen := make(map[uuid.UUID]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if _, ok := seen[candidate.WordID]; ok {
+			continue
+		}
+		seen[candidate.WordID] = struct{}{}
+		wordIDs = append(wordIDs, candidate.WordID)
+	}
+	return wordIDs
+}
+
+func buildDynamicReviewCooldownWordSet(localDate string, prompts []domain.DailyDynamicReviewPrompt) map[uuid.UUID]struct{} {
+	currentDate, err := time.Parse("2006-01-02", localDate)
+	if err != nil {
+		return map[uuid.UUID]struct{}{}
+	}
+	cooldown := make(map[uuid.UUID]struct{})
+	for _, prompt := range prompts {
+		promptDate, parseErr := time.Parse("2006-01-02", prompt.LocalDate)
+		if parseErr != nil {
+			continue
+		}
+		days := int(currentDate.Sub(promptDate).Hours() / 24)
+		if days < 0 {
+			continue
+		}
+		if days <= dynamicReviewPromptCooldown {
+			cooldown[prompt.WordID] = struct{}{}
+		}
+	}
+	return cooldown
 }
 
 func compareDynamicReviewCandidates(left dynamicReviewCandidate, right dynamicReviewCandidate) int {

@@ -109,6 +109,69 @@ func TestBuildSessionProgressUsesOnlyCurrentSessionID(t *testing.T) {
 	}
 }
 
+func TestBuildSessionProgressIgnoresKnownAndDontLearnForNewQuota(t *testing.T) {
+	userID := uuid.New()
+	poolID := uuid.New()
+	knownNewID := uuid.New()
+	dontLearnNewID := uuid.New()
+	unknownNewID := uuid.New()
+	now := time.Date(2026, 5, 27, 1, 0, 0, 0, time.UTC)
+
+	service := &PoolService{
+		eventRepo: &memorySessionEventRepo{
+			events: []domain.LearningEvent{
+				{
+					UserID:        userID,
+					PoolItemID:    &knownNewID,
+					EventType:     domain.EventTypeFirstExposure,
+					EventTime:     now.Add(-15 * time.Minute),
+					ClientSessionID: "current-session",
+					Payload:       domain.JSONMap{"action": string(domain.ExposureActionKnown)},
+				},
+				{
+					UserID:        userID,
+					PoolItemID:    &dontLearnNewID,
+					EventType:     domain.EventTypeFirstExposure,
+					EventTime:     now.Add(-10 * time.Minute),
+					ClientSessionID: "current-session",
+					Payload:       domain.JSONMap{"action": string(domain.ExposureActionDontLearn)},
+				},
+				{
+					UserID:        userID,
+					PoolItemID:    &unknownNewID,
+					EventType:     domain.EventTypeFirstExposure,
+					EventTime:     now.Add(-5 * time.Minute),
+					ClientSessionID: "current-session",
+					Payload:       domain.JSONMap{"action": string(domain.ExposureActionUnknown)},
+				},
+			},
+		},
+	}
+
+	progress, err := service.buildSessionProgress(
+		t.Context(),
+		userID,
+		"current-session",
+		domain.DailyLearningPool{
+			ID:        poolID,
+			LocalDate: "2026-05-27",
+			Timezone:  domain.DefaultTimezone,
+		},
+		[]domain.DailyLearningPoolItem{
+			testSessionNewItem(knownNewID, 1),
+			testSessionNewItem(dontLearnNewID, 2),
+			testSessionNewItem(unknownNewID, 3),
+		},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("buildSessionProgress() error = %v", err)
+	}
+	if progress.DailyNewCompleted != 1 || progress.SessionNewCompleted != 1 || progress.SessionTotalCompleted != 1 {
+		t.Fatalf("expected only unknown exposure to count as learned new word, got %+v", progress)
+	}
+}
+
 func TestActionableItemsRemainingCountsOnlySelectableWords(t *testing.T) {
 	now := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
 	mainReviewWordID := uuid.New()

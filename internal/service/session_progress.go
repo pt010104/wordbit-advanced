@@ -164,6 +164,9 @@ func completedKindsForEvents(
 func completedKindForEvent(event domain.LearningEvent, itemKinds map[uuid.UUID]completedCardKind) (completedCardKind, bool) {
 	switch event.EventType {
 	case domain.EventTypeFirstExposure:
+		if !firstExposureCountsAsLearnedNew(event) {
+			return "", false
+		}
 		if event.PoolItemID != nil {
 			if kind, ok := itemKinds[*event.PoolItemID]; ok {
 				return kind, true
@@ -175,6 +178,18 @@ func completedKindForEvent(event domain.LearningEvent, itemKinds map[uuid.UUID]c
 	default:
 		return "", false
 	}
+}
+
+func firstExposureCountsAsLearnedNew(event domain.LearningEvent) bool {
+	rawAction, ok := event.Payload["action"]
+	if !ok {
+		return true
+	}
+	action, ok := rawAction.(string)
+	if !ok {
+		return true
+	}
+	return domain.ExposureAction(action) == domain.ExposureActionUnknown
 }
 
 func nextSessionKind(kinds []completedCardKind) (completedCardKind, bool, string) {
