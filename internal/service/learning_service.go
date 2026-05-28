@@ -320,7 +320,7 @@ func (s *LearningService) SubmitReveal(ctx context.Context, user domain.User, re
 			case domain.RevealKindHint:
 				state.HintUsedCount++
 			}
-			state.WeaknessScore = ComputeWeaknessScore(state)
+			state.WeaknessScore = computeWeaknessScoreAt(state, now)
 			if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
 				return err
 			}

@@ -393,13 +393,50 @@ func (r *WordStateRepository) Delete(ctx context.Context, userID uuid.UUID, word
 func (r *WordStateRepository) RefreshWeaknessScores(ctx context.Context, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE user_word_states
-		SET weakness_score = (
-			(wrong_count * 0.8) +
-			(hint_used_count * 0.5) +
-			(reveal_meaning_count * 0.3) +
-			(reveal_example_count * 0.2) +
-			(CASE WHEN avg_response_time_ms > 7000 THEN 0.6 ELSE 0 END) +
-			(CASE WHEN stability < 1.0 THEN 0.4 ELSE 0 END)
+		SET weakness_score = GREATEST(
+			0,
+			(
+				(wrong_count * 0.8) +
+				(hint_used_count * 0.5) +
+				(reveal_meaning_count * 0.3) +
+				(reveal_example_count * 0.2) +
+				(CASE WHEN avg_response_time_ms > 7000 THEN 0.6 ELSE 0 END) +
+				(CASE
+					WHEN last_seen_at IS NOT NULL
+						AND NOW() - last_seen_at > INTERVAL '7 days'
+						AND stability < 2.5
+					THEN 0.7
+					ELSE 0
+				END) +
+				(CASE WHEN stability < 1.0 THEN 0.4 ELSE 0 END)
+			) - LEAST(
+				(easy_count * 0.6) +
+				(medium_count * 0.2) +
+				(CASE
+					WHEN last_rating = 'easy' THEN 0.4
+					WHEN last_rating = 'medium' THEN 0.15
+					ELSE 0
+				END) +
+				(CASE
+					WHEN stability > 2.0 THEN LEAST(1.5, (stability - 2.0) * 0.4)
+					ELSE 0
+				END),
+				(
+					(wrong_count * 0.8) +
+					(hint_used_count * 0.5) +
+					(reveal_meaning_count * 0.3) +
+					(reveal_example_count * 0.2) +
+					(CASE WHEN avg_response_time_ms > 7000 THEN 0.6 ELSE 0 END) +
+					(CASE
+						WHEN last_seen_at IS NOT NULL
+							AND NOW() - last_seen_at > INTERVAL '7 days'
+							AND stability < 2.5
+						THEN 0.7
+						ELSE 0
+					END) +
+					(CASE WHEN stability < 1.0 THEN 0.4 ELSE 0 END)
+				) * 0.75
+			)
 		)
 		WHERE user_id = $1
 	`, userID)

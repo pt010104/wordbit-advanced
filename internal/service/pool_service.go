@@ -467,19 +467,29 @@ func (s *PoolService) listBonusPracticeCandidates(
 		return nil, nil
 	}
 
-	history := extractBonusPracticeHistory(items)
-	seenTodayWordIDs := bonusPracticeHistoryWordIDs(history)
-	freshCandidates, err := s.stateRepo.ListWeakCandidates(ctx, userID, seenTodayWordIDs, limit)
+	activeSet, err := s.resolvePracticeActiveSet(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+
+	history := extractBonusPracticeHistory(items)
+	seenTodayWordIDs := bonusPracticeHistoryWordIDs(history)
+	fetchLimit := limit
+	if activeSet != nil {
+		fetchLimit = maxInt(limit*4, limit+5)
+	}
+	freshCandidates, err := s.stateRepo.ListWeakCandidates(ctx, userID, seenTodayWordIDs, fetchLimit)
+	if err != nil {
+		return nil, err
+	}
+	freshCandidates = s.filterStatesByActiveSet(freshCandidates, activeSet)
 	if len(freshCandidates) >= limit {
-		return freshCandidates, nil
+		return freshCandidates[:limit], nil
 	}
 
 	remaining := limit - len(freshCandidates)
 	recycleExcludeWordIDs := extractStateWordIDs(freshCandidates)
-	recycledCandidates, err := s.recycleBonusPracticeCandidates(ctx, userID, history, recycleExcludeWordIDs, remaining)
+	recycledCandidates, err := s.recycleBonusPracticeCandidates(ctx, userID, history, recycleExcludeWordIDs, remaining, activeSet)
 	if err != nil {
 		return nil, err
 	}
@@ -493,6 +503,7 @@ func (s *PoolService) recycleBonusPracticeCandidates(
 	history map[uuid.UUID]bonusPracticeHistoryEntry,
 	excludeWordIDs []uuid.UUID,
 	limit int,
+	activeSet *domain.WordSet,
 ) ([]domain.UserWordState, error) {
 	if limit <= 0 || len(history) == 0 {
 		return nil, nil
@@ -518,6 +529,9 @@ func (s *PoolService) recycleBonusPracticeCandidates(
 		if state.Status != domain.WordStatusLearning && state.Status != domain.WordStatusReview {
 			continue
 		}
+		if !stateMatchesActiveSet(state, activeSet) {
+			continue
+		}
 		candidates = append(candidates, state)
 	}
 
@@ -537,6 +551,40 @@ func (s *PoolService) recycleBonusPracticeCandidates(
 		candidates = candidates[:limit]
 	}
 	return candidates, nil
+}
+
+func (s *PoolService) resolvePracticeActiveSet(ctx context.Context, userID uuid.UUID) (*domain.WordSet, error) {
+	if s.wordSets == nil {
+		return nil, nil
+	}
+	activeSet, err := s.wordSets.ResolveActiveSet(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &activeSet, nil
+}
+
+func (s *PoolService) filterStatesByActiveSet(states []domain.UserWordState, activeSet *domain.WordSet) []domain.UserWordState {
+	if activeSet == nil {
+		return states
+	}
+	filtered := make([]domain.UserWordState, 0, len(states))
+	for _, state := range states {
+		if stateMatchesActiveSet(state, activeSet) {
+			filtered = append(filtered, state)
+		}
+	}
+	return filtered
+}
+
+func stateMatchesActiveSet(state domain.UserWordState, activeSet *domain.WordSet) bool {
+	if activeSet == nil {
+		return true
+	}
+	if state.WordSetID == nil {
+		return activeSet.IsDefault
+	}
+	return *state.WordSetID == activeSet.ID
 }
 
 func (s *PoolService) replenishUnknownDailySlots(

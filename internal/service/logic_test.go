@@ -96,6 +96,65 @@ func TestApplyReviewOutcomeUsesShorterStandardIntervals(t *testing.T) {
 	}
 }
 
+func TestApplyReviewOutcomeEasyReducesWeaknessAcrossRepeats(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	lastSeen := now.Add(-48 * time.Hour)
+	state := domain.UserWordState{
+		Status:             domain.WordStatusReview,
+		LastSeenAt:         &lastSeen,
+		LastRating:         domain.RatingHard,
+		IntervalSeconds:    int((24 * time.Hour).Seconds()),
+		Stability:          2.2,
+		Difficulty:         0.62,
+		ReviewCount:        9,
+		WrongCount:         4,
+		RevealMeaningCount: 6,
+		RevealExampleCount: 2,
+		HintUsedCount:      1,
+		AvgResponseTimeMs:  8400,
+		EasyCount:          1,
+		MediumCount:        2,
+		HardCount:          4,
+	}
+	state.WeaknessScore = computeWeaknessScoreAt(state, now)
+
+	first := ApplyReviewOutcome(state, domain.RatingEasy, domain.ReviewModeMultipleChoice, now, 2100)
+	second := ApplyReviewOutcome(first, domain.RatingEasy, domain.ReviewModeFillBlank, now.Add(24*time.Hour), 1900)
+
+	if first.WeaknessScore >= state.WeaknessScore {
+		t.Fatalf("expected first easy review to reduce weakness, got %.2f from %.2f", first.WeaknessScore, state.WeaknessScore)
+	}
+	if second.WeaknessScore >= first.WeaknessScore {
+		t.Fatalf("expected repeated easy review to keep reducing weakness, got %.2f from %.2f", second.WeaknessScore, first.WeaknessScore)
+	}
+}
+
+func TestComputeWeaknessScoreAddsStalePenaltyForLowStability(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	staleSeen := now.Add(-8 * 24 * time.Hour)
+	recentSeen := now.Add(-6 * 24 * time.Hour)
+
+	stale := domain.UserWordState{
+		LastSeenAt:         &staleSeen,
+		Stability:          1.4,
+		WrongCount:         2,
+		RevealMeaningCount: 1,
+	}
+	recent := stale
+	recent.LastSeenAt = &recentSeen
+
+	staleScore := computeWeaknessScoreAt(stale, now)
+	recentScore := computeWeaknessScoreAt(recent, now)
+
+	if staleScore <= recentScore {
+		t.Fatalf("expected stale score %.2f to exceed recent score %.2f", staleScore, recentScore)
+	}
+}
+
 func TestSelectReviewMode(t *testing.T) {
 	t.Parallel()
 
