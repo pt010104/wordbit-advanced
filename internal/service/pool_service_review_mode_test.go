@@ -2,6 +2,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -64,16 +65,72 @@ func TestBuildReviewItemsAppliesProgressiveModeSelection(t *testing.T) {
 		t.Fatalf("expected 4 review items, got %d", len(items))
 	}
 
-	wantModes := map[uuid.UUID]domain.ReviewMode{
-		transitionWordID:        domain.ReviewModeFillBlank,
-		weakReviewWordID:        domain.ReviewModeMultipleChoice,
-		forgotMeaningWordID:     domain.ReviewModeReveal,
-		alternatingReviewWordID: domain.ReviewModeReveal,
+	for _, item := range items {
+		switch item.WordID {
+		case transitionWordID:
+			if item.ReviewMode != domain.ReviewModeFillBlank && item.ReviewMode != domain.ReviewModeBuildWord {
+				t.Fatalf("expected transition word %s to use a word-construction mode, got %s", item.WordID, item.ReviewMode)
+			}
+		case weakReviewWordID:
+			if item.ReviewMode != domain.ReviewModeMultipleChoice {
+				t.Fatalf("expected weak review word %s to use multiple_choice, got %s", item.WordID, item.ReviewMode)
+			}
+		case forgotMeaningWordID:
+			if item.ReviewMode != domain.ReviewModeReveal {
+				t.Fatalf("expected forgot-meaning word %s to use hidden_meaning, got %s", item.WordID, item.ReviewMode)
+			}
+		case alternatingReviewWordID:
+			if item.ReviewMode != domain.ReviewModeReveal {
+				t.Fatalf("expected alternating review word %s to use hidden_meaning, got %s", item.WordID, item.ReviewMode)
+			}
+		default:
+			t.Fatalf("unexpected review item word %s", item.WordID)
+		}
+	}
+}
+
+func TestSyncPendingPoolItemRefreshesStaleRevealMode(t *testing.T) {
+	t.Parallel()
+
+	wordID := uuid.New()
+	dueAt := time.Date(2026, 5, 28, 6, 9, 7, 0, time.UTC)
+	item := domain.DailyLearningPoolItem{
+		ID:         uuid.New(),
+		WordID:     wordID,
+		ItemType:   domain.PoolItemTypeReview,
+		ReviewMode: domain.ReviewModeReveal,
+		DueAt:      &dueAt,
+		Status:     domain.PoolItemStatusPending,
+		IsReview:   true,
+		Metadata: domain.JSONMap{
+			"weakness_score": 2.4,
+		},
+	}
+	state := domain.UserWordState{
+		WordID:             wordID,
+		Status:             domain.WordStatusReview,
+		LearningStage:      0,
+		NextReviewAt:       &dueAt,
+		LastRating:         domain.RatingEasy,
+		LastMode:           domain.ReviewModeMultipleChoice,
+		Difficulty:         0.1,
+		WeaknessScore:      1.175,
+		WrongCount:         0,
+		RevealMeaningCount: 2,
+		HintUsedCount:      7,
 	}
 
-	for _, item := range items {
-		if item.ReviewMode != wantModes[item.WordID] {
-			t.Fatalf("expected word %s to use %s, got %s", item.WordID, wantModes[item.WordID], item.ReviewMode)
-		}
+	updated, changed := syncPendingPoolItem(item, state, true)
+	if !changed {
+		t.Fatalf("expected stale reveal-mode item to be updated")
+	}
+	if updated.ReviewMode != domain.ReviewModeFillBlank && updated.ReviewMode != domain.ReviewModeBuildWord {
+		t.Fatalf("expected review mode to move to a word-construction mode, got %s", updated.ReviewMode)
+	}
+	if got := jsonMapFloat64(updated.Metadata, "weakness_score"); got != state.WeaknessScore {
+		t.Fatalf("expected weakness score %.3f, got %.3f", state.WeaknessScore, got)
+	}
+	if updated.DueAt == nil || !updated.DueAt.Equal(dueAt) {
+		t.Fatalf("expected dueAt to stay the same, got %#v", updated.DueAt)
 	}
 }

@@ -64,6 +64,7 @@ type PoolRepository interface {
 	MarkPoolItemCompleted(ctx context.Context, itemID uuid.UUID, completedAt time.Time) error
 	ReopenPoolItem(ctx context.Context, itemID uuid.UUID) error
 	UpdatePoolItemReveal(ctx context.Context, itemID uuid.UUID, kind domain.RevealKind) error
+	UpdatePendingPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) error
 	AppendPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) (domain.DailyLearningPoolItem, error)
 	GetLastOrdinal(ctx context.Context, poolID uuid.UUID) (int, error)
 	IncrementScheduledCounts(ctx context.Context, poolID uuid.UUID, dueReviewDelta int, shortTermDelta int) error
@@ -71,6 +72,7 @@ type PoolRepository interface {
 	IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error
 	DeletePoolItems(ctx context.Context, userID uuid.UUID, itemIDs []uuid.UUID) error
 	DeleteItemsForUserWord(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) error
+	DeletePendingItemsBeforeLocalDate(ctx context.Context, userID uuid.UUID, localDate string) (int64, error)
 	ForceDeleteByLocalDate(ctx context.Context, userID uuid.UUID, localDate string) error
 }
 

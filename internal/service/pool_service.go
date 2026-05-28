@@ -87,6 +87,11 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 	if err != nil {
 		return DailyPoolView{}, err
 	}
+	if deleted, pruneErr := s.poolRepo.DeletePendingItemsBeforeLocalDate(ctx, user.ID, localDate); pruneErr != nil {
+		s.logger.Warn("prune stale pending pool items", "user_id", user.ID, "local_date", localDate, "error", pruneErr)
+	} else if deleted > 0 {
+		s.logger.Info("pruned stale pending pool items", "user_id", user.ID, "local_date", localDate, "deleted_count", deleted)
+	}
 
 	pool, items, err := s.poolRepo.GetByLocalDate(ctx, user.ID, localDate)
 	if err == nil {
@@ -99,6 +104,9 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 			if err != nil {
 				return DailyPoolView{}, err
 			}
+		}
+		if syncErr := s.syncPendingPoolItems(ctx, user.ID, items); syncErr != nil {
+			return DailyPoolView{}, syncErr
 		}
 		return DailyPoolView{
 			Pool:  pool,
@@ -230,6 +238,98 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 	}, nil
 }
 
+func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID, items []domain.DailyLearningPoolItem) error {
+	for index := range items {
+		item := items[index]
+		if item.Status != domain.PoolItemStatusPending || !item.IsReview || item.FirstExposureRequired {
+			continue
+		}
+
+		state, err := s.stateRepo.Get(ctx, userID, item.WordID)
+		if err != nil {
+			if isNotFound(err) {
+				continue
+			}
+			return err
+		}
+
+		updated, changed := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled)
+		if !changed {
+			continue
+		}
+		if err := s.poolRepo.UpdatePendingPoolItem(ctx, updated); err != nil {
+			return err
+		}
+		items[index] = updated
+	}
+	return nil
+}
+
+func syncPendingPoolItem(item domain.DailyLearningPoolItem, state domain.UserWordState, memoryCauseInferenceEnabled bool) (domain.DailyLearningPoolItem, bool) {
+	updated := item
+	updated.ReviewMode = SelectReviewMode(state, memoryCauseInferenceEnabled)
+	if item.BonusPractice {
+		updated.DueAt = nil
+	} else {
+		updated.DueAt = state.NextReviewAt
+	}
+	updated.Metadata = cloneJSONMap(item.Metadata)
+	if updated.Metadata == nil {
+		updated.Metadata = domain.JSONMap{}
+	}
+	updated.Metadata["weakness_score"] = state.WeaknessScore
+
+	changed := updated.ReviewMode != item.ReviewMode || !sameOptionalTime(updated.DueAt, item.DueAt)
+	if !changed && jsonMapFloat64(item.Metadata, "weakness_score") != state.WeaknessScore {
+		changed = true
+	}
+	return updated, changed
+}
+
+func cloneJSONMap(value domain.JSONMap) domain.JSONMap {
+	if value == nil {
+		return nil
+	}
+	cloned := make(domain.JSONMap, len(value))
+	for key, item := range value {
+		cloned[key] = item
+	}
+	return cloned
+}
+
+func sameOptionalTime(left *time.Time, right *time.Time) bool {
+	switch {
+	case left == nil && right == nil:
+		return true
+	case left == nil || right == nil:
+		return false
+	default:
+		return left.Equal(*right)
+	}
+}
+
+func jsonMapFloat64(value domain.JSONMap, key string) float64 {
+	if value == nil {
+		return 0
+	}
+	raw, ok := value[key]
+	if !ok {
+		return 0
+	}
+	switch typed := raw.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
+	}
+}
+
 func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, sessionID string, practiceRequested bool) (CardResponse, error) {
 	view, err := s.GetOrCreateDailyPool(ctx, user)
 	if err != nil {
@@ -267,27 +367,27 @@ func (s *PoolService) GetNextCard(ctx context.Context, user domain.User, session
 		if card.SessionComplete && card.PendingPracticeCount > 0 {
 			return card, nil
 		}
-			if sessionID == "" && card.PoolItem == nil && !card.SessionComplete {
-				if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
-					return CardResponse{}, replenishErr
-				} else if replenished {
-					view, err = s.GetOrCreateDailyPool(ctx, user)
-					if err != nil {
-						return CardResponse{}, err
-					}
-					visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
-					if filterErr != nil {
-						visibleView = view
-					}
-					selectionView = visibleView
-					card, err = s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
-					if err != nil {
-						return CardResponse{}, err
-					}
-					if card.PoolItem != nil || (card.SessionComplete && card.PendingPracticeCount > 0) {
-						return card, nil
-					}
+		if sessionID == "" && card.PoolItem == nil && !card.SessionComplete {
+			if replenished, _, replenishErr := s.replenishUnknownDailySlots(ctx, user.ID, view.Pool, view.Items, now); replenishErr != nil {
+				return CardResponse{}, replenishErr
+			} else if replenished {
+				view, err = s.GetOrCreateDailyPool(ctx, user)
+				if err != nil {
+					return CardResponse{}, err
 				}
+				visibleView, filterErr = s.FilterDailyPoolByActiveSet(ctx, user, view)
+				if filterErr != nil {
+					visibleView = view
+				}
+				selectionView = visibleView
+				card, err = s.nextCardFromView(ctx, user.ID, selectionView, now, sessionID, settings.DailyNewWordLimit, practiceRequested)
+				if err != nil {
+					return CardResponse{}, err
+				}
+				if card.PoolItem != nil || (card.SessionComplete && card.PendingPracticeCount > 0) {
+					return card, nil
+				}
+			}
 		}
 		if !card.SessionComplete || card.PendingPracticeCount > 0 {
 			return card, nil

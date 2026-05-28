@@ -326,6 +326,19 @@ func (r *replenishPoolRepo) UpdatePoolItemReveal(ctx context.Context, itemID uui
 	return nil
 }
 
+func (r *replenishPoolRepo) UpdatePendingPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) error {
+	for i := range r.items {
+		if r.items[i].ID != item.ID {
+			continue
+		}
+		r.items[i].ReviewMode = item.ReviewMode
+		r.items[i].DueAt = item.DueAt
+		r.items[i].Metadata = item.Metadata
+		return nil
+	}
+	return domain.ErrNotFound
+}
+
 func (r *replenishPoolRepo) AppendPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) (domain.DailyLearningPoolItem, error) {
 	item.ID = uuid.New()
 	wordCopy := item.Word
@@ -367,6 +380,10 @@ func (r *replenishPoolRepo) IncrementNewCount(ctx context.Context, poolID uuid.U
 func (r *replenishPoolRepo) IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error {
 	r.pool.WeakCount += delta
 	return nil
+}
+
+func (r *replenishPoolRepo) DeletePendingItemsBeforeLocalDate(ctx context.Context, userID uuid.UUID, localDate string) (int64, error) {
+	return 0, nil
 }
 
 func (r *replenishPoolRepo) DeletePoolItems(ctx context.Context, userID uuid.UUID, itemIDs []uuid.UUID) error {

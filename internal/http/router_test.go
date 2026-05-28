@@ -252,6 +252,9 @@ func (m *memoryPoolRepo) ReopenPoolItem(ctx context.Context, itemID uuid.UUID) e
 func (m *memoryPoolRepo) UpdatePoolItemReveal(ctx context.Context, itemID uuid.UUID, kind domain.RevealKind) error {
 	return nil
 }
+func (m *memoryPoolRepo) UpdatePendingPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) error {
+	return nil
+}
 func (m *memoryPoolRepo) AppendPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) (domain.DailyLearningPoolItem, error) {
 	if item.ID == uuid.Nil {
 		item.ID = uuid.New()
@@ -274,6 +277,9 @@ func (m *memoryPoolRepo) IncrementNewCount(ctx context.Context, poolID uuid.UUID
 func (m *memoryPoolRepo) IncrementWeakCount(ctx context.Context, poolID uuid.UUID, delta int) error {
 	m.pool.WeakCount += delta
 	return nil
+}
+func (m *memoryPoolRepo) DeletePendingItemsBeforeLocalDate(ctx context.Context, userID uuid.UUID, localDate string) (int64, error) {
+	return 0, nil
 }
 func (m *memoryPoolRepo) DeletePoolItems(ctx context.Context, userID uuid.UUID, itemIDs []uuid.UUID) error {
 	return nil

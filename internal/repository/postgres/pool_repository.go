@@ -56,6 +56,21 @@ func (r *PoolRepository) GetByLocalDate(ctx context.Context, userID uuid.UUID, l
 	return pool, items, rows.Err()
 }
 
+func (r *PoolRepository) DeletePendingItemsBeforeLocalDate(ctx context.Context, userID uuid.UUID, localDate string) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM daily_learning_pool_items i
+		USING daily_learning_pools p
+		WHERE i.pool_id = p.id
+		  AND i.user_id = $1
+		  AND i.status = 'pending'
+		  AND p.local_date < $2::date
+	`, userID, localDate)
+	if err != nil {
+		return 0, mapError(err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (r *PoolRepository) AcquireDailyPoolLock(ctx context.Context, userID uuid.UUID, localDate string) error {
 	_, err := r.pool.Exec(ctx, `SELECT 1`)
 	return mapError(err)
@@ -231,6 +246,18 @@ func (r *PoolRepository) UpdatePoolItemReveal(ctx context.Context, itemID uuid.U
 		SET %s = TRUE
 		WHERE id = $1
 	`, column), itemID)
+	return mapError(err)
+}
+
+func (r *PoolRepository) UpdatePendingPoolItem(ctx context.Context, item domain.DailyLearningPoolItem) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE daily_learning_pool_items
+		SET review_mode = $2,
+		    due_at = $3,
+		    metadata = $4::jsonb
+		WHERE id = $1
+		  AND status = 'pending'
+	`, item.ID, item.ReviewMode, item.DueAt, fromJSONMap(item.Metadata))
 	return mapError(err)
 }
 
