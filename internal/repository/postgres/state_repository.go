@@ -396,45 +396,24 @@ func (r *WordStateRepository) RefreshWeaknessScores(ctx context.Context, userID 
 		SET weakness_score = GREATEST(
 			0,
 			(
-				(wrong_count * 0.8) +
-				(hint_used_count * 0.5) +
-				(reveal_meaning_count * 0.3) +
-				(reveal_example_count * 0.2) +
-				(CASE WHEN avg_response_time_ms > 7000 THEN 0.6 ELSE 0 END) +
+				(hard_count * 1.0) +
+				(medium_count * 0.35) +
 				(CASE
-					WHEN last_seen_at IS NOT NULL
-						AND NOW() - last_seen_at > INTERVAL '7 days'
-						AND stability < 2.5
-					THEN 0.7
+					WHEN last_rating = 'hard' THEN 0.6
+					WHEN last_rating = 'medium' THEN 0.2
 					ELSE 0
-				END) +
-				(CASE WHEN stability < 1.0 THEN 0.4 ELSE 0 END)
+				END)
 			) - LEAST(
-				(easy_count * 0.6) +
-				(medium_count * 0.2) +
-				(CASE
-					WHEN last_rating = 'easy' THEN 0.4
-					WHEN last_rating = 'medium' THEN 0.15
-					ELSE 0
-				END) +
-				(CASE
-					WHEN stability > 2.0 THEN LEAST(1.5, (stability - 2.0) * 0.4)
-					ELSE 0
-				END),
+				(easy_count * 0.45) +
+				(CASE WHEN last_rating = 'easy' THEN 0.3 ELSE 0 END),
 				(
-					(wrong_count * 0.8) +
-					(hint_used_count * 0.5) +
-					(reveal_meaning_count * 0.3) +
-					(reveal_example_count * 0.2) +
-					(CASE WHEN avg_response_time_ms > 7000 THEN 0.6 ELSE 0 END) +
+					(hard_count * 1.0) +
+					(medium_count * 0.35) +
 					(CASE
-						WHEN last_seen_at IS NOT NULL
-							AND NOW() - last_seen_at > INTERVAL '7 days'
-							AND stability < 2.5
-						THEN 0.7
+						WHEN last_rating = 'hard' THEN 0.6
+						WHEN last_rating = 'medium' THEN 0.2
 						ELSE 0
-					END) +
-					(CASE WHEN stability < 1.0 THEN 0.4 ELSE 0 END)
+					END)
 				) * 0.75
 			)
 		)

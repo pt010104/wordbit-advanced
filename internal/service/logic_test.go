@@ -100,25 +100,20 @@ func TestApplyReviewOutcomeEasyReducesWeaknessAcrossRepeats(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
-	lastSeen := now.Add(-48 * time.Hour)
 	state := domain.UserWordState{
-		Status:             domain.WordStatusReview,
-		LastSeenAt:         &lastSeen,
-		LastRating:         domain.RatingHard,
-		IntervalSeconds:    int((24 * time.Hour).Seconds()),
-		Stability:          2.2,
-		Difficulty:         0.62,
-		ReviewCount:        9,
-		WrongCount:         4,
-		RevealMeaningCount: 6,
-		RevealExampleCount: 2,
-		HintUsedCount:      1,
-		AvgResponseTimeMs:  8400,
-		EasyCount:          1,
-		MediumCount:        2,
-		HardCount:          4,
+		Status:          domain.WordStatusReview,
+		LastRating:      domain.RatingHard,
+		IntervalSeconds: int((24 * time.Hour).Seconds()),
+		Stability:       2.2,
+		Difficulty:      0.62,
+		ReviewCount:     9,
+		WrongCount:      4,
+		HintUsedCount:   3,
+		EasyCount:       1,
+		MediumCount:     2,
+		HardCount:       4,
 	}
-	state.WeaknessScore = computeWeaknessScoreAt(state, now)
+	state.WeaknessScore = computeWeaknessScoreFromRatings(state)
 
 	first := ApplyReviewOutcome(state, domain.RatingEasy, domain.ReviewModeMultipleChoice, now, 2100)
 	second := ApplyReviewOutcome(first, domain.RatingEasy, domain.ReviewModeFillBlank, now.Add(24*time.Hour), 1900)
@@ -131,27 +126,27 @@ func TestApplyReviewOutcomeEasyReducesWeaknessAcrossRepeats(t *testing.T) {
 	}
 }
 
-func TestComputeWeaknessScoreAddsStalePenaltyForLowStability(t *testing.T) {
+func TestComputeWeaknessScoreIgnoresNonRatingSignals(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
-	staleSeen := now.Add(-8 * 24 * time.Hour)
-	recentSeen := now.Add(-6 * 24 * time.Hour)
-
-	stale := domain.UserWordState{
-		LastSeenAt:         &staleSeen,
-		Stability:          1.4,
-		WrongCount:         2,
-		RevealMeaningCount: 1,
+	base := domain.UserWordState{
+		LastRating:    domain.RatingMedium,
+		EasyCount:     2,
+		MediumCount:   3,
+		HardCount:     1,
+		WrongCount:    0,
+		HintUsedCount: 0,
 	}
-	recent := stale
-	recent.LastSeenAt = &recentSeen
+	behaviorHeavy := base
+	behaviorHeavy.WrongCount = 99
+	behaviorHeavy.HintUsedCount = 99
+	behaviorHeavy.RevealMeaningCount = 99
+	behaviorHeavy.RevealExampleCount = 99
+	behaviorHeavy.AvgResponseTimeMs = 60000
+	behaviorHeavy.Stability = 0.1
 
-	staleScore := computeWeaknessScoreAt(stale, now)
-	recentScore := computeWeaknessScoreAt(recent, now)
-
-	if staleScore <= recentScore {
-		t.Fatalf("expected stale score %.2f to exceed recent score %.2f", staleScore, recentScore)
+	if got, want := computeWeaknessScoreFromRatings(behaviorHeavy), computeWeaknessScoreFromRatings(base); got != want {
+		t.Fatalf("expected non-rating signals to be ignored, got %.2f want %.2f", got, want)
 	}
 }
 
@@ -184,25 +179,25 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "transition stage threshold now uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.60, WeaknessScore: 1.05},
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.65, WeaknessScore: 1.20},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "transition stage higher difficulty uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.65, WeaknessScore: 0.2},
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.70, WeaknessScore: 0.2},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "transition stage borderline mode 2 alternates back to reveal after multiple choice",
-			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.65, WeaknessScore: 0.2, LastMode: domain.ReviewModeMultipleChoice},
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.70, WeaknessScore: 0.2, LastMode: domain.ReviewModeMultipleChoice},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeReveal,
 		},
 		{
 			name:                   "transition stage higher weakness uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 1.20},
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 1.30},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
@@ -244,49 +239,49 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "standard review difficulty threshold uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.75, WeaknessScore: 0.2},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.82, WeaknessScore: 0.2},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review high difficulty returns multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.80, WeaknessScore: 0.2},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.86, WeaknessScore: 0.2},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review weakness threshold uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 1.6},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 1.9},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review high weakness returns multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 1.8},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 2.1},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review borderline mode 2 alternates back to reveal after multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 1.8, LastMode: domain.ReviewModeMultipleChoice},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 2.1, LastMode: domain.ReviewModeMultipleChoice},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeReveal,
 		},
 		{
 			name:                   "standard review wrong history returns multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, WrongCount: 2},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, WrongCount: 3},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review meaning reveal threshold uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, RevealMeaningCount: 3},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, RevealMeaningCount: 4},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
 			name:                   "standard review meaning reveal history returns multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, RevealMeaningCount: 4},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, RevealMeaningCount: 5},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},

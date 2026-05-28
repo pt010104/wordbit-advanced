@@ -56,7 +56,7 @@ func TestBuildReviewItemsAppliesProgressiveModeSelection(t *testing.T) {
 			WordID:        alternatingReviewWordID,
 			Status:        domain.WordStatusReview,
 			Difficulty:    0.3,
-			WeaknessScore: 1.8,
+			WeaknessScore: 2.1,
 			LastMode:      domain.ReviewModeMultipleChoice,
 		},
 	}, words, domain.PoolItemTypeReview, true)

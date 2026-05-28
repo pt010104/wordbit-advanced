@@ -8,12 +8,12 @@ import (
 )
 
 const (
-	transitionMode2DifficultyThreshold  = 0.60
-	transitionMode2WeaknessThreshold    = 1.05
-	standardMode2DifficultyThreshold    = 0.75
-	standardMode2WeaknessThreshold      = 1.6
-	standardMode2WrongCountThreshold    = 2
-	standardMode2MeaningRevealThreshold = 3
+	transitionMode2DifficultyThreshold  = 0.65
+	transitionMode2WeaknessThreshold    = 1.20
+	standardMode2DifficultyThreshold    = 0.82
+	standardMode2WeaknessThreshold      = 1.9
+	standardMode2WrongCountThreshold    = 3
+	standardMode2MeaningRevealThreshold = 4
 	wordConstructionHintStruggleCount   = 2
 	wordConstructionWeaknessBoost       = 0.25
 	wordConstructionDifficultyBoost     = 0.04
@@ -126,44 +126,33 @@ func UpdateAvgResponseTime(current int64, count int, value int) int64 {
 }
 
 func ComputeWeaknessScore(state domain.UserWordState) float64 {
-	return computeWeaknessScoreAt(state, time.Now())
+	return computeWeaknessScoreFromRatings(state)
 }
 
-func computeWeaknessScoreAt(state domain.UserWordState, now time.Time) float64 {
-	score := computeWeaknessSignalAt(state, now)
+func computeWeaknessScoreFromRatings(state domain.UserWordState) float64 {
+	score := computeWeaknessSignal(state)
 	recovery := computeWeaknessRecovery(state)
 	return maxFloat(0, score-minFloat(recovery, score*0.75))
 }
 
-func computeWeaknessSignalAt(state domain.UserWordState, now time.Time) float64 {
+func computeWeaknessSignal(state domain.UserWordState) float64 {
 	score := 0.0
-	score += float64(state.WrongCount) * 0.8
-	score += float64(state.HintUsedCount) * 0.5
-	score += float64(state.RevealMeaningCount) * 0.3
-	score += float64(state.RevealExampleCount) * 0.2
-	if state.AvgResponseTimeMs > 7000 {
+	score += float64(state.HardCount) * 1.0
+	score += float64(state.MediumCount) * 0.35
+	switch state.LastRating {
+	case domain.RatingHard:
 		score += 0.6
-	}
-	if state.LastSeenAt != nil && now.Sub(*state.LastSeenAt) > 7*24*time.Hour && state.Stability < 2.5 {
-		score += 0.7
-	}
-	if state.Stability < 1.0 {
-		score += 0.4
+	case domain.RatingMedium:
+		score += 0.2
 	}
 	return score
 }
 
 func computeWeaknessRecovery(state domain.UserWordState) float64 {
-	recovery := float64(state.EasyCount) * 0.6
-	recovery += float64(state.MediumCount) * 0.2
+	recovery := float64(state.EasyCount) * 0.45
 	switch state.LastRating {
 	case domain.RatingEasy:
-		recovery += 0.4
-	case domain.RatingMedium:
-		recovery += 0.15
-	}
-	if state.Stability > 2.0 {
-		recovery += minFloat(1.5, (state.Stability-2.0)*0.4)
+		recovery += 0.3
 	}
 	return recovery
 }
@@ -179,7 +168,7 @@ func ApplyFirstExposureUnknown(state domain.UserWordState, now time.Time, respon
 	state.Difficulty = maxFloat(state.Difficulty, 0.5)
 	state.ReviewCount++
 	state.AvgResponseTimeMs = UpdateAvgResponseTime(state.AvgResponseTimeMs, state.ReviewCount, responseTimeMs)
-	state.WeaknessScore = computeWeaknessScoreAt(state, now)
+	state.WeaknessScore = computeWeaknessScoreFromRatings(state)
 	return state
 }
 
@@ -228,7 +217,7 @@ func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, 
 			state.Difficulty = minFloat(maxFloat(state.Difficulty-0.05, 0.1), 0.95)
 			state.Stability = maxFloat(state.Stability+0.3, 0.7)
 		}
-		state.WeaknessScore = computeWeaknessScoreAt(state, now)
+		state.WeaknessScore = computeWeaknessScoreFromRatings(state)
 		return state
 	}
 
@@ -256,7 +245,7 @@ func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, 
 	next := now.Add(time.Duration(seconds) * time.Second)
 	state.NextReviewAt = &next
 	state.Status = domain.WordStatusReview
-	state.WeaknessScore = computeWeaknessScoreAt(state, now)
+	state.WeaknessScore = computeWeaknessScoreFromRatings(state)
 	return state
 }
 
@@ -267,7 +256,7 @@ func ApplyBonusPracticeOutcome(state domain.UserWordState, rating domain.ReviewR
 
 	baseline := state.WeaknessScore
 	if baseline <= 0 {
-		baseline = computeWeaknessScoreAt(state, now)
+		baseline = computeWeaknessScoreFromRatings(state)
 	}
 
 	switch rating {
@@ -285,7 +274,7 @@ func ApplyBonusPracticeOutcome(state domain.UserWordState, rating domain.ReviewR
 		state.WeaknessScore = maxFloat(0, baseline*multiplier)
 	case domain.RatingHard:
 		state.WrongCount++
-		baseline = maxFloat(baseline, computeWeaknessScoreAt(state, now))
+		baseline = maxFloat(baseline, computeWeaknessScoreFromRatings(state))
 		state.WeaknessScore = baseline + 0.35
 	default:
 		state.WeaknessScore = baseline
@@ -319,7 +308,7 @@ func ApplyMode4WeakPassageOutcome(state domain.UserWordState, rating domain.Revi
 
 	baseline := state.WeaknessScore
 	if baseline <= 0 {
-		baseline = computeWeaknessScoreAt(state, now)
+		baseline = computeWeaknessScoreFromRatings(state)
 	}
 
 	switch rating {
@@ -337,7 +326,7 @@ func ApplyMode4WeakPassageOutcome(state domain.UserWordState, rating domain.Revi
 		state.WeaknessScore = maxFloat(0, baseline*multiplier)
 	case domain.RatingHard:
 		state.WrongCount++
-		baseline = maxFloat(baseline, computeWeaknessScoreAt(state, now))
+		baseline = maxFloat(baseline, computeWeaknessScoreFromRatings(state))
 		state.WeaknessScore = baseline + 0.35
 	default:
 		state.WeaknessScore = baseline
