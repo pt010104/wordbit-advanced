@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"wordbit-advanced-app/backend/internal/domain"
 )
 
@@ -173,13 +175,13 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "transition stage low weakness uses fill blank",
-			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2},
+			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMode: domain.ReviewModeBuildWord},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeFillBlank,
 		},
 		{
 			name:                   "transition stage threshold now uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.65, WeaknessScore: 1.20},
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.60, WeaknessScore: 1.05},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
@@ -197,7 +199,7 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "transition stage higher weakness uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 1.30},
+			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 1.10},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
@@ -215,7 +217,7 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "transition stage ignores mixed up cause when bias disabled",
-			state:                  domain.UserWordState{LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord},
+			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord, LastMode: domain.ReviewModeBuildWord},
 			memoryCauseBiasEnabled: false,
 			want:                   domain.ReviewModeFillBlank,
 		},
@@ -239,7 +241,7 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "standard review difficulty threshold uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.82, WeaknessScore: 0.2},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.78, WeaknessScore: 0.2},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
@@ -251,7 +253,7 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "standard review weakness threshold uses multiple choice",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 1.9},
+			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 1.75},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeMultipleChoice,
 		},
@@ -287,13 +289,13 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "standard review clean history returns fill blank",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2},
+			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, LastMode: domain.ReviewModeBuildWord},
 			memoryCauseBiasEnabled: true,
 			want:                   domain.ReviewModeFillBlank,
 		},
 		{
 			name:                   "standard review ignores mixed up cause when bias disabled",
-			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord},
+			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord, LastMode: domain.ReviewModeBuildWord},
 			memoryCauseBiasEnabled: false,
 			want:                   domain.ReviewModeFillBlank,
 		},
@@ -359,6 +361,39 @@ func TestSelectReviewModeReturnsNormalWeakModeAfterPerfectBuildWordTurn(t *testi
 
 	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeMultipleChoice {
 		t.Fatalf("expected perfect build_word turn to return to normal weak review mode, got %s", mode)
+	}
+}
+
+func TestSelectReviewModeTransitionFromMode12EntersBuildWord(t *testing.T) {
+	t.Parallel()
+
+	state := domain.UserWordState{
+		LearningStage: 0,
+		LastMode:      domain.ReviewModeMultipleChoice,
+		LastRating:    domain.RatingEasy,
+		Difficulty:    0.30,
+		WeaknessScore: 0.20,
+	}
+
+	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeBuildWord {
+		t.Fatalf("expected normal mode1/2 transition to enter build_word first, got %s", mode)
+	}
+}
+
+func TestSelectReviewModeKeepsBuildWordAlternationOnceInsideWordConstruction(t *testing.T) {
+	t.Parallel()
+
+	state := domain.UserWordState{
+		WordID:        uuid.MustParse("01000000-0000-0000-0000-000000000000"),
+		LearningStage: 0,
+		LastMode:      domain.ReviewModeBuildWord,
+		LastRating:    domain.RatingEasy,
+		Difficulty:    0.18,
+		WeaknessScore: 0.20,
+	}
+
+	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeFillBlank {
+		t.Fatalf("expected word-construction follow-up to alternate into fill_blank, got %s", mode)
 	}
 }
 

@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	transitionMode2DifficultyThreshold  = 0.65
-	transitionMode2WeaknessThreshold    = 1.20
-	standardMode2DifficultyThreshold    = 0.82
-	standardMode2WeaknessThreshold      = 1.9
+	transitionMode2DifficultyThreshold  = 0.60
+	transitionMode2WeaknessThreshold    = 1.05
+	standardMode2DifficultyThreshold    = 0.78
+	standardMode2WeaknessThreshold      = 1.75
 	standardMode2WrongCountThreshold    = 3
 	standardMode2MeaningRevealThreshold = 4
 	wordConstructionHintStruggleCount   = 2
@@ -68,7 +68,7 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 				state.LastRating == domain.RatingHard {
 				selected = alternatingMode2Reveal(state)
 			} else {
-				selected = SelectWordConstructionMode(state)
+				selected = enterWordConstructionMode(state)
 			}
 		}
 		return maybeForceBuildWordMode(state, selected)
@@ -96,7 +96,7 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 			state.WeaknessScore >= standardMode2WeaknessThreshold {
 			selected = alternatingMode2Reveal(state)
 		} else {
-			selected = SelectWordConstructionMode(state)
+			selected = enterWordConstructionMode(state)
 		}
 	}
 	return maybeForceBuildWordMode(state, selected)
@@ -121,6 +121,13 @@ func SelectWordConstructionMode(state domain.UserWordState) domain.ReviewMode {
 		return domain.ReviewModeFillBlank
 	}
 	return domain.ReviewModeBuildWord
+}
+
+func enterWordConstructionMode(state domain.UserWordState) domain.ReviewMode {
+	if state.LastMode == domain.ReviewModeReveal || state.LastMode == domain.ReviewModeMultipleChoice || state.LastMode == "" {
+		return domain.ReviewModeBuildWord
+	}
+	return SelectWordConstructionMode(state)
 }
 
 func alternatingMode2Reveal(state domain.UserWordState) domain.ReviewMode {
