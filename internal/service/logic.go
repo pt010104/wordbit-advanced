@@ -17,6 +17,9 @@ const (
 	wordConstructionHintStruggleCount   = 2
 	wordConstructionWeaknessBoost       = 0.25
 	wordConstructionDifficultyBoost     = 0.04
+	forcedBuildWordMinReviewCount       = 4
+	forcedBuildWordMinHardCount         = 2
+	forcedBuildWordMinMode12Days        = 48 * time.Hour
 	easyReviewIntervalMultiplier        = 1.35
 	mediumReviewIntervalMultiplier      = 0.80
 	hardReviewIntervalMultiplier        = 0.30
@@ -46,6 +49,7 @@ func ComputeNewWordPrefetchBatchSize(dailyLimit int) int {
 }
 
 func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) domain.ReviewMode {
+	var selected domain.ReviewMode
 	switch state.LearningStage {
 	case 1, 2:
 		return domain.ReviewModeReveal
@@ -53,17 +57,21 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 		if memoryCauseBiasEnabled {
 			switch state.LastMemoryCause {
 			case domain.MemoryCauseSpellingIssue:
-				return SelectWordConstructionMode(state)
+				selected = domain.ReviewModeBuildWord
 			case domain.MemoryCauseMixedUpWord:
-				return domain.ReviewModeMultipleChoice
+				selected = domain.ReviewModeMultipleChoice
 			}
 		}
-		if state.Difficulty >= transitionMode2DifficultyThreshold ||
-			state.WeaknessScore >= transitionMode2WeaknessThreshold ||
-			state.LastRating == domain.RatingHard {
-			return alternatingMode2Reveal(state)
+		if selected == "" {
+			if state.Difficulty >= transitionMode2DifficultyThreshold ||
+				state.WeaknessScore >= transitionMode2WeaknessThreshold ||
+				state.LastRating == domain.RatingHard {
+				selected = alternatingMode2Reveal(state)
+			} else {
+				selected = SelectWordConstructionMode(state)
+			}
 		}
-		return SelectWordConstructionMode(state)
+		return maybeForceBuildWordMode(state, selected)
 	default:
 		if state.LearningStage > 0 {
 			return domain.ReviewModeReveal
@@ -73,22 +81,25 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 	if memoryCauseBiasEnabled {
 		switch state.LastMemoryCause {
 		case domain.MemoryCauseForgotMeaning:
-			return domain.ReviewModeReveal
+			selected = domain.ReviewModeReveal
 		case domain.MemoryCauseMixedUpWord:
-			return domain.ReviewModeMultipleChoice
+			selected = domain.ReviewModeMultipleChoice
 		case domain.MemoryCauseSpellingIssue:
-			return SelectWordConstructionMode(state)
+			selected = domain.ReviewModeBuildWord
 		}
 	}
-	if state.WrongCount >= standardMode2WrongCountThreshold ||
-		state.RevealMeaningCount >= standardMode2MeaningRevealThreshold {
-		return domain.ReviewModeMultipleChoice
+	if selected == "" {
+		if state.WrongCount >= standardMode2WrongCountThreshold ||
+			state.RevealMeaningCount >= standardMode2MeaningRevealThreshold {
+			selected = domain.ReviewModeMultipleChoice
+		} else if state.Difficulty >= standardMode2DifficultyThreshold ||
+			state.WeaknessScore >= standardMode2WeaknessThreshold {
+			selected = alternatingMode2Reveal(state)
+		} else {
+			selected = SelectWordConstructionMode(state)
+		}
 	}
-	if state.Difficulty >= standardMode2DifficultyThreshold ||
-		state.WeaknessScore >= standardMode2WeaknessThreshold {
-		return alternatingMode2Reveal(state)
-	}
-	return SelectWordConstructionMode(state)
+	return maybeForceBuildWordMode(state, selected)
 }
 
 func SelectWordConstructionMode(state domain.UserWordState) domain.ReviewMode {
@@ -117,6 +128,37 @@ func alternatingMode2Reveal(state domain.UserWordState) domain.ReviewMode {
 		return domain.ReviewModeReveal
 	}
 	return domain.ReviewModeMultipleChoice
+}
+
+func maybeForceBuildWordMode(state domain.UserWordState, selected domain.ReviewMode) domain.ReviewMode {
+	if selected != domain.ReviewModeReveal && selected != domain.ReviewModeMultipleChoice {
+		return selected
+	}
+	if state.LastMode != domain.ReviewModeReveal && state.LastMode != domain.ReviewModeMultipleChoice {
+		return selected
+	}
+	if !hasProlongedMode12Struggle(state) {
+		return selected
+	}
+	return domain.ReviewModeBuildWord
+}
+
+func hasProlongedMode12Struggle(state domain.UserWordState) bool {
+	if state.ReviewCount < forcedBuildWordMinReviewCount || state.HardCount < forcedBuildWordMinHardCount {
+		return false
+	}
+	if state.FirstSeenAt == nil || state.LastSeenAt == nil {
+		return false
+	}
+	if state.LastSeenAt.Sub(*state.FirstSeenAt) < forcedBuildWordMinMode12Days {
+		return false
+	}
+	return state.WrongCount >= 2 ||
+		state.RevealMeaningCount >= 3 ||
+		state.MeaningForgetCount >= 2 ||
+		state.ConfusableMixupCount >= 2 ||
+		state.SlowRecallCount >= 2 ||
+		state.LastRating == domain.RatingHard
 }
 
 func UpdateAvgResponseTime(current int64, count int, value int) int64 {

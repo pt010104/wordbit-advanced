@@ -173,7 +173,7 @@ func completedKindForEvent(event domain.LearningEvent, itemKinds map[uuid.UUID]c
 			}
 		}
 		return completedCardKindNew, true
-	case domain.EventTypeReviewAnswer, domain.EventTypeBonusPractice, domain.EventTypeMode4Passage:
+	case domain.EventTypeReviewAnswer, domain.EventTypeBonusPractice:
 		return completedCardKindReview, true
 	default:
 		return "", false

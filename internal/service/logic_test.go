@@ -232,10 +232,10 @@ func TestSelectReviewMode(t *testing.T) {
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
-			name:                   "standard review spelling issue returns fill blank",
+			name:                   "standard review spelling issue returns build word",
 			state:                  domain.UserWordState{LearningStage: 0, Difficulty: 0.8, LastMemoryCause: domain.MemoryCauseSpellingIssue},
 			memoryCauseBiasEnabled: true,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeBuildWord,
 		},
 		{
 			name:                   "standard review difficulty threshold uses multiple choice",
@@ -308,6 +308,57 @@ func TestSelectReviewMode(t *testing.T) {
 				t.Fatalf("expected %s, got %s", tc.want, mode)
 			}
 		})
+	}
+}
+
+func TestSelectReviewModeForcesBuildWordAfterProlongedMode12Struggle(t *testing.T) {
+	t.Parallel()
+
+	firstSeen := time.Date(2026, 3, 18, 10, 0, 0, 0, time.UTC)
+	lastSeen := firstSeen.Add(72 * time.Hour)
+	state := domain.UserWordState{
+		LearningStage:        0,
+		Difficulty:           0.88,
+		WeaknessScore:        2.2,
+		LastMode:             domain.ReviewModeMultipleChoice,
+		LastRating:           domain.RatingHard,
+		ReviewCount:          6,
+		HardCount:            3,
+		WrongCount:           3,
+		RevealMeaningCount:   4,
+		MeaningForgetCount:   2,
+		ConfusableMixupCount: 1,
+		FirstSeenAt:          &firstSeen,
+		LastSeenAt:           &lastSeen,
+	}
+
+	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeBuildWord {
+		t.Fatalf("expected prolonged hard mode1/2 word to force build_word, got %s", mode)
+	}
+}
+
+func TestSelectReviewModeReturnsNormalWeakModeAfterPerfectBuildWordTurn(t *testing.T) {
+	t.Parallel()
+
+	firstSeen := time.Date(2026, 3, 18, 10, 0, 0, 0, time.UTC)
+	lastSeen := firstSeen.Add(72 * time.Hour)
+	state := domain.UserWordState{
+		LearningStage:      0,
+		Difficulty:         0.88,
+		WeaknessScore:      2.2,
+		LastMode:           domain.ReviewModeBuildWord,
+		LastRating:         domain.RatingEasy,
+		ReviewCount:        6,
+		HardCount:          3,
+		WrongCount:         3,
+		RevealMeaningCount: 4,
+		MeaningForgetCount: 2,
+		FirstSeenAt:        &firstSeen,
+		LastSeenAt:         &lastSeen,
+	}
+
+	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeMultipleChoice {
+		t.Fatalf("expected perfect build_word turn to return to normal weak review mode, got %s", mode)
 	}
 }
 

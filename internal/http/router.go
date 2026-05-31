@@ -84,7 +84,6 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Post("/me/daily-pool/more-words", h.AppendMoreWords)
 			r.Post("/me/daily-pool/dynamic-review/generate", h.GenerateDynamicReviewPrompts)
 			r.Get("/me/cards/next", h.GetNextCard)
-			r.Post("/me/cards/mode4/{passageID}/complete", h.SubmitMode4Completion)
 			r.Post("/me/cards/{poolItemID}/first-exposure", h.SubmitFirstExposure)
 			r.Post("/me/cards/{poolItemID}/review", h.SubmitReview)
 			r.Post("/me/cards/{poolItemID}/undo-last-answer", h.UndoLastAnswer)

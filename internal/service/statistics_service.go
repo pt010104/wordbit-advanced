@@ -140,7 +140,7 @@ func buildActivitySeries(
 		switch event.EventType {
 		case domain.EventTypeFirstExposure:
 			day.newWords++
-		case domain.EventTypeReviewAnswer, domain.EventTypeBonusPractice, domain.EventTypeMode4Passage:
+		case domain.EventTypeReviewAnswer, domain.EventTypeBonusPractice:
 			day.reviews++
 		}
 		if day.newWords > 0 || day.reviews > 0 {
@@ -275,7 +275,6 @@ func buildModeDistribution(events []domain.LearningEvent) []domain.StatisticsBre
 		{key: string(domain.ReviewModeMultipleChoice), label: "Multiple choice"},
 		{key: string(domain.ReviewModeBuildWord), label: "Build word"},
 		{key: string(domain.ReviewModeFillBlank), label: "Fill in blank"},
-		{key: string(domain.LearnCardTypeMode4WeakPassageReview), label: "Mode 4 passage"},
 	}
 	counts := map[string]int{}
 	for _, event := range events {
@@ -284,8 +283,6 @@ func buildModeDistribution(events []domain.LearningEvent) []domain.StatisticsBre
 			if event.ModeUsed != "" {
 				counts[string(event.ModeUsed)]++
 			}
-		case domain.EventTypeMode4Passage:
-			counts[string(domain.LearnCardTypeMode4WeakPassageReview)]++
 		}
 	}
 	out := make([]domain.StatisticsBreakdownItem, 0, len(order))
