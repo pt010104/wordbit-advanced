@@ -124,12 +124,12 @@ func TestApplyMemoryCauseIntervalBias(t *testing.T) {
 	}
 
 	slow := ApplyMemoryCauseIntervalBias(state, domain.MemoryCauseSlowRecall, now)
-	if slow.IntervalSeconds != int(float64(24*60*60)*0.85) {
+	if slow.IntervalSeconds != int(float64(24*60*60)*slowRecallIntervalBias) {
 		t.Fatalf("expected slow recall interval bias, got %d", slow.IntervalSeconds)
 	}
 
 	guess := ApplyMemoryCauseIntervalBias(state, domain.MemoryCauseGuessedCorrect, now)
-	if guess.IntervalSeconds != int(float64(24*60*60)*0.90) {
+	if guess.IntervalSeconds != int(float64(24*60*60)*guessedCorrectIntervalBias) {
 		t.Fatalf("expected guessed correct interval bias, got %d", guess.IntervalSeconds)
 	}
 }

@@ -60,7 +60,7 @@ func TestReviewOutcomeMovesThroughConsolidation(t *testing.T) {
 	}
 }
 
-func TestApplyReviewOutcomeUsesShorterStandardIntervals(t *testing.T) {
+func TestApplyReviewOutcomeRebalancesStandardIntervals(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
@@ -75,24 +75,24 @@ func TestApplyReviewOutcomeUsesShorterStandardIntervals(t *testing.T) {
 	if medium.NextReviewAt == nil {
 		t.Fatalf("expected medium review to schedule next review")
 	}
-	if got := medium.NextReviewAt.Sub(now); got <= 12*time.Hour || got >= 18*time.Hour {
-		t.Fatalf("expected medium review interval between 12h and 18h, got %s", got)
+	if got := medium.NextReviewAt.Sub(now); got <= 27*time.Hour || got >= 29*time.Hour {
+		t.Fatalf("expected medium review interval between 24h and 30h, got %s", got)
 	}
 
 	easy := ApplyReviewOutcome(state, domain.RatingEasy, domain.ReviewModeFillBlank, now, 2200)
 	if easy.NextReviewAt == nil {
 		t.Fatalf("expected easy review to schedule next review")
 	}
-	if got := easy.NextReviewAt.Sub(now); got <= 24*time.Hour || got >= 30*time.Hour {
-		t.Fatalf("expected easy review interval between 24h and 30h, got %s", got)
+	if got := easy.NextReviewAt.Sub(now); got <= 48*time.Hour || got >= 51*time.Hour {
+		t.Fatalf("expected easy review interval between 48h and 51h, got %s", got)
 	}
 
 	hard := ApplyReviewOutcome(state, domain.RatingHard, domain.ReviewModeReveal, now, 5200)
 	if hard.NextReviewAt == nil {
 		t.Fatalf("expected hard review to schedule next review")
 	}
-	if got := hard.NextReviewAt.Sub(now); got < 4*time.Hour || got >= 7*time.Hour {
-		t.Fatalf("expected hard review interval between 4h and 7h, got %s", got)
+	if got := hard.NextReviewAt.Sub(now); got <= 9*time.Hour || got >= 10*time.Hour {
+		t.Fatalf("expected hard review interval between 9h and 10h, got %s", got)
 	}
 }
 

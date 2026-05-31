@@ -13,6 +13,8 @@ const (
 	slowRecallFillThresholdMs   = 9000
 	guessedCorrectThresholdMs   = 2500
 	maxStoredTypedAnswerLength  = 64
+	slowRecallIntervalBias      = 0.92
+	guessedCorrectIntervalBias  = 0.96
 )
 
 type MemoryCauseInput struct {
@@ -102,9 +104,9 @@ func ApplyMemoryCauseIntervalBias(state domain.UserWordState, cause domain.Memor
 	multiplier := 1.0
 	switch cause {
 	case domain.MemoryCauseSlowRecall:
-		multiplier = 0.85
+		multiplier = slowRecallIntervalBias
 	case domain.MemoryCauseGuessedCorrect:
-		multiplier = 0.90
+		multiplier = guessedCorrectIntervalBias
 	default:
 		return state
 	}

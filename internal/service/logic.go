@@ -17,6 +17,10 @@ const (
 	wordConstructionHintStruggleCount   = 2
 	wordConstructionWeaknessBoost       = 0.25
 	wordConstructionDifficultyBoost     = 0.04
+	easyReviewIntervalMultiplier        = 1.35
+	mediumReviewIntervalMultiplier      = 0.80
+	hardReviewIntervalMultiplier        = 0.30
+	minHardReviewInterval               = 4 * time.Hour
 )
 
 func ComputeWeakSlots(dailyLimit int) int {
@@ -225,21 +229,21 @@ func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, 
 	multiplier := 1.0
 	switch rating {
 	case domain.RatingEasy:
-		multiplier = 0.75
+		multiplier = easyReviewIntervalMultiplier
 		state.Difficulty = minFloat(maxFloat(state.Difficulty-0.08, 0.1), 0.95)
 		state.Stability += 0.6
 	case domain.RatingMedium:
-		multiplier = 0.5
+		multiplier = mediumReviewIntervalMultiplier
 		state.Difficulty = minFloat(maxFloat(state.Difficulty-0.02, 0.1), 0.95)
 		state.Stability += 0.25
 	case domain.RatingHard:
-		multiplier = 0.2
+		multiplier = hardReviewIntervalMultiplier
 		state.Difficulty = minFloat(state.Difficulty+0.1, 0.95)
 		state.Stability = maxFloat(state.Stability*0.85, 0.6)
 	}
 	seconds := int(float64(baseInterval) * multiplier * (1 + state.Stability/5))
-	if rating == domain.RatingHard && seconds < int((4*time.Hour).Seconds()) {
-		seconds = int((4 * time.Hour).Seconds())
+	if rating == domain.RatingHard && seconds < int(minHardReviewInterval.Seconds()) {
+		seconds = int(minHardReviewInterval.Seconds())
 	}
 	state.IntervalSeconds = seconds
 	next := now.Add(time.Duration(seconds) * time.Second)
