@@ -470,7 +470,7 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
-	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, wordRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
@@ -580,7 +580,7 @@ func TestGenerateDynamicReviewPromptsEndpoint(t *testing.T) {
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
-	dynamicReviewService := service.NewDynamicReviewService(promptRepo, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(promptRepo, llmRepo, wordRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
@@ -645,7 +645,7 @@ func TestTestLLMEndpoint(t *testing.T) {
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
-	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, wordRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
@@ -707,7 +707,7 @@ func TestStatisticsEndpoint(t *testing.T) {
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &staticGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
-	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, wordRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	user, err := identity.ResolveUser(context.Background(), service.AuthSubject{Subject: "dev-user", Email: "dev@example.com"})
@@ -765,7 +765,7 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	dictionaryService := service.NewDictionaryService(settingsRepo, wordRepo, stateRepo, poolRepo, nil, clock)
 	poolService := service.NewPoolService(settingsRepo, wordRepo, stateRepo, poolRepo, eventRepo, llmRepo, &failingGenerator{}, clock, logger, true)
 	learningService := service.NewLearningService(settingsRepo, stateRepo, poolRepo, eventRepo, poolService, clock, logger, true)
-	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, &staticDynamicReviewGenerator{}, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(&memoryDynamicReviewPromptRepo{}, llmRepo, wordRepo, &staticDynamicReviewGenerator{}, clock, logger)
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
