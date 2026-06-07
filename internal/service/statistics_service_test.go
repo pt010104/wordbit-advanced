@@ -71,9 +71,6 @@ func (r *statisticsStateRepo) ListDueWithinWindow(ctx context.Context, userID uu
 func (r *statisticsStateRepo) ListWeakCandidates(ctx context.Context, userID uuid.UUID, excludeWordIDs []uuid.UUID, limit int) ([]domain.UserWordState, error) {
 	return nil, nil
 }
-func (r *statisticsStateRepo) ListMode4Candidates(ctx context.Context, userID uuid.UUID, limit int) ([]domain.UserWordState, error) {
-	return nil, nil
-}
 func (r *statisticsStateRepo) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
 	return append([]domain.UserWordState(nil), r.states...), nil
 }

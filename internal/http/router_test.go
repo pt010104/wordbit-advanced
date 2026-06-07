@@ -179,12 +179,6 @@ func (m *memoryStateRepo) ListWeakCandidates(ctx context.Context, userID uuid.UU
 	}
 	return append([]domain.UserWordState(nil), m.weakCandidates[:limit]...), nil
 }
-func (m *memoryStateRepo) ListMode4Candidates(ctx context.Context, userID uuid.UUID, limit int) ([]domain.UserWordState, error) {
-	if limit <= 0 || limit >= len(m.weakCandidates) {
-		return append([]domain.UserWordState(nil), m.weakCandidates...), nil
-	}
-	return append([]domain.UserWordState(nil), m.weakCandidates[:limit]...), nil
-}
 func (m *memoryStateRepo) ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error) {
 	return append([]domain.UserWordState(nil), m.existingWords...), nil
 }

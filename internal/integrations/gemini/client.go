@@ -135,50 +135,6 @@ func (c *Client) GenerateCandidates(ctx context.Context, input service.Generatio
 	return parsed, result.text, nil
 }
 
-func (c *Client) GenerateMode4WeakPassage(ctx context.Context, input service.Mode4PassageGenerationInput) (domain.Mode4WeakPassagePayload, string, error) {
-	body := chatCompletionRequest{
-		Messages: []chatMessage{
-			{Role: "system", Content: mode4WeakPassageSystemInstruction},
-			{Role: "user", Content: buildMode4WeakPassagePrompt(input)},
-		},
-		Temperature:    c.temperature,
-		MaxTokens:      c.maxOutputTokens,
-		ResponseFormat: &responseFormat{Type: "json_object"},
-		Stream:         false,
-	}
-
-	result, err := executeJSON(c, ctx, func(model string) ([]byte, error) {
-		requestBody := body
-		requestBody.Model = model
-		payload, err := json.Marshal(requestBody)
-		if err != nil {
-			return nil, fmt.Errorf("marshal deepseek mode4 request: %w", err)
-		}
-		return payload, nil
-	}, requestOperation{
-		requestLog:       "deepseek mode4 generate request",
-		requestFailedLog: "deepseek mode4 generate request failed",
-		readFailedLog:    "deepseek mode4 response read failed",
-		serverErrorLog:   "deepseek mode4 server error",
-		clientErrorLog:   "deepseek mode4 client error",
-		parseFailedLog:   "deepseek mode4 parse failed",
-		successLog:       "deepseek mode4 response",
-		createErrPrefix:  "create deepseek mode4 request",
-		requestErrPrefix: "deepseek mode4 request failed",
-		readErrPrefix:    "read deepseek mode4 response",
-		serverErrPrefix:  "deepseek mode4 server error",
-		clientErrPrefix:  "deepseek mode4 error",
-		parseErrPrefix:   "parse deepseek mode4 response",
-		extraFields: []any{
-			"target_count", len(input.TargetWords),
-		},
-	}, parseMode4WeakPassageGenerateResponse)
-	if err != nil {
-		return domain.Mode4WeakPassagePayload{}, result.raw, err
-	}
-	return result.value, result.text, nil
-}
-
 func (c *Client) GenerateDynamicReviewPrompts(ctx context.Context, input service.DynamicReviewPromptGenerationInput) (domain.DynamicReviewPromptBatchPayload, string, error) {
 	body := chatCompletionRequest{
 		Messages: []chatMessage{
@@ -326,13 +282,6 @@ Always return valid json.
 Do not wrap the json in markdown fences.
 `
 
-const mode4WeakPassageSystemInstruction = `
-You generate reusable weak-word review passages for a production vocabulary learning service.
-Always return valid json only.
-Do not wrap the json in markdown fences.
-Do not ask follow-up questions.
-`
-
 const dynamicReviewSystemInstruction = `
 You generate fresh prompt-only overrides for vocabulary review cards in a production learning service.
 Always return valid json only.
@@ -345,50 +294,6 @@ const testPromptSystemInstruction = `
 You are a helpful assistant for a vocabulary learning app team.
 Answer the user's prompt directly and clearly.
 `
-
-func buildMode4WeakPassagePrompt(input service.Mode4PassageGenerationInput) string {
-	var builder strings.Builder
-	builder.WriteString(`
-Generate one English weak-word review passage for a Learn-flow card.
-
-Requirements:
-- return strict JSON only
-- output must be English only
-- everyday, natural tone
-- at most 10 sentences
-- use every selected target word at least once
-- mark every target word occurrence with markdown **double-asterisk** markers
-- prefer the exact selected surface form of each target word
-- do not ask questions
-- do not include blanks
-- do not include multiple-choice content
-- do not add explanations outside the JSON
-
-Output format:
-{
-  "plain_passage_text": "string",
-  "marked_passage_markdown": "string"
-}
-
-Selected weak words:
-`)
-	for index, word := range input.TargetWords {
-		builder.WriteString(fmt.Sprintf(`
-%d. word="%s"
-   normalized_form="%s"
-   canonical_form="%s"
-   lemma="%s"
-   part_of_speech="%s"
-   topic="%s"
-   level="%s"
-   english_meaning="%s"
-   vietnamese_meaning="%s"
-   example_sentence_1="%s"
-   example_sentence_2="%s"
-`, index+1, word.Word, word.NormalizedForm, word.CanonicalForm, word.Lemma, word.PartOfSpeech, word.Topic, word.Level, word.EnglishMeaning, word.VietnameseMeaning, word.ExampleSentence1, word.ExampleSentence2))
-	}
-	return builder.String()
-}
 
 func buildDynamicReviewPrompt(input service.DynamicReviewPromptGenerationInput) string {
 	var builder strings.Builder

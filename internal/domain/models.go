@@ -93,8 +93,7 @@ const (
 type LearnCardType string
 
 const (
-	LearnCardTypePoolItem               LearnCardType = "pool_item"
-	LearnCardTypeMode4WeakPassageReview LearnCardType = "mode4_weak_passage_review"
+	LearnCardTypePoolItem LearnCardType = "pool_item"
 )
 
 type PoolItemStatus string
@@ -125,8 +124,6 @@ const (
 	EventTypeWeaknessRefresh EventType = "weakness_refresh"
 	EventTypeBonusPractice   EventType = "bonus_practice_review"
 	EventTypeAnswerUndo      EventType = "answer_undo"
-	EventTypeMode4Passage    EventType = "mode4_passage"
-	EventTypeMode4WordRating EventType = "mode4_word_rating"
 )
 
 type RevealKind string
@@ -163,21 +160,6 @@ type WordSet struct {
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 }
-
-type Mode4ReviewAction string
-
-const (
-	Mode4ReviewActionDone Mode4ReviewAction = "done"
-	Mode4ReviewActionSkip Mode4ReviewAction = "skip"
-)
-
-type Mode4ReviewPassageStatus string
-
-const (
-	Mode4ReviewPassageStatusActive     Mode4ReviewPassageStatus = "active"
-	Mode4ReviewPassageStatusCompleted  Mode4ReviewPassageStatus = "completed"
-	Mode4ReviewPassageStatusSuperseded Mode4ReviewPassageStatus = "superseded"
-)
 
 type User struct {
 	ID              uuid.UUID `json:"id"`
@@ -428,68 +410,6 @@ type DailyDynamicReviewPrompt struct {
 	LLMRunID   *uuid.UUID                 `json:"llm_run_id,omitempty"`
 	CreatedAt  time.Time                  `json:"created_at"`
 	UpdatedAt  time.Time                  `json:"updated_at"`
-}
-
-type Mode4ReviewSourceWord struct {
-	WordID         uuid.UUID    `json:"word_id"`
-	Word           string       `json:"word"`
-	NormalizedForm string       `json:"normalized_form"`
-	Topic          string       `json:"topic"`
-	Level          CEFRLevel    `json:"level"`
-	WeaknessScore  float64      `json:"weakness_score"`
-	NextReviewAt   *time.Time   `json:"next_review_at,omitempty"`
-	Status         WordStatus   `json:"status"`
-	LastRating     ReviewRating `json:"last_rating,omitempty"`
-	Difficulty     float64      `json:"difficulty"`
-	LearningStage  int          `json:"learning_stage"`
-}
-
-type Mode4PassageSpan struct {
-	Text       string     `json:"text"`
-	WordID     *uuid.UUID `json:"word_id,omitempty"`
-	TargetWord string     `json:"target_word,omitempty"`
-}
-
-type Mode4ReviewPassage struct {
-	ID                    uuid.UUID                `json:"id"`
-	UserID                uuid.UUID                `json:"user_id"`
-	GenerationNumber      int                      `json:"generation_number"`
-	WordIDs               []uuid.UUID              `json:"word_ids"`
-	SourceWords           []Mode4ReviewSourceWord  `json:"source_words"`
-	PlainPassageText      string                   `json:"plain_passage_text"`
-	MarkedPassageMarkdown string                   `json:"marked_passage_markdown"`
-	PassageSpans          []Mode4PassageSpan       `json:"passage_spans"`
-	Status                Mode4ReviewPassageStatus `json:"status"`
-	SkipCount             int                      `json:"skip_count"`
-	LastSkippedAt         *time.Time               `json:"last_skipped_at,omitempty"`
-	CompletedAt           *time.Time               `json:"completed_at,omitempty"`
-	LLMRunID              *uuid.UUID               `json:"llm_run_id,omitempty"`
-	CreatedAt             time.Time                `json:"created_at"`
-	UpdatedAt             time.Time                `json:"updated_at"`
-}
-
-type Mode4ReviewState struct {
-	UserID          uuid.UUID  `json:"user_id"`
-	GenerationCount int        `json:"generation_count"`
-	ActivePassageID *uuid.UUID `json:"active_passage_id,omitempty"`
-	LastCompletedAt *time.Time `json:"last_completed_at,omitempty"`
-	NextEligibleAt  *time.Time `json:"next_eligible_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-}
-
-type Mode4WeakPassageReviewCard struct {
-	PassageID             uuid.UUID          `json:"passage_id"`
-	GenerationNumber      int                `json:"generation_number"`
-	PlainPassageText      string             `json:"plain_passage_text"`
-	MarkedPassageMarkdown string             `json:"marked_passage_markdown"`
-	PassageSpans          []Mode4PassageSpan `json:"passage_spans"`
-	TargetWords           []Word             `json:"target_words"`
-}
-
-type Mode4WeakPassagePayload struct {
-	PlainPassageText      string `json:"plain_passage_text"`
-	MarkedPassageMarkdown string `json:"marked_passage_markdown"`
 }
 
 type PoolGenerationCounts struct {

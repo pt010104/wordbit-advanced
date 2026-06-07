@@ -77,6 +77,7 @@ make test-integration
 
 - OpenAPI: [docs/openapi.yaml](docs/openapi.yaml)
 - Human summary: [docs/api.md](docs/api.md)
+- DeepSeek integration note: [docs/deepseek-provider-integration.md](docs/deepseek-provider-integration.md)
 
 ## Docker / VPS Deployment Notes
 

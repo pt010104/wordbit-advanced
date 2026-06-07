@@ -33,7 +33,6 @@ type WordStateRepository interface {
 	Get(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) (domain.UserWordState, error)
 	ListDueWithinWindow(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time, learningOnly bool) ([]domain.UserWordState, error)
 	ListWeakCandidates(ctx context.Context, userID uuid.UUID, excludeWordIDs []uuid.UUID, limit int) ([]domain.UserWordState, error)
-	ListMode4Candidates(ctx context.Context, userID uuid.UUID, limit int) ([]domain.UserWordState, error)
 	ListExistingWords(ctx context.Context, userID uuid.UUID) ([]domain.UserWordState, error)
 	ListDictionaryEntries(ctx context.Context, userID uuid.UUID, filter domain.DictionaryFilter, query string, setID *uuid.UUID, limit int, offset int) ([]domain.DictionaryEntry, error)
 	Upsert(ctx context.Context, state domain.UserWordState) (domain.UserWordState, error)
@@ -91,22 +90,6 @@ type LLMRunRepository interface {
 
 type CandidateGenerator interface {
 	GenerateCandidates(ctx context.Context, input GenerationInput) ([]domain.CandidateWord, string, error)
-}
-
-type Mode4ReviewRepository interface {
-	GetOrCreateState(ctx context.Context, userID uuid.UUID) (domain.Mode4ReviewState, error)
-	UpsertState(ctx context.Context, state domain.Mode4ReviewState) (domain.Mode4ReviewState, error)
-	GetActivePassage(ctx context.Context, userID uuid.UUID) (domain.Mode4ReviewPassage, error)
-	GetPassage(ctx context.Context, userID uuid.UUID, passageID uuid.UUID) (domain.Mode4ReviewPassage, error)
-	GetPassageByGeneration(ctx context.Context, userID uuid.UUID, generationNumber int) (domain.Mode4ReviewPassage, error)
-	GetLatestPassage(ctx context.Context, userID uuid.UUID) (domain.Mode4ReviewPassage, error)
-	CreatePassage(ctx context.Context, passage domain.Mode4ReviewPassage) (domain.Mode4ReviewPassage, error)
-	UpdatePassageSkip(ctx context.Context, userID uuid.UUID, passageID uuid.UUID, skipCount int, skippedAt *time.Time) (domain.Mode4ReviewPassage, error)
-	UpdatePassageStatus(ctx context.Context, userID uuid.UUID, passageID uuid.UUID, status domain.Mode4ReviewPassageStatus, completedAt *time.Time) (domain.Mode4ReviewPassage, error)
-}
-
-type Mode4PassageGenerator interface {
-	GenerateMode4WeakPassage(ctx context.Context, input Mode4PassageGenerationInput) (domain.Mode4WeakPassagePayload, string, error)
 }
 
 type DynamicReviewPromptRepository interface {

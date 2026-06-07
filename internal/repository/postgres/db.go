@@ -31,7 +31,6 @@ type Repositories struct {
 	Pools                *PoolRepository
 	Events               *LearningEventRepository
 	LLMRuns              *LLMRunRepository
-	Mode4Reviews         *Mode4ReviewRepository
 	DynamicReviewPrompts *DynamicReviewPromptRepository
 	WordSets             *WordSetRepository
 }
@@ -45,7 +44,6 @@ func NewRepositories(pool *pgxpool.Pool) *Repositories {
 		Pools:                &PoolRepository{pool: pool},
 		Events:               &LearningEventRepository{pool: pool},
 		LLMRuns:              &LLMRunRepository{pool: pool},
-		Mode4Reviews:         &Mode4ReviewRepository{pool: pool},
 		DynamicReviewPrompts: &DynamicReviewPromptRepository{pool: pool},
 		WordSets:             &WordSetRepository{pool: pool},
 	}
@@ -405,70 +403,6 @@ func scanRun(row pgx.Row) (domain.LLMGenerationRun, error) {
 	run.RawResponse = toJSONMap(rawResponse)
 	run.RejectionSummary = toJSONMap(rejectionSummary)
 	return run, mapError(err)
-}
-
-
-
-func scanMode4ReviewPassage(row pgx.Row) (domain.Mode4ReviewPassage, error) {
-	var passage domain.Mode4ReviewPassage
-	var wordIDsJSON []byte
-	var sourceWordsJSON []byte
-	var spansJSON []byte
-	var llmRunID uuid.NullUUID
-	err := row.Scan(
-		&passage.ID,
-		&passage.UserID,
-		&passage.GenerationNumber,
-		&wordIDsJSON,
-		&sourceWordsJSON,
-		&passage.PlainPassageText,
-		&passage.MarkedPassageMarkdown,
-		&spansJSON,
-		&passage.Status,
-		&passage.SkipCount,
-		&passage.LastSkippedAt,
-		&passage.CompletedAt,
-		&llmRunID,
-		&passage.CreatedAt,
-		&passage.UpdatedAt,
-	)
-	if llmRunID.Valid {
-		passage.LLMRunID = &llmRunID.UUID
-	}
-	if len(wordIDsJSON) > 0 {
-		if err := json.Unmarshal(wordIDsJSON, &passage.WordIDs); err != nil {
-			return domain.Mode4ReviewPassage{}, mapError(err)
-		}
-	}
-	if len(sourceWordsJSON) > 0 {
-		if err := json.Unmarshal(sourceWordsJSON, &passage.SourceWords); err != nil {
-			return domain.Mode4ReviewPassage{}, mapError(err)
-		}
-	}
-	if len(spansJSON) > 0 {
-		if err := json.Unmarshal(spansJSON, &passage.PassageSpans); err != nil {
-			return domain.Mode4ReviewPassage{}, mapError(err)
-		}
-	}
-	return passage, mapError(err)
-}
-
-func scanMode4ReviewState(row pgx.Row) (domain.Mode4ReviewState, error) {
-	var state domain.Mode4ReviewState
-	var activePassageID uuid.NullUUID
-	err := row.Scan(
-		&state.UserID,
-		&state.GenerationCount,
-		&activePassageID,
-		&state.LastCompletedAt,
-		&state.NextEligibleAt,
-		&state.CreatedAt,
-		&state.UpdatedAt,
-	)
-	if activePassageID.Valid {
-		state.ActivePassageID = &activePassageID.UUID
-	}
-	return state, mapError(err)
 }
 
 func scanDynamicReviewPrompt(row pgx.Row) (domain.DailyDynamicReviewPrompt, error) {

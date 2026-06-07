@@ -30,7 +30,6 @@ type Handler struct {
 	dictionary    *service.DictionaryService
 	pools         *service.PoolService
 	learning      *service.LearningService
-	mode4         *service.WeakPassageReviewService
 	dynamicReview *service.DynamicReviewService
 	wordSets      *service.WordSetService
 	statistics    *service.StatisticsService
@@ -38,7 +37,7 @@ type Handler struct {
 	promptTester  service.PromptTester
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, mode4 *service.WeakPassageReviewService, dynamicReview *service.DynamicReviewService, wordSets *service.WordSetService, statistics *service.StatisticsService, llmRuns service.LLMRunRepository, promptTester service.PromptTester, build BuildInfo) nethttp.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, dynamicReview *service.DynamicReviewService, wordSets *service.WordSetService, statistics *service.StatisticsService, llmRuns service.LLMRunRepository, promptTester service.PromptTester, build BuildInfo) nethttp.Handler {
 	mw := NewMiddleware(logger, verifier, identity, cfg.AdminToken)
 	h := &Handler{
 		logger:        logger,
@@ -48,7 +47,6 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 		dictionary:    dictionary,
 		pools:         pools,
 		learning:      learning,
-		mode4:         mode4,
 		dynamicReview: dynamicReview,
 		wordSets:      wordSets,
 		statistics:    statistics,

@@ -21,7 +21,6 @@ type Config struct {
 	DefaultTimezone             string
 	AdminToken                  string
 	AutoMigrate                 bool
-	Mode4Enabled                bool
 	MemoryCauseInferenceEnabled bool
 	HTTPReadTimeout             time.Duration
 	HTTPWriteTimeout            time.Duration
@@ -71,11 +70,6 @@ func Load() (Config, error) {
 		DefaultTimezone: envString("DEFAULT_TIMEZONE", domain.DefaultTimezone),
 		AdminToken:      envString("ADMIN_TOKEN", ""),
 		AutoMigrate:     envBool("AUTO_MIGRATE", true),
-		// Mode 4 (weak passage review) is hard-disabled at the product level.
-		// The flag is retained in config for future re-enablement but defaults to false
-		// and is forced to false regardless of MODE4_ENABLED env to make it impossible
-		// to surface mode 4 cards or background generation in production.
-		Mode4Enabled:                false,
 		MemoryCauseInferenceEnabled: envBool("MEMORY_CAUSE_INFERENCE_ENABLED", true),
 		HTTPReadTimeout:             envDuration("HTTP_READ_TIMEOUT", 10*time.Second),
 		HTTPWriteTimeout:            envDuration("HTTP_WRITE_TIMEOUT", 45*time.Second),
