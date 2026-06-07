@@ -594,7 +594,83 @@ func (s *PoolService) listBonusPracticeCandidates(
 		return nil, err
 	}
 
-	return append(freshCandidates, recycledCandidates...), nil
+	collected := append(freshCandidates, recycledCandidates...)
+	if len(collected) >= limit || activeSet == nil {
+		return collected, nil
+	}
+
+	// Cram fallback: when the active set has no weak / recently-practiced words
+	// left to surface, let the user keep practicing by pulling the set's
+	// remaining learning/review members regardless of their due date. This is
+	// what makes "Start practice" work for a custom set (e.g. a speaking set)
+	// that has members but nothing currently due. Bonus-practice ratings still
+	// do not disturb the real review schedule.
+	cramExcludeWordIDs := extractStateWordIDs(collected)
+	cramExcludeWordIDs = append(cramExcludeWordIDs, poolItemWordIDs(items)...)
+	cramCandidates, err := s.listSetCramCandidates(ctx, userID, activeSet, cramExcludeWordIDs, limit-len(collected))
+	if err != nil {
+		return nil, err
+	}
+	return append(collected, cramCandidates...), nil
+}
+
+// listSetCramCandidates returns learning/review word-states that belong to the
+// active set, ignoring due date, for a free practice (cram) session. Words in
+// excludeWordIDs (already-selected candidates and words already present in
+// today's pool) are skipped to avoid duplicates.
+func (s *PoolService) listSetCramCandidates(
+	ctx context.Context,
+	userID uuid.UUID,
+	activeSet *domain.WordSet,
+	excludeWordIDs []uuid.UUID,
+	limit int,
+) ([]domain.UserWordState, error) {
+	if limit <= 0 || activeSet == nil {
+		return nil, nil
+	}
+
+	states, err := s.stateRepo.ListExistingWords(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	excluded := make(map[uuid.UUID]struct{}, len(excludeWordIDs))
+	for _, wordID := range excludeWordIDs {
+		excluded[wordID] = struct{}{}
+	}
+
+	candidates := make([]domain.UserWordState, 0, limit)
+	for _, state := range states {
+		if _, skip := excluded[state.WordID]; skip {
+			continue
+		}
+		if state.Status != domain.WordStatusLearning && state.Status != domain.WordStatusReview {
+			continue
+		}
+		if !stateMatchesActiveSet(state, activeSet) {
+			continue
+		}
+		candidates = append(candidates, state)
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].WeaknessScore != candidates[j].WeaknessScore {
+			return candidates[i].WeaknessScore > candidates[j].WeaknessScore
+		}
+		left, right := candidates[i].NextReviewAt, candidates[j].NextReviewAt
+		if left != nil && right != nil && !left.Equal(*right) {
+			return left.Before(*right)
+		}
+		if (left == nil) != (right == nil) {
+			return left != nil
+		}
+		return candidates[i].WordID.String() < candidates[j].WordID.String()
+	})
+
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates, nil
 }
 
 func (s *PoolService) recycleBonusPracticeCandidates(
@@ -1551,6 +1627,14 @@ func extractStateWordIDs(states []domain.UserWordState) []uuid.UUID {
 	out := make([]uuid.UUID, 0, len(states))
 	for _, state := range states {
 		out = append(out, state.WordID)
+	}
+	return out
+}
+
+func poolItemWordIDs(items []domain.DailyLearningPoolItem) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.WordID)
 	}
 	return out
 }
