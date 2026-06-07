@@ -87,6 +87,28 @@ func fromJSONMap(value domain.JSONMap) []byte {
 	return bytes
 }
 
+func toStringSlice(value []byte) []string {
+	if len(value) == 0 {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal(value, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func fromStringSlice(value []string) []byte {
+	if len(value) == 0 {
+		return []byte("[]")
+	}
+	bytes, err := json.Marshal(value)
+	if err != nil {
+		return []byte("[]")
+	}
+	return bytes
+}
+
 func marshalJSONValue(value any, fallback string) []byte {
 	bytes, err := json.Marshal(value)
 	if err != nil {
@@ -195,6 +217,7 @@ func scanWord(row pgx.Row) (domain.Word, error) {
 	var word domain.Word
 	var commonRate sql.NullString
 	var metadata []byte
+	var generatedExamples []byte
 	err := row.Scan(
 		&word.ID,
 		&word.Word,
@@ -212,6 +235,7 @@ func scanWord(row pgx.Row) (domain.Word, error) {
 		&word.EnglishMeaning,
 		&word.ExampleSentence1,
 		&word.ExampleSentence2,
+		&generatedExamples,
 		&commonRate,
 		&word.SourceProvider,
 		&metadata,
@@ -220,6 +244,7 @@ func scanWord(row pgx.Row) (domain.Word, error) {
 	)
 	word.CommonRate = nullableCommonRatePointer(commonRate)
 	word.SourceMetadata = toJSONMap(metadata)
+	word.GeneratedExamples = toStringSlice(generatedExamples)
 	word.AudioURL = extractAudioURL(word.SourceMetadata)
 	return word, mapError(err)
 }
@@ -299,6 +324,7 @@ func scanPoolItem(row pgx.Row) (domain.DailyLearningPoolItem, error) {
 	var word domain.Word
 	var commonRate sql.NullString
 	var wordMetadata []byte
+	var wordGeneratedExamples []byte
 	err := row.Scan(
 		&item.ID,
 		&item.PoolID,
@@ -333,6 +359,7 @@ func scanPoolItem(row pgx.Row) (domain.DailyLearningPoolItem, error) {
 		&word.EnglishMeaning,
 		&word.ExampleSentence1,
 		&word.ExampleSentence2,
+		&wordGeneratedExamples,
 		&commonRate,
 		&word.SourceProvider,
 		&wordMetadata,
@@ -345,6 +372,7 @@ func scanPoolItem(row pgx.Row) (domain.DailyLearningPoolItem, error) {
 	}
 	word.CommonRate = nullableCommonRatePointer(commonRate)
 	word.SourceMetadata = toJSONMap(wordMetadata)
+	word.GeneratedExamples = toStringSlice(wordGeneratedExamples)
 	if word.ID != uuid.Nil {
 		word.AudioURL = extractAudioURL(word.SourceMetadata)
 		item.Word = &word
@@ -437,6 +465,7 @@ func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {
 	var entry domain.DictionaryEntry
 	var commonRate sql.NullString
 	var metadata []byte
+	var generatedExamples []byte
 	var listStatus string
 	err := row.Scan(
 		&entry.Word.ID,
@@ -455,6 +484,7 @@ func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {
 		&entry.Word.EnglishMeaning,
 		&entry.Word.ExampleSentence1,
 		&entry.Word.ExampleSentence2,
+		&generatedExamples,
 		&commonRate,
 		&entry.Word.SourceProvider,
 		&metadata,
@@ -472,6 +502,7 @@ func scanDictionaryEntry(row pgx.Row) (domain.DictionaryEntry, error) {
 	)
 	entry.Word.CommonRate = nullableCommonRatePointer(commonRate)
 	entry.Word.SourceMetadata = toJSONMap(metadata)
+	entry.Word.GeneratedExamples = toStringSlice(generatedExamples)
 	entry.Word.AudioURL = extractAudioURL(entry.Word.SourceMetadata)
 	entry.ListStatus = domain.DictionaryListStatus(listStatus)
 	return entry, mapError(err)

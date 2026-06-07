@@ -58,6 +58,10 @@ func (r *statisticsWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID
 	return out, nil
 }
 
+func (r *statisticsWordRepo) AppendGeneratedExamples(ctx context.Context, wordID uuid.UUID, examples []string, maxGeneratedExamples int) ([]string, error) {
+	return nil, nil
+}
+
 type statisticsStateRepo struct {
 	states []domain.UserWordState
 }

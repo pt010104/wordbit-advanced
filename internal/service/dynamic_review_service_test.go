@@ -54,7 +54,7 @@ func TestDynamicReviewOverlayReusesPromptForWeakPractice(t *testing.T) {
 			},
 		}},
 	}
-	service := NewDynamicReviewService(repo, &dynamicReviewLLMRepoStub{}, &dynamicReviewGeneratorStub{}, dynamicReviewClock{now: time.Now().UTC()}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	service := NewDynamicReviewService(repo, &dynamicReviewLLMRepoStub{}, &dynamicReviewWordRepoStub{}, &dynamicReviewGeneratorStub{}, dynamicReviewClock{now: time.Now().UTC()}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
 
 	items, err := service.OverlayPoolItems(context.Background(), userID, "2026-03-23", []domain.DailyLearningPoolItem{
 		testDynamicPoolItem(word, domain.PoolItemTypeWeak, domain.ReviewModeMultipleChoice, 1),
@@ -80,7 +80,7 @@ func TestDynamicReviewPrewarmChunksAndRecordsLLMRuns(t *testing.T) {
 	repo := &dynamicReviewPromptRepoStub{}
 	llmRepo := &dynamicReviewLLMRepoStub{}
 	generator := &dynamicReviewGeneratorStub{}
-	service := NewDynamicReviewService(repo, llmRepo, generator, dynamicReviewClock{now: time.Date(2026, 3, 23, 0, 10, 5, 0, time.UTC)}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	service := NewDynamicReviewService(repo, llmRepo, &dynamicReviewWordRepoStub{}, generator, dynamicReviewClock{now: time.Date(2026, 3, 23, 0, 10, 5, 0, time.UTC)}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
 
 	result, err := service.Prewarm(context.Background(), userID, "2026-03-23", items)
 	if err != nil {
@@ -121,7 +121,7 @@ func TestDynamicReviewBackfillGeneratesOnlyOneChunkForCurrentCard(t *testing.T) 
 	repo := &dynamicReviewPromptRepoStub{}
 	llmRepo := &dynamicReviewLLMRepoStub{}
 	generator := &dynamicReviewGeneratorStub{}
-	service := NewDynamicReviewService(repo, llmRepo, generator, dynamicReviewClock{now: time.Date(2026, 3, 23, 8, 0, 0, 0, time.UTC)}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	service := NewDynamicReviewService(repo, llmRepo, &dynamicReviewWordRepoStub{}, generator, dynamicReviewClock{now: time.Date(2026, 3, 23, 8, 0, 0, 0, time.UTC)}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
 
 	if err := service.BackfillForCurrentCard(context.Background(), userID, "2026-03-23", items, current); err != nil {
 		t.Fatalf("BackfillForCurrentCard() error = %v", err)
@@ -134,6 +134,55 @@ func TestDynamicReviewBackfillGeneratesOnlyOneChunkForCurrentCard(t *testing.T) 
 	}
 }
 
+func TestFillBlankExampleReplacesBlankWithWord(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		prompt string
+		word   string
+		want   string
+	}{
+		{"fills blank", "The company used _____ to guide a risky expansion.", "forecast", "The company used forecast to guide a risky expansion."},
+		{"variable underscores", "She had to __ the decision.", "defend", "She had to defend the decision."},
+		{"no blank returns empty", "Choose the best word for a prediction.", "forecast", ""},
+		{"blank word returns empty", "The _____ matters.", "   ", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fillBlankExample(tc.prompt, tc.word); got != tc.want {
+				t.Fatalf("fillBlankExample(%q, %q) = %q, want %q", tc.prompt, tc.word, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDynamicReviewPrewarmSavesFillBlankExamplesToWord(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	fillWord := testDynamicReviewWord("forecast")
+	mcWord := testDynamicReviewWord("allocate")
+	items := []domain.DailyLearningPoolItem{
+		testDynamicPoolItem(fillWord, domain.PoolItemTypeReview, domain.ReviewModeFillBlank, 1),
+		testDynamicPoolItem(mcWord, domain.PoolItemTypeReview, domain.ReviewModeMultipleChoice, 2),
+	}
+
+	wordRepo := &dynamicReviewWordRepoStub{}
+	service := NewDynamicReviewService(&dynamicReviewPromptRepoStub{}, &dynamicReviewLLMRepoStub{}, wordRepo, &dynamicReviewGeneratorStub{}, dynamicReviewClock{now: time.Now().UTC()}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+
+	if _, err := service.Prewarm(context.Background(), userID, "2026-03-23", items); err != nil {
+		t.Fatalf("Prewarm() error = %v", err)
+	}
+
+	if got := wordRepo.appended[fillWord.ID]; len(got) != 1 || got[0] != "The company used forecast to guide a risky expansion." {
+		t.Fatalf("expected fill-in-blank example saved to word, got %v", got)
+	}
+	if _, ok := wordRepo.appended[mcWord.ID]; ok {
+		t.Fatalf("expected no example saved for multiple-choice word")
+	}
+}
+
 func TestDynamicReviewBackfillSkipsHiddenMeaningCard(t *testing.T) {
 	t.Parallel()
 
@@ -141,7 +190,7 @@ func TestDynamicReviewBackfillSkipsHiddenMeaningCard(t *testing.T) {
 	word := testDynamicReviewWord("clarify")
 	current := testDynamicPoolItem(word, domain.PoolItemTypeReview, domain.ReviewModeReveal, 1)
 	generator := &dynamicReviewGeneratorStub{}
-	service := NewDynamicReviewService(&dynamicReviewPromptRepoStub{}, &dynamicReviewLLMRepoStub{}, generator, dynamicReviewClock{now: time.Now().UTC()}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	service := NewDynamicReviewService(&dynamicReviewPromptRepoStub{}, &dynamicReviewLLMRepoStub{}, &dynamicReviewWordRepoStub{}, generator, dynamicReviewClock{now: time.Now().UTC()}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
 
 	if err := service.BackfillForCurrentCard(context.Background(), userID, "2026-03-23", []domain.DailyLearningPoolItem{current}, current); err != nil {
 		t.Fatalf("BackfillForCurrentCard() error = %v", err)
@@ -277,6 +326,42 @@ func (g *dynamicReviewGeneratorStub) GenerateDynamicReviewPrompts(ctx context.Co
 	return domain.DynamicReviewPromptBatchPayload{Items: items}, "{}", nil
 }
 
+type dynamicReviewWordRepoStub struct {
+	appended map[uuid.UUID][]string
+}
+
+func (r *dynamicReviewWordRepoStub) UpsertWord(ctx context.Context, candidate domain.CandidateWord) (domain.Word, error) {
+	return domain.Word{}, nil
+}
+
+func (r *dynamicReviewWordRepoStub) GetByID(ctx context.Context, wordID uuid.UUID) (domain.Word, error) {
+	return domain.Word{}, nil
+}
+
+func (r *dynamicReviewWordRepoStub) UpdateWord(ctx context.Context, wordID uuid.UUID, candidate domain.CandidateWord) (domain.Word, error) {
+	return domain.Word{}, nil
+}
+
+func (r *dynamicReviewWordRepoStub) ListWordIDsSeenAsNew(ctx context.Context, userID uuid.UUID, since time.Time) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (r *dynamicReviewWordRepoStub) ListBankWords(ctx context.Context, userID uuid.UUID, level domain.CEFRLevel, topic string, excludeWordIDs []uuid.UUID, limit int) ([]domain.Word, error) {
+	return nil, nil
+}
+
+func (r *dynamicReviewWordRepoStub) ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([]domain.Word, error) {
+	return nil, nil
+}
+
+func (r *dynamicReviewWordRepoStub) AppendGeneratedExamples(ctx context.Context, wordID uuid.UUID, examples []string, maxGeneratedExamples int) ([]string, error) {
+	if r.appended == nil {
+		r.appended = make(map[uuid.UUID][]string)
+	}
+	r.appended[wordID] = append(r.appended[wordID], examples...)
+	return r.appended[wordID], nil
+}
+
 type dynamicReviewClock struct {
 	now time.Time
 }
@@ -339,7 +424,7 @@ func TestDynamicReviewOverlayReusesHistoricalPromptFallback(t *testing.T) {
 			},
 		}},
 	}
-	service := NewDynamicReviewService(repo, &dynamicReviewLLMRepoStub{}, &dynamicReviewGeneratorStub{}, dynamicReviewClock{now: time.Now().UTC()}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	service := NewDynamicReviewService(repo, &dynamicReviewLLMRepoStub{}, &dynamicReviewWordRepoStub{}, &dynamicReviewGeneratorStub{}, dynamicReviewClock{now: time.Now().UTC()}, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
 
 	items, err := service.OverlayPoolItems(context.Background(), userID, "2026-03-23", []domain.DailyLearningPoolItem{
 		testDynamicPoolItem(word, domain.PoolItemTypeReview, domain.ReviewModeMultipleChoice, 1),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -21,11 +22,15 @@ const (
 	dynamicReviewTriggerPrewarm  = "prewarm"
 	dynamicReviewTriggerBackfill = "backfill"
 	dynamicReviewMetadataKey     = "dynamic_review"
+	dynamicReviewMaxGenExamples  = 5
 )
+
+var dynamicReviewBlankPattern = regexp.MustCompile(`_{2,}`)
 
 type DynamicReviewService struct {
 	promptRepo DynamicReviewPromptRepository
 	llmRepo    LLMRunRepository
+	wordRepo   WordRepository
 	generator  DynamicReviewPromptGenerator
 	clock      Clock
 	logger     *slog.Logger
@@ -48,6 +53,7 @@ type dynamicReviewCandidate struct {
 func NewDynamicReviewService(
 	promptRepo DynamicReviewPromptRepository,
 	llmRepo LLMRunRepository,
+	wordRepo WordRepository,
 	generator DynamicReviewPromptGenerator,
 	clock Clock,
 	logger *slog.Logger,
@@ -55,6 +61,7 @@ func NewDynamicReviewService(
 	return &DynamicReviewService{
 		promptRepo: promptRepo,
 		llmRepo:    llmRepo,
+		wordRepo:   wordRepo,
 		generator:  generator,
 		clock:      clock,
 		logger:     logger,
@@ -276,7 +283,62 @@ func (s *DynamicReviewService) generateAndPersistChunk(
 		})
 	}
 
-	return s.promptRepo.UpsertBatch(ctx, prompts)
+	saved, err := s.promptRepo.UpsertBatch(ctx, prompts)
+	if err != nil {
+		return nil, err
+	}
+
+	s.persistFillBlankExamples(ctx, chunk, payload)
+	return saved, nil
+}
+
+// persistFillBlankExamples turns each generated fill-in-blank prompt into a
+// readable example sentence (by filling the blank with the target word) and
+// appends it to the word's generated_examples list. Failures are logged but do
+// not abort prompt generation.
+func (s *DynamicReviewService) persistFillBlankExamples(ctx context.Context, chunk []dynamicReviewCandidate, payload domain.DynamicReviewPromptBatchPayload) {
+	if s.wordRepo == nil {
+		return
+	}
+	wordByID := make(map[uuid.UUID]domain.Word, len(chunk))
+	for _, candidate := range chunk {
+		wordByID[candidate.WordID] = candidate.Word
+	}
+
+	for _, item := range payload.Items {
+		if item.ReviewMode != domain.ReviewModeFillBlank {
+			continue
+		}
+		word, ok := wordByID[item.WordID]
+		if !ok {
+			continue
+		}
+		example := fillBlankExample(item.PromptText, word.Word)
+		if example == "" {
+			continue
+		}
+		if _, err := s.wordRepo.AppendGeneratedExamples(ctx, item.WordID, []string{example}, dynamicReviewMaxGenExamples); err != nil {
+			s.logger.Warn("dynamic review save generated example failed",
+				"word_id", item.WordID,
+				"error", err,
+			)
+		}
+	}
+}
+
+// fillBlankExample replaces the blank marker in a fill-in-blank prompt with the
+// target word, producing a complete example sentence. Returns "" if the prompt
+// is blank or has no gap to fill.
+func fillBlankExample(promptText string, word string) string {
+	trimmedPrompt := strings.TrimSpace(promptText)
+	trimmedWord := strings.TrimSpace(word)
+	if trimmedPrompt == "" || trimmedWord == "" {
+		return ""
+	}
+	if !dynamicReviewBlankPattern.MatchString(trimmedPrompt) {
+		return ""
+	}
+	return strings.TrimSpace(dynamicReviewBlankPattern.ReplaceAllString(trimmedPrompt, trimmedWord))
 }
 
 func (s *DynamicReviewService) loadPromptMap(ctx context.Context, userID uuid.UUID, localDate string) (map[dynamicReviewKey]domain.DailyDynamicReviewPrompt, error) {

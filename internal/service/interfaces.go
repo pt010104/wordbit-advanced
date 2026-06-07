@@ -27,6 +27,7 @@ type WordRepository interface {
 	ListWordIDsSeenAsNew(ctx context.Context, userID uuid.UUID, since time.Time) ([]uuid.UUID, error)
 	ListBankWords(ctx context.Context, userID uuid.UUID, level domain.CEFRLevel, topic string, excludeWordIDs []uuid.UUID, limit int) ([]domain.Word, error)
 	ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([]domain.Word, error)
+	AppendGeneratedExamples(ctx context.Context, wordID uuid.UUID, examples []string, maxGeneratedExamples int) ([]string, error)
 }
 
 type WordStateRepository interface {

@@ -51,7 +51,7 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	poolService.SetWordSetService(wordSets)
 	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	learningService.SetWordSetService(wordSets)
-	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, deepseekClient, clock, logger)
+	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, repos.Words, deepseekClient, clock, logger)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
 	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, dynamicReviewService, wordSets, statistics, repos.LLMRuns, deepseekClient, apihttp.BuildInfo{

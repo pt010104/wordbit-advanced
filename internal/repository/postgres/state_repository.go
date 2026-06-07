@@ -140,7 +140,7 @@ func (r *WordStateRepository) ListDictionaryEntries(ctx context.Context, userID 
 
 	baseQuery := `
 			SELECT w.id, w.word, w.normalized_form, w.canonical_form, w.lemma, w.word_family, w.confusable_group_key, w.part_of_speech, w.level, w.topic,
-			       w.ipa, w.pronunciation_hint, w.vietnamese_meaning, w.english_meaning, w.example_sentence_1, w.example_sentence_2, w.common_rate, w.source_provider, w.source_metadata,
+			       w.ipa, w.pronunciation_hint, w.vietnamese_meaning, w.english_meaning, w.example_sentence_1, w.example_sentence_2, w.generated_examples, w.common_rate, w.source_provider, w.source_metadata,
 			       w.created_at, w.updated_at,
 			       CASE WHEN s.status = 'known' THEN 'known' ELSE 'unknown' END AS list_status,
 			       s.status, s.first_seen_at, s.last_seen_at, s.known_at, s.next_review_at, s.review_count, s.weakness_score, s.updated_at

@@ -201,6 +201,7 @@ type Word struct {
 	EnglishMeaning     string          `json:"english_meaning"`
 	ExampleSentence1   string          `json:"example_sentence_1,omitempty"`
 	ExampleSentence2   string          `json:"example_sentence_2,omitempty"`
+	GeneratedExamples  []string        `json:"generated_examples,omitempty"`
 	CommonRate         *WordCommonRate `json:"common_rate,omitempty"`
 	SourceProvider     string          `json:"source_provider,omitempty"`
 	SourceMetadata     JSONMap         `json:"source_metadata,omitempty"`

@@ -157,6 +157,10 @@ func (m *memoryWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([
 	return words, nil
 }
 
+func (m *memoryWordRepo) AppendGeneratedExamples(ctx context.Context, wordID uuid.UUID, examples []string, maxGeneratedExamples int) ([]string, error) {
+	return nil, nil
+}
+
 type memoryStateRepo struct {
 	weakCandidates    []domain.UserWordState
 	dueLearningStates []domain.UserWordState

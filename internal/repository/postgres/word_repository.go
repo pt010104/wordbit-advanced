@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,7 +19,7 @@ type WordRepository struct {
 func (r *WordRepository) GetByID(ctx context.Context, wordID uuid.UUID) (domain.Word, error) {
 	return scanWord(r.pool.QueryRow(ctx, `
 		SELECT id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
+		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, generated_examples, common_rate, source_provider, source_metadata, created_at, updated_at
 		FROM words
 		WHERE id = $1
 	`, wordID))
@@ -56,7 +57,7 @@ func (r *WordRepository) UpsertWord(ctx context.Context, candidate domain.Candid
 				source_provider = EXCLUDED.source_provider,
 				source_metadata = EXCLUDED.source_metadata
 			RETURNING id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-			          pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
+			          pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, generated_examples, common_rate, source_provider, source_metadata, created_at, updated_at
 	`
 	return scanWord(r.pool.QueryRow(ctx, query,
 		candidate.Word,
@@ -106,7 +107,7 @@ func (r *WordRepository) UpdateWord(ctx context.Context, wordID uuid.UUID, candi
 		    source_metadata = $19::jsonb
 		WHERE id = $1
 		RETURNING id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-		          pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
+		          pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, generated_examples, common_rate, source_provider, source_metadata, created_at, updated_at
 	`
 	return scanWord(r.pool.QueryRow(ctx, query,
 		wordID,
@@ -129,6 +130,74 @@ func (r *WordRepository) UpdateWord(ctx context.Context, wordID uuid.UUID, candi
 		candidate.SourceProvider,
 		fromJSONMap(candidate.SourceMetadata),
 	))
+}
+
+// AppendGeneratedExamples merges the supplied example sentences into the word's
+// generated_examples list, skipping blanks and entries already present (in either
+// the curated example_sentence_1/2 columns or generated_examples), capping the
+// stored list at maxGeneratedExamples (oldest entries are dropped first). It
+// returns the resulting list.
+func (r *WordRepository) AppendGeneratedExamples(ctx context.Context, wordID uuid.UUID, examples []string, maxGeneratedExamples int) ([]string, error) {
+	word, err := r.GetByID(ctx, wordID)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{})
+	addSeen := func(s string) {
+		key := strings.ToLower(strings.TrimSpace(s))
+		if key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	addSeen(word.ExampleSentence1)
+	addSeen(word.ExampleSentence2)
+
+	merged := make([]string, 0, len(word.GeneratedExamples)+len(examples))
+	for _, existing := range word.GeneratedExamples {
+		key := strings.ToLower(strings.TrimSpace(existing))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, existing)
+	}
+
+	changed := false
+	for _, candidate := range examples {
+		trimmed := strings.TrimSpace(candidate)
+		key := strings.ToLower(trimmed)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, trimmed)
+		changed = true
+	}
+
+	if !changed {
+		return word.GeneratedExamples, nil
+	}
+
+	if maxGeneratedExamples > 0 && len(merged) > maxGeneratedExamples {
+		merged = merged[len(merged)-maxGeneratedExamples:]
+	}
+
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE words
+		SET generated_examples = $2::jsonb,
+		    updated_at = now()
+		WHERE id = $1
+	`, wordID, fromStringSlice(merged)); err != nil {
+		return nil, mapError(err)
+	}
+	return merged, nil
 }
 
 func (r *WordRepository) ListWordIDsSeenAsNew(ctx context.Context, userID uuid.UUID, since time.Time) ([]uuid.UUID, error) {
@@ -161,7 +230,7 @@ func (r *WordRepository) ListBankWords(ctx context.Context, userID uuid.UUID, le
 	}
 	query := `
 			SELECT id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-			       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
+			       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, generated_examples, common_rate, source_provider, source_metadata, created_at, updated_at
 			FROM words w
 			WHERE w.level = $2
 		  AND w.topic = $3
@@ -203,7 +272,7 @@ func (r *WordRepository) ListWordsByIDs(ctx context.Context, ids []uuid.UUID) ([
 	}
 	query := fmt.Sprintf(`
 		SELECT id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
-		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, common_rate, source_provider, source_metadata, created_at, updated_at
+		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, generated_examples, common_rate, source_provider, source_metadata, created_at, updated_at
 		FROM words
 		WHERE id IN (%s)
 	`, joinPlaceholders(1, len(ids)))

@@ -124,6 +124,10 @@ func (r *replenishWordRepo) ListWordsByIDs(ctx context.Context, ids []uuid.UUID)
 	return out, nil
 }
 
+func (r *replenishWordRepo) AppendGeneratedExamples(ctx context.Context, wordID uuid.UUID, examples []string, maxGeneratedExamples int) ([]string, error) {
+	return nil, nil
+}
+
 type replenishStateRepo struct {
 	states            map[uuid.UUID]domain.UserWordState
 	weakCandidates    []domain.UserWordState
