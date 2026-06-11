@@ -36,7 +36,7 @@ func validateDynamicReviewPayloadShape(payload domain.DynamicReviewPromptBatchPa
 			return fmt.Errorf("%s missing word_id", prefix)
 		}
 		switch item.ReviewMode {
-		case domain.ReviewModeMultipleChoice, domain.ReviewModeFillBlank:
+		case domain.ReviewModeMultipleChoice, domain.ReviewModeFillBlank, domain.ReviewModeListening:
 		default:
 			return fmt.Errorf("%s has unsupported review_mode", prefix)
 		}

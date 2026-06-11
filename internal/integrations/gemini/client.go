@@ -286,7 +286,8 @@ const dynamicReviewSystemInstruction = `
 You generate fresh prompt-only overrides for vocabulary review cards in a production learning service.
 Always return valid json only.
 Do not wrap the json in markdown fences.
-Do not reveal the answer word, canonical form, or lemma in the prompt.
+For multiple_choice and fill_in_blank, do not reveal the answer word, canonical form, or lemma in the prompt.
+For listening_sentence, include the target word naturally because the user will hear and type the full sentence.
 Do not ask follow-up questions.
 `
 
@@ -303,7 +304,7 @@ Generate exactly %d prompt overrides for vocabulary review cards.
 Requirements:
 - return exactly one item for every requested word_id + review_mode pair
 - keep word_id and review_mode exactly as provided
-- review_mode can only be "multiple_choice" or "fill_in_blank"
+- review_mode can only be "multiple_choice", "fill_in_blank", or "listening_sentence"
 - for multiple_choice:
   - write one fresh question stem or semantic cue only
   - do not include answer choices
@@ -312,6 +313,10 @@ Requirements:
   - write one natural sentence or short passage fragment with the target replaced by "_____"
   - the prompt must contain "_____"
   - do not reveal the answer word, canonical form, or lemma
+- for listening_sentence:
+  - write one short natural sentence that includes the target word exactly once
+  - the sentence must be basic B1/B1+ English and under 10 words
+  - do not use a blank marker
 - do not copy the english meaning, vietnamese meaning, or example sentences verbatim
 - keep prompts concise and CEFR-appropriate
 - return strict JSON only
@@ -321,7 +326,7 @@ Output format:
   "items": [
     {
       "word_id": "uuid",
-      "review_mode": "multiple_choice|fill_in_blank",
+      "review_mode": "multiple_choice|fill_in_blank|listening_sentence",
       "prompt_text": "string"
     }
   ]

@@ -65,6 +65,31 @@ func TestParseDynamicReviewGenerateResponseRejectsMissingPrompt(t *testing.T) {
 	}
 }
 
+func TestParseDynamicReviewGenerateResponseAcceptsListeningSentence(t *testing.T) {
+	t.Parallel()
+
+	wordID := uuid.New()
+	payload := map[string]any{
+		"items": []map[string]any{{
+			"word_id":     wordID.String(),
+			"review_mode": "listening_sentence",
+			"prompt_text": "I can forecast sales.",
+		}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	parsed, _, err := parseDynamicReviewGenerateResponse(testExerciseEnvelope(t, string(body)))
+	if err != nil {
+		t.Fatalf("parseDynamicReviewGenerateResponse() error = %v", err)
+	}
+	if got := parsed.Items[0].ReviewMode; got != domain.ReviewModeListening {
+		t.Fatalf("expected listening_sentence, got %s", got)
+	}
+}
+
 func TestParseDynamicReviewGenerateResponseRejectsUnsupportedMode(t *testing.T) {
 	t.Parallel()
 

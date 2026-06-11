@@ -77,16 +77,16 @@ func TestApplyReviewOutcomeRebalancesStandardIntervals(t *testing.T) {
 	if medium.NextReviewAt == nil {
 		t.Fatalf("expected medium review to schedule next review")
 	}
-	if got := medium.NextReviewAt.Sub(now); got <= 27*time.Hour || got >= 29*time.Hour {
-		t.Fatalf("expected medium review interval between 24h and 30h, got %s", got)
+	if got := medium.NextReviewAt.Sub(now); got <= 36*time.Hour || got >= 38*time.Hour {
+		t.Fatalf("expected medium review interval between 36h and 38h, got %s", got)
 	}
 
 	easy := ApplyReviewOutcome(state, domain.RatingEasy, domain.ReviewModeFillBlank, now, 2200)
 	if easy.NextReviewAt == nil {
 		t.Fatalf("expected easy review to schedule next review")
 	}
-	if got := easy.NextReviewAt.Sub(now); got <= 48*time.Hour || got >= 51*time.Hour {
-		t.Fatalf("expected easy review interval between 48h and 51h, got %s", got)
+	if got := easy.NextReviewAt.Sub(now); got <= 59*time.Hour || got >= 61*time.Hour {
+		t.Fatalf("expected easy review interval between 59h and 61h, got %s", got)
 	}
 
 	hard := ApplyReviewOutcome(state, domain.RatingHard, domain.ReviewModeReveal, now, 5200)
@@ -128,7 +128,7 @@ func TestApplyReviewOutcomeEasyReducesWeaknessAcrossRepeats(t *testing.T) {
 	}
 }
 
-func TestComputeWeaknessScoreIgnoresNonRatingSignals(t *testing.T) {
+func TestComputeWeaknessScoreIgnoresRevealAndTimingSignals(t *testing.T) {
 	t.Parallel()
 
 	base := domain.UserWordState{
@@ -148,7 +148,23 @@ func TestComputeWeaknessScoreIgnoresNonRatingSignals(t *testing.T) {
 	behaviorHeavy.Stability = 0.1
 
 	if got, want := computeWeaknessScoreFromRatings(behaviorHeavy), computeWeaknessScoreFromRatings(base); got != want {
-		t.Fatalf("expected non-rating signals to be ignored, got %.2f want %.2f", got, want)
+		t.Fatalf("expected reveal/timing signals to be ignored, got %.2f want %.2f", got, want)
+	}
+}
+
+func TestComputeWeaknessScoreIncludesConstructionStruggle(t *testing.T) {
+	t.Parallel()
+
+	base := domain.UserWordState{
+		LastRating:  domain.RatingEasy,
+		EasyCount:   3,
+		MediumCount: 1,
+	}
+	struggled := base
+	struggled.WordConstructionStruggleCount = 3
+
+	if got, wantMinimum := computeWeaknessScoreFromRatings(struggled), computeWeaknessScoreFromRatings(base); got <= wantMinimum {
+		t.Fatalf("expected construction struggle to increase weakness, got %.2f from %.2f", got, wantMinimum)
 	}
 }
 
@@ -174,10 +190,10 @@ func TestSelectReviewMode(t *testing.T) {
 			want:                   domain.ReviewModeReveal,
 		},
 		{
-			name:                   "transition stage low weakness uses fill blank",
-			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMode: domain.ReviewModeBuildWord},
+			name:                   "transition stage after one build word stays build word",
+			state:                  domain.UserWordState{WordID: uuid.MustParse("02000000-0000-0000-0000-000000000000"), LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMode: domain.ReviewModeBuildWord, LastRating: domain.RatingEasy},
 			memoryCauseBiasEnabled: true,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeBuildWord,
 		},
 		{
 			name:                   "transition stage threshold now uses multiple choice",
@@ -217,9 +233,9 @@ func TestSelectReviewMode(t *testing.T) {
 		},
 		{
 			name:                   "transition stage ignores mixed up cause when bias disabled",
-			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord, LastMode: domain.ReviewModeBuildWord},
+			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 3, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord, LastMode: domain.ReviewModeBuildWord, LastRating: domain.RatingEasy},
 			memoryCauseBiasEnabled: false,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeBuildWord,
 		},
 		{
 			name:                   "standard review forgot meaning returns reveal",
@@ -288,16 +304,16 @@ func TestSelectReviewMode(t *testing.T) {
 			want:                   domain.ReviewModeMultipleChoice,
 		},
 		{
-			name:                   "standard review clean history returns fill blank",
-			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, LastMode: domain.ReviewModeBuildWord},
+			name:                   "standard review after one build word stays build word",
+			state:                  domain.UserWordState{WordID: uuid.MustParse("02000000-0000-0000-0000-000000000000"), LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, LastMode: domain.ReviewModeBuildWord, LastRating: domain.RatingEasy},
 			memoryCauseBiasEnabled: true,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeBuildWord,
 		},
 		{
 			name:                   "standard review ignores mixed up cause when bias disabled",
-			state:                  domain.UserWordState{WordID: uuid.MustParse("01000000-0000-0000-0000-000000000000"), LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord, LastMode: domain.ReviewModeBuildWord},
+			state:                  domain.UserWordState{WordID: uuid.MustParse("02000000-0000-0000-0000-000000000000"), LearningStage: 0, Difficulty: 0.3, WeaknessScore: 0.2, LastMemoryCause: domain.MemoryCauseMixedUpWord, LastMode: domain.ReviewModeBuildWord, LastRating: domain.RatingEasy},
 			memoryCauseBiasEnabled: false,
-			want:                   domain.ReviewModeFillBlank,
+			want:                   domain.ReviewModeBuildWord,
 		},
 	}
 
@@ -339,28 +355,78 @@ func TestSelectReviewModeForcesBuildWordAfterProlongedMode12Struggle(t *testing.
 	}
 }
 
-func TestSelectReviewModeReturnsNormalWeakModeAfterPerfectBuildWordTurn(t *testing.T) {
+func TestSelectReviewModePromotesStuckHiddenMeaningToMultipleChoice(t *testing.T) {
 	t.Parallel()
 
-	firstSeen := time.Date(2026, 3, 18, 10, 0, 0, 0, time.UTC)
-	lastSeen := firstSeen.Add(72 * time.Hour)
 	state := domain.UserWordState{
-		LearningStage:      0,
-		Difficulty:         0.88,
-		WeaknessScore:      2.2,
-		LastMode:           domain.ReviewModeBuildWord,
-		LastRating:         domain.RatingEasy,
-		ReviewCount:        6,
-		HardCount:          3,
-		WrongCount:         3,
-		RevealMeaningCount: 4,
-		MeaningForgetCount: 2,
-		FirstSeenAt:        &firstSeen,
-		LastSeenAt:         &lastSeen,
+		LearningStage: 0,
+		Difficulty:    0.30,
+		WeaknessScore: 0.20,
+		LastMode:      domain.ReviewModeReveal,
+		LastRating:    domain.RatingHard,
+		ReviewCount:   3,
+		HardCount:     2,
+		WrongCount:    2,
 	}
 
 	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeMultipleChoice {
-		t.Fatalf("expected perfect build_word turn to return to normal weak review mode, got %s", mode)
+		t.Fatalf("expected stuck hidden-meaning word to move to multiple_choice, got %s", mode)
+	}
+}
+
+func TestSelectReviewModeRequiresTwoCleanBuildWordTurnsBeforeAdvancedConstruction(t *testing.T) {
+	t.Parallel()
+
+	state := domain.UserWordState{
+		WordID:                        uuid.MustParse("02000000-0000-0000-0000-000000000000"),
+		LearningStage:                 0,
+		Difficulty:                    0.30,
+		WeaknessScore:                 0.20,
+		LastMode:                      domain.ReviewModeBuildWord,
+		LastRating:                    domain.RatingEasy,
+		WordConstructionSuccessStreak: 1,
+	}
+
+	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeBuildWord {
+		t.Fatalf("expected one clean build_word turn to stay in build_word, got %s", mode)
+	}
+}
+
+func TestSelectReviewModePromotesTwoCleanBuildWordTurnsToAdvancedConstruction(t *testing.T) {
+	t.Parallel()
+
+	state := domain.UserWordState{
+		WordID:                        uuid.MustParse("02000000-0000-0000-0000-000000000000"),
+		LearningStage:                 0,
+		Difficulty:                    0.30,
+		WeaknessScore:                 0.20,
+		LastMode:                      domain.ReviewModeBuildWord,
+		LastRating:                    domain.RatingEasy,
+		WordConstructionSuccessStreak: advancedConstructionSuccessStreak,
+	}
+
+	mode := SelectReviewMode(state, true)
+	if mode != domain.ReviewModeFillBlank && mode != domain.ReviewModeListening {
+		t.Fatalf("expected two clean build_word turns to promote to mode 4/5, got %s", mode)
+	}
+}
+
+func TestSelectReviewModeDoesNotPromoteHardBuildWordTurnToFillBlank(t *testing.T) {
+	t.Parallel()
+
+	answerCorrect := false
+	state := domain.UserWordState{
+		WordID:            uuid.MustParse("02000000-0000-0000-0000-000000000000"),
+		LearningStage:     0,
+		Difficulty:        0.30,
+		WeaknessScore:     0.20,
+		LastMode:          domain.ReviewModeBuildWord,
+		LastRating:        domain.RatingHard,
+		LastAnswerCorrect: &answerCorrect,
+	}
+
+	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeBuildWord {
+		t.Fatalf("expected hard build_word turn to stay in build_word, got %s", mode)
 	}
 }
 
@@ -380,7 +446,7 @@ func TestSelectReviewModeTransitionFromMode12EntersBuildWord(t *testing.T) {
 	}
 }
 
-func TestSelectReviewModeKeepsBuildWordAlternationOnceInsideWordConstruction(t *testing.T) {
+func TestSelectReviewModeKeepsBuildWordUntilConstructionMastery(t *testing.T) {
 	t.Parallel()
 
 	state := domain.UserWordState{
@@ -392,8 +458,56 @@ func TestSelectReviewModeKeepsBuildWordAlternationOnceInsideWordConstruction(t *
 		WeaknessScore: 0.20,
 	}
 
-	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeFillBlank {
-		t.Fatalf("expected word-construction follow-up to alternate into fill_blank, got %s", mode)
+	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeBuildWord {
+		t.Fatalf("expected word-construction follow-up to stay in build_word before mastery, got %s", mode)
+	}
+}
+
+func TestApplyWordConstructionFeedbackTracksCleanSuccessStreak(t *testing.T) {
+	t.Parallel()
+
+	state := domain.UserWordState{
+		LastRating: domain.RatingMedium,
+		LastMode:   domain.ReviewModeBuildWord,
+	}
+
+	updated := ApplyWordConstructionFeedback(state, domain.ReviewModeBuildWord, true, 0, 3, 0, 2400, time.Now())
+	if updated.WordConstructionSuccessStreak != 1 {
+		t.Fatalf("expected clean success streak 1, got %d", updated.WordConstructionSuccessStreak)
+	}
+	if updated.WordConstructionStruggleCount != 0 {
+		t.Fatalf("expected no construction struggle, got %d", updated.WordConstructionStruggleCount)
+	}
+}
+
+func TestApplyWordConstructionFeedbackShortensEasyReviewAfterRetries(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	nextReview := now.Add(5 * 24 * time.Hour)
+	state := domain.UserWordState{
+		Status:          domain.WordStatusReview,
+		LastRating:      domain.RatingEasy,
+		LastMode:        domain.ReviewModeBuildWord,
+		NextReviewAt:    &nextReview,
+		IntervalSeconds: int((5 * 24 * time.Hour).Seconds()),
+		Stability:       2.0,
+		Difficulty:      0.30,
+		WeaknessScore:   0.20,
+	}
+
+	updated := ApplyWordConstructionFeedback(state, domain.ReviewModeBuildWord, true, 3, 3, 1, 4200, now)
+	if updated.WordConstructionSuccessStreak != 0 {
+		t.Fatalf("expected streak reset after retry/hints, got %d", updated.WordConstructionSuccessStreak)
+	}
+	if updated.WordConstructionStruggleCount != 1 {
+		t.Fatalf("expected construction struggle count 1, got %d", updated.WordConstructionStruggleCount)
+	}
+	if updated.NextReviewAt == nil || !updated.NextReviewAt.Before(nextReview) {
+		t.Fatalf("expected next review to be pulled earlier, got %#v from %#v", updated.NextReviewAt, nextReview)
+	}
+	if updated.IntervalSeconds >= state.IntervalSeconds {
+		t.Fatalf("expected interval to shrink from %d, got %d", state.IntervalSeconds, updated.IntervalSeconds)
 	}
 }
 

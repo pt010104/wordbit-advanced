@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	dynamicReviewPromptFamily    = "dynamic_review_mode23"
-	dynamicReviewPromptSource    = "llm_daily_mode23"
+	dynamicReviewPromptFamily    = "dynamic_review_mode245"
+	dynamicReviewPromptSource    = "llm_daily_mode245"
 	dynamicReviewPromptChunkSize = 25
 	dynamicReviewPromptCooldown  = 2
 	dynamicReviewTriggerPrewarm  = "prewarm"
@@ -102,7 +102,7 @@ func (s *DynamicReviewService) BackfillForCurrentCard(ctx context.Context, userI
 	if current.ItemType != domain.PoolItemTypeShortTerm && current.ItemType != domain.PoolItemTypeReview {
 		return nil
 	}
-	if current.ReviewMode != domain.ReviewModeMultipleChoice && current.ReviewMode != domain.ReviewModeFillBlank {
+	if !isDynamicReviewPromptMode(current.ReviewMode) {
 		return nil
 	}
 	_, err := s.ensurePrompts(ctx, userID, localDate, items, dynamicReviewTriggerBackfill, &dynamicReviewKey{
@@ -134,14 +134,14 @@ func (s *DynamicReviewService) ensurePrompts(
 	if err != nil {
 		return 0, err
 	}
-	cooldownWords := buildDynamicReviewCooldownWordSet(localDate, historical)
+	cooldownKeys := buildDynamicReviewCooldownKeySet(localDate, historical)
 
 	missing := make([]dynamicReviewCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		if _, ok := existing[candidate.key()]; ok {
 			continue
 		}
-		if _, cooldown := cooldownWords[candidate.WordID]; cooldown {
+		if _, cooldown := cooldownKeys[candidate.key()]; cooldown {
 			continue
 		}
 		missing = append(missing, candidate)
@@ -288,15 +288,14 @@ func (s *DynamicReviewService) generateAndPersistChunk(
 		return nil, err
 	}
 
-	s.persistFillBlankExamples(ctx, chunk, payload)
+	s.persistGeneratedPromptExamples(ctx, chunk, payload)
 	return saved, nil
 }
 
-// persistFillBlankExamples turns each generated fill-in-blank prompt into a
-// readable example sentence (by filling the blank with the target word) and
-// appends it to the word's generated_examples list. Failures are logged but do
-// not abort prompt generation.
-func (s *DynamicReviewService) persistFillBlankExamples(ctx context.Context, chunk []dynamicReviewCandidate, payload domain.DynamicReviewPromptBatchPayload) {
+// persistGeneratedPromptExamples turns generated review prompts into readable
+// example sentences and appends them to the word's generated_examples list.
+// Failures are logged but do not abort prompt generation.
+func (s *DynamicReviewService) persistGeneratedPromptExamples(ctx context.Context, chunk []dynamicReviewCandidate, payload domain.DynamicReviewPromptBatchPayload) {
 	if s.wordRepo == nil {
 		return
 	}
@@ -306,14 +305,11 @@ func (s *DynamicReviewService) persistFillBlankExamples(ctx context.Context, chu
 	}
 
 	for _, item := range payload.Items {
-		if item.ReviewMode != domain.ReviewModeFillBlank {
-			continue
-		}
 		word, ok := wordByID[item.WordID]
 		if !ok {
 			continue
 		}
-		example := fillBlankExample(item.PromptText, word.Word)
+		example := generatedPromptExample(item.PromptText, word.Word, item.ReviewMode)
 		if example == "" {
 			continue
 		}
@@ -323,6 +319,17 @@ func (s *DynamicReviewService) persistFillBlankExamples(ctx context.Context, chu
 				"error", err,
 			)
 		}
+	}
+}
+
+func generatedPromptExample(promptText string, word string, mode domain.ReviewMode) string {
+	switch mode {
+	case domain.ReviewModeFillBlank:
+		return fillBlankExample(promptText, word)
+	case domain.ReviewModeListening:
+		return strings.TrimSpace(promptText)
+	default:
+		return ""
 	}
 }
 
@@ -406,7 +413,7 @@ func selectDynamicReviewCandidates(items []domain.DailyLearningPoolItem) []dynam
 		if item.ItemType != domain.PoolItemTypeShortTerm && item.ItemType != domain.PoolItemTypeReview {
 			continue
 		}
-		if item.ReviewMode != domain.ReviewModeMultipleChoice && item.ReviewMode != domain.ReviewModeFillBlank {
+		if !isDynamicReviewPromptMode(item.ReviewMode) {
 			continue
 		}
 		if item.Word == nil || strings.TrimSpace(item.Word.Word) == "" {
@@ -526,11 +533,28 @@ func validateDynamicReviewPayload(payload domain.DynamicReviewPromptBatchPayload
 			issues = append(issues, fmt.Sprintf("blank prompt for %s|%s", item.WordID, item.ReviewMode))
 			continue
 		}
-		if item.ReviewMode == domain.ReviewModeFillBlank && !strings.Contains(promptText, "_____") {
-			issues = append(issues, fmt.Sprintf("fill_in_blank prompt missing blank marker for %s", item.WordID))
-		}
-		if leaksTarget(promptText, candidate.Word) {
-			issues = append(issues, fmt.Sprintf("prompt leaked target spelling for %s", item.WordID))
+		switch item.ReviewMode {
+		case domain.ReviewModeFillBlank:
+			if !strings.Contains(promptText, "_____") {
+				issues = append(issues, fmt.Sprintf("fill_in_blank prompt missing blank marker for %s", item.WordID))
+			}
+			if leaksTarget(promptText, candidate.Word) {
+				issues = append(issues, fmt.Sprintf("prompt leaked target spelling for %s", item.WordID))
+			}
+		case domain.ReviewModeListening:
+			if strings.Contains(promptText, "_____") {
+				issues = append(issues, fmt.Sprintf("listening prompt must not contain blank marker for %s", item.WordID))
+			}
+			if countNormalizedWords(promptText) > 10 {
+				issues = append(issues, fmt.Sprintf("listening prompt exceeded 10 words for %s", item.WordID))
+			}
+			if !leaksTarget(promptText, candidate.Word) {
+				issues = append(issues, fmt.Sprintf("listening prompt missing target word for %s", item.WordID))
+			}
+		default:
+			if leaksTarget(promptText, candidate.Word) {
+				issues = append(issues, fmt.Sprintf("prompt leaked target spelling for %s", item.WordID))
+			}
 		}
 		if matchesStoredSource(promptText, candidate.Word) {
 			issues = append(issues, fmt.Sprintf("prompt duplicated stored source text for %s", item.WordID))
@@ -575,12 +599,12 @@ func dynamicReviewCandidateWordIDs(candidates []dynamicReviewCandidate) []uuid.U
 	return wordIDs
 }
 
-func buildDynamicReviewCooldownWordSet(localDate string, prompts []domain.DailyDynamicReviewPrompt) map[uuid.UUID]struct{} {
+func buildDynamicReviewCooldownKeySet(localDate string, prompts []domain.DailyDynamicReviewPrompt) map[dynamicReviewKey]struct{} {
 	currentDate, err := time.Parse("2006-01-02", localDate)
 	if err != nil {
-		return map[uuid.UUID]struct{}{}
+		return map[dynamicReviewKey]struct{}{}
 	}
-	cooldown := make(map[uuid.UUID]struct{})
+	cooldown := make(map[dynamicReviewKey]struct{})
 	for _, prompt := range prompts {
 		promptDate, parseErr := time.Parse("2006-01-02", prompt.LocalDate)
 		if parseErr != nil {
@@ -591,10 +615,16 @@ func buildDynamicReviewCooldownWordSet(localDate string, prompts []domain.DailyD
 			continue
 		}
 		if days <= dynamicReviewPromptCooldown {
-			cooldown[prompt.WordID] = struct{}{}
+			cooldown[dynamicReviewKey{WordID: prompt.WordID, ReviewMode: prompt.ReviewMode}] = struct{}{}
 		}
 	}
 	return cooldown
+}
+
+func isDynamicReviewPromptMode(mode domain.ReviewMode) bool {
+	return mode == domain.ReviewModeMultipleChoice ||
+		mode == domain.ReviewModeFillBlank ||
+		mode == domain.ReviewModeListening
 }
 
 func compareDynamicReviewCandidates(left dynamicReviewCandidate, right dynamicReviewCandidate) int {
@@ -657,6 +687,14 @@ func leaksTarget(prompt string, word domain.Word) bool {
 		}
 	}
 	return false
+}
+
+func countNormalizedWords(value string) int {
+	normalized := NormalizeWord(value)
+	if normalized == "" {
+		return 0
+	}
+	return len(strings.Fields(normalized))
 }
 
 func matchesStoredSource(prompt string, word domain.Word) bool {

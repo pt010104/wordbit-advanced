@@ -14,14 +14,21 @@ const (
 	standardMode2WeaknessThreshold      = 1.75
 	standardMode2WrongCountThreshold    = 3
 	standardMode2MeaningRevealThreshold = 4
+	advancedConstructionSuccessStreak   = 2
+	advancedConstructionDifficultyMax   = 0.78
+	advancedConstructionWeaknessMax     = 1.75
+	wordConstructionDefaultHintLimit    = 3
 	wordConstructionHintStruggleCount   = 2
 	wordConstructionWeaknessBoost       = 0.25
 	wordConstructionDifficultyBoost     = 0.04
 	forcedBuildWordMinReviewCount       = 4
 	forcedBuildWordMinHardCount         = 2
 	forcedBuildWordMinMode12Days        = 48 * time.Hour
-	easyReviewIntervalMultiplier        = 1.35
-	mediumReviewIntervalMultiplier      = 0.80
+	stuckRevealMinReviewCount           = 3
+	stuckRevealMinHardCount             = 2
+	stuckRevealMinMeaningRevealCount    = 2
+	easyReviewIntervalMultiplier        = 1.65
+	mediumReviewIntervalMultiplier      = 1.05
 	hardReviewIntervalMultiplier        = 0.30
 	minHardReviewInterval               = 4 * time.Hour
 )
@@ -54,6 +61,9 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 	case 1, 2:
 		return domain.ReviewModeReveal
 	case 3:
+		if shouldUseAdvancedConstructionMode(state, memoryCauseBiasEnabled) {
+			return selectAdvancedConstructionMode(state)
+		}
 		if memoryCauseBiasEnabled {
 			switch state.LastMemoryCause {
 			case domain.MemoryCauseSpellingIssue:
@@ -78,6 +88,9 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 		}
 	}
 
+	if shouldUseAdvancedConstructionMode(state, memoryCauseBiasEnabled) {
+		return selectAdvancedConstructionMode(state)
+	}
 	if memoryCauseBiasEnabled {
 		switch state.LastMemoryCause {
 		case domain.MemoryCauseForgotMeaning:
@@ -89,7 +102,11 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 		}
 	}
 	if selected == "" {
-		if state.WrongCount >= standardMode2WrongCountThreshold ||
+		if state.LastMode == domain.ReviewModeReveal &&
+			state.LastRating == domain.RatingHard &&
+			state.HardCount >= stuckRevealMinHardCount {
+			selected = domain.ReviewModeMultipleChoice
+		} else if state.WrongCount >= standardMode2WrongCountThreshold ||
 			state.RevealMeaningCount >= standardMode2MeaningRevealThreshold {
 			selected = domain.ReviewModeMultipleChoice
 		} else if state.Difficulty >= standardMode2DifficultyThreshold ||
@@ -100,6 +117,42 @@ func SelectReviewMode(state domain.UserWordState, memoryCauseBiasEnabled bool) d
 		}
 	}
 	return maybeForceBuildWordMode(state, selected)
+}
+
+func shouldUseAdvancedConstructionMode(state domain.UserWordState, memoryCauseBiasEnabled bool) bool {
+	if state.WordConstructionSuccessStreak < advancedConstructionSuccessStreak {
+		return false
+	}
+	if state.Difficulty >= advancedConstructionDifficultyMax || state.WeaknessScore >= advancedConstructionWeaknessMax {
+		return false
+	}
+	if state.LastAnswerCorrect != nil && !*state.LastAnswerCorrect {
+		return false
+	}
+	if memoryCauseBiasEnabled {
+		switch state.LastMemoryCause {
+		case domain.MemoryCauseForgotMeaning, domain.MemoryCauseMixedUpWord:
+			return false
+		}
+	}
+	return true
+}
+
+func selectAdvancedConstructionMode(state domain.UserWordState) domain.ReviewMode {
+	seed := int(state.WordID[0]) +
+		int(state.WordID[5]) +
+		int(state.WordID[10]) +
+		int(state.WordID[15]) +
+		state.ReviewCount +
+		state.WordConstructionSuccessStreak +
+		state.WordConstructionStruggleCount
+	if state.LastMode == domain.ReviewModeFillBlank {
+		seed++
+	}
+	if seed%2 == 0 {
+		return domain.ReviewModeFillBlank
+	}
+	return domain.ReviewModeListening
 }
 
 func SelectWordConstructionMode(state domain.UserWordState) domain.ReviewMode {
@@ -124,10 +177,7 @@ func SelectWordConstructionMode(state domain.UserWordState) domain.ReviewMode {
 }
 
 func enterWordConstructionMode(state domain.UserWordState) domain.ReviewMode {
-	if state.LastMode == domain.ReviewModeReveal || state.LastMode == domain.ReviewModeMultipleChoice || state.LastMode == "" {
-		return domain.ReviewModeBuildWord
-	}
-	return SelectWordConstructionMode(state)
+	return domain.ReviewModeBuildWord
 }
 
 func alternatingMode2Reveal(state domain.UserWordState) domain.ReviewMode {
@@ -138,6 +188,9 @@ func alternatingMode2Reveal(state domain.UserWordState) domain.ReviewMode {
 }
 
 func maybeForceBuildWordMode(state domain.UserWordState, selected domain.ReviewMode) domain.ReviewMode {
+	if selected == domain.ReviewModeReveal && shouldPromoteStuckRevealToMultipleChoice(state) {
+		return domain.ReviewModeMultipleChoice
+	}
 	if selected != domain.ReviewModeReveal && selected != domain.ReviewModeMultipleChoice {
 		return selected
 	}
@@ -148,6 +201,19 @@ func maybeForceBuildWordMode(state domain.UserWordState, selected domain.ReviewM
 		return selected
 	}
 	return domain.ReviewModeBuildWord
+}
+
+func shouldPromoteStuckRevealToMultipleChoice(state domain.UserWordState) bool {
+	if state.LastMode != domain.ReviewModeReveal {
+		return false
+	}
+	if state.ReviewCount < stuckRevealMinReviewCount || state.HardCount < stuckRevealMinHardCount {
+		return false
+	}
+	return state.LastRating == domain.RatingHard ||
+		state.WrongCount >= stuckRevealMinHardCount ||
+		state.RevealMeaningCount >= stuckRevealMinMeaningRevealCount ||
+		state.MeaningForgetCount >= stuckRevealMinMeaningRevealCount
 }
 
 func hasProlongedMode12Struggle(state domain.UserWordState) bool {
@@ -192,6 +258,10 @@ func computeWeaknessSignal(state domain.UserWordState) float64 {
 	score := 0.0
 	score += float64(state.HardCount) * 1.0
 	score += float64(state.MediumCount) * 0.35
+	score += float64(state.WordConstructionStruggleCount) * 0.18
+	if state.HardCount >= 2 && state.MediumCount > 0 {
+		score += minFloat(float64(state.MediumCount)*0.15, 0.6)
+	}
 	switch state.LastRating {
 	case domain.RatingHard:
 		score += 0.6
@@ -203,6 +273,7 @@ func computeWeaknessSignal(state domain.UserWordState) float64 {
 
 func computeWeaknessRecovery(state domain.UserWordState) float64 {
 	recovery := float64(state.EasyCount) * 0.45
+	recovery += float64(state.WordConstructionSuccessStreak) * 0.20
 	switch state.LastRating {
 	case domain.RatingEasy:
 		recovery += 0.3
@@ -241,6 +312,11 @@ func ApplyFirstExposureKnown(state domain.UserWordState, now time.Time, response
 }
 
 func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, mode domain.ReviewMode, now time.Time, responseTimeMs int) domain.UserWordState {
+	previousLastRating := state.LastRating
+	previousReviewCount := state.ReviewCount
+	previousEasyCount := state.EasyCount
+	previousHardCount := state.HardCount
+
 	state.LastSeenAt = &now
 	state.LastRating = rating
 	state.LastMode = mode
@@ -278,11 +354,11 @@ func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, 
 	multiplier := 1.0
 	switch rating {
 	case domain.RatingEasy:
-		multiplier = easyReviewIntervalMultiplier
+		multiplier = effectiveEasyReviewIntervalMultiplier(state, previousEasyCount, previousHardCount)
 		state.Difficulty = minFloat(maxFloat(state.Difficulty-0.08, 0.1), 0.95)
 		state.Stability += 0.6
 	case domain.RatingMedium:
-		multiplier = mediumReviewIntervalMultiplier
+		multiplier = effectiveMediumReviewIntervalMultiplier(state, previousReviewCount, previousEasyCount, previousHardCount, previousLastRating)
 		state.Difficulty = minFloat(maxFloat(state.Difficulty-0.02, 0.1), 0.95)
 		state.Stability += 0.25
 	case domain.RatingHard:
@@ -300,6 +376,36 @@ func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, 
 	state.Status = domain.WordStatusReview
 	state.WeaknessScore = computeWeaknessScoreFromRatings(state)
 	return state
+}
+
+func effectiveEasyReviewIntervalMultiplier(state domain.UserWordState, previousEasyCount int, previousHardCount int) float64 {
+	multiplier := easyReviewIntervalMultiplier
+	if previousHardCount == 0 && previousEasyCount >= 4 && state.WordConstructionStruggleCount == 0 {
+		return 1.85
+	}
+	if previousHardCount >= 3 || state.WordConstructionStruggleCount >= 2 {
+		multiplier = 1.45
+	}
+	return multiplier
+}
+
+func effectiveMediumReviewIntervalMultiplier(
+	state domain.UserWordState,
+	previousReviewCount int,
+	previousEasyCount int,
+	previousHardCount int,
+	previousLastRating domain.ReviewRating,
+) float64 {
+	if previousLastRating == domain.RatingHard ||
+		previousHardCount >= 2 ||
+		state.WrongCount >= 3 ||
+		state.WordConstructionStruggleCount >= 2 {
+		return 0.82
+	}
+	if previousHardCount == 0 && previousEasyCount >= 3 && previousEasyCount*2 >= maxInt(previousReviewCount, 1) {
+		return 1.25
+	}
+	return mediumReviewIntervalMultiplier
 }
 
 func ApplyBonusPracticeOutcome(state domain.UserWordState, rating domain.ReviewRating, mode domain.ReviewMode, now time.Time, responseTimeMs int) domain.UserWordState {
@@ -337,21 +443,100 @@ func ApplyBonusPracticeOutcome(state domain.UserWordState, rating domain.ReviewR
 }
 
 func ApplyWordConstructionStruggle(state domain.UserWordState, mode domain.ReviewMode, answerCorrect bool, hintCount int, responseTimeMs int) domain.UserWordState {
-	if mode != domain.ReviewModeBuildWord && mode != domain.ReviewModeFillBlank {
+	return ApplyWordConstructionFeedback(state, mode, answerCorrect, hintCount, wordConstructionDefaultHintLimit, 0, responseTimeMs, time.Time{})
+}
+
+func ApplyWordConstructionFeedback(
+	state domain.UserWordState,
+	mode domain.ReviewMode,
+	answerCorrect bool,
+	hintCount int,
+	hintLimit int,
+	wrongAttemptCount int,
+	responseTimeMs int,
+	now time.Time,
+) domain.UserWordState {
+	if !isWordConstructionMode(mode) {
 		return state
 	}
-	if answerCorrect && hintCount < wordConstructionHintStruggleCount {
+	hintThreshold := wordConstructionStruggleHintThreshold(mode, hintLimit)
+	heavyHintUse := hintCount > hintThreshold
+	wrongAttempts := wrongAttemptCount > 0
+	cleanSuccess := answerCorrect &&
+		!heavyHintUse &&
+		!wrongAttempts &&
+		(state.LastRating == domain.RatingEasy || state.LastRating == domain.RatingMedium)
+
+	if cleanSuccess {
+		state.WordConstructionSuccessStreak++
 		return state
 	}
 
+	struggled := !answerCorrect ||
+		state.LastRating == domain.RatingHard ||
+		heavyHintUse ||
+		wrongAttempts
+	if !struggled {
+		return state
+	}
+	state.WordConstructionSuccessStreak = 0
+	state.WordConstructionStruggleCount++
 	if state.LastMemoryCause != domain.MemoryCauseSpellingIssue {
 		state.SpellingIssueCount++
 	}
 	state.LastMemoryCause = domain.MemoryCauseSpellingIssue
 	state.LastResponseTimeMs = responseTimeMs
 	state.LastAnswerCorrect = boolPointer(answerCorrect)
-	state.Difficulty = minFloat(state.Difficulty+wordConstructionDifficultyBoost, 0.95)
-	state.WeaknessScore = maxFloat(ComputeWeaknessScore(state), state.WeaknessScore+wordConstructionWeaknessBoost)
+	difficultyBoost := wordConstructionDifficultyBoost + float64(minInt(wrongAttemptCount, 3))*0.02
+	weaknessBoost := wordConstructionWeaknessBoost +
+		float64(maxInt(hintCount-hintThreshold, 0))*0.08 +
+		float64(minInt(wrongAttemptCount, 3))*0.10
+	state.Difficulty = minFloat(state.Difficulty+difficultyBoost, 0.95)
+	state.WeaknessScore = maxFloat(ComputeWeaknessScore(state), state.WeaknessScore+weaknessBoost)
+	state = shortenReviewAfterConstructionStruggle(state, now, hintCount, hintThreshold, wrongAttemptCount, answerCorrect)
+	return state
+}
+
+func isWordConstructionMode(mode domain.ReviewMode) bool {
+	return mode == domain.ReviewModeBuildWord ||
+		mode == domain.ReviewModeFillBlank ||
+		mode == domain.ReviewModeListening
+}
+
+func wordConstructionStruggleHintThreshold(mode domain.ReviewMode, hintLimit int) int {
+	if mode == domain.ReviewModeListening && hintLimit > 0 {
+		return int(math.Round(float64(hintLimit) / 2.0))
+	}
+	return wordConstructionHintStruggleCount
+}
+
+func shortenReviewAfterConstructionStruggle(
+	state domain.UserWordState,
+	now time.Time,
+	hintCount int,
+	hintThreshold int,
+	wrongAttemptCount int,
+	answerCorrect bool,
+) domain.UserWordState {
+	if now.IsZero() || state.Status != domain.WordStatusReview || state.NextReviewAt == nil || state.IntervalSeconds <= 0 {
+		return state
+	}
+	factor := 0.70
+	if !answerCorrect || state.LastRating == domain.RatingHard {
+		factor = 0.45
+	} else if wrongAttemptCount > 0 {
+		factor = 0.55
+	} else if hintCount > hintThreshold {
+		factor = 0.60
+	}
+	seconds := maxInt(int(minHardReviewInterval.Seconds()), int(float64(state.IntervalSeconds)*factor))
+	if seconds >= state.IntervalSeconds {
+		return state
+	}
+	state.IntervalSeconds = seconds
+	next := now.Add(time.Duration(seconds) * time.Second)
+	state.NextReviewAt = &next
+	state.Stability = maxFloat(state.Stability*0.9, 0.5)
 	return state
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -442,6 +443,8 @@ func (g *staticDynamicReviewGenerator) GenerateDynamicReviewPrompts(ctx context.
 		promptText := "Choose the best word for this context."
 		if item.ReviewMode == domain.ReviewModeFillBlank {
 			promptText = "The company used _____ to enter a more complex market."
+		} else if item.ReviewMode == domain.ReviewModeListening {
+			promptText = fmt.Sprintf("I can use %s today.", item.Word.Word)
 		}
 		items = append(items, domain.DynamicReviewPromptBatchItem{
 			WordID:     item.WordID,
@@ -474,7 +477,7 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -584,7 +587,7 @@ func TestGenerateDynamicReviewPromptsEndpoint(t *testing.T) {
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -595,12 +598,13 @@ func TestGenerateDynamicReviewPromptsEndpoint(t *testing.T) {
 
 	dueAt := time.Now().UTC().Add(-30 * time.Minute)
 	stateRepo.dueReviewStates = []domain.UserWordState{{
-		UserID:        userRepo.user.ID,
-		WordID:        wordID,
-		Status:        domain.WordStatusReview,
-		NextReviewAt:  &dueAt,
-		WeaknessScore: 0.2,
-		Difficulty:    0.3,
+		UserID:             userRepo.user.ID,
+		WordID:             wordID,
+		Status:             domain.WordStatusReview,
+		NextReviewAt:       &dueAt,
+		WeaknessScore:      0.2,
+		Difficulty:         0.3,
+		RevealMeaningCount: 4,
 	}}
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/me/daily-pool/dynamic-review/generate", nil)
@@ -649,7 +653,7 @@ func TestTestLLMEndpoint(t *testing.T) {
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, statisticsService, llmRepo, &staticPromptTester{}, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, &staticPromptTester{}, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/me/llm/test", bytes.NewBufferString(`{"prompt":"hello llm"}`))
 	resp := httptest.NewRecorder()
@@ -722,7 +726,7 @@ func TestStatisticsEndpoint(t *testing.T) {
 	}
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/statistics?range=7d", nil)
 	resp := httptest.NewRecorder()
@@ -769,7 +773,7 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, nil, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/daily-pool", nil)
 	resp := httptest.NewRecorder()

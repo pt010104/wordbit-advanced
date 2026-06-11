@@ -275,6 +275,7 @@ func buildModeDistribution(events []domain.LearningEvent) []domain.StatisticsBre
 		{key: string(domain.ReviewModeMultipleChoice), label: "Multiple choice"},
 		{key: string(domain.ReviewModeBuildWord), label: "Build word"},
 		{key: string(domain.ReviewModeFillBlank), label: "Fill in blank"},
+		{key: string(domain.ReviewModeListening), label: "Listening sentence"},
 	}
 	counts := map[string]int{}
 	for _, event := range events {

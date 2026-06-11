@@ -163,9 +163,11 @@ func TestDynamicReviewPrewarmSavesFillBlankExamplesToWord(t *testing.T) {
 	userID := uuid.New()
 	fillWord := testDynamicReviewWord("forecast")
 	mcWord := testDynamicReviewWord("allocate")
+	listeningWord := testDynamicReviewWord("clarify")
 	items := []domain.DailyLearningPoolItem{
 		testDynamicPoolItem(fillWord, domain.PoolItemTypeReview, domain.ReviewModeFillBlank, 1),
 		testDynamicPoolItem(mcWord, domain.PoolItemTypeReview, domain.ReviewModeMultipleChoice, 2),
+		testDynamicPoolItem(listeningWord, domain.PoolItemTypeReview, domain.ReviewModeListening, 3),
 	}
 
 	wordRepo := &dynamicReviewWordRepoStub{}
@@ -177,6 +179,9 @@ func TestDynamicReviewPrewarmSavesFillBlankExamplesToWord(t *testing.T) {
 
 	if got := wordRepo.appended[fillWord.ID]; len(got) != 1 || got[0] != "The company used forecast to guide a risky expansion." {
 		t.Fatalf("expected fill-in-blank example saved to word, got %v", got)
+	}
+	if got := wordRepo.appended[listeningWord.ID]; len(got) != 1 || got[0] != "I can use clarify today." {
+		t.Fatalf("expected listening sentence saved to word, got %v", got)
 	}
 	if _, ok := wordRepo.appended[mcWord.ID]; ok {
 		t.Fatalf("expected no example saved for multiple-choice word")
@@ -218,6 +223,48 @@ func TestValidateDynamicReviewPayloadRejectsLeakingPrompt(t *testing.T) {
 
 	if len(issues) == 0 {
 		t.Fatalf("expected validation issues for leaked target spelling")
+	}
+}
+
+func TestValidateDynamicReviewPayloadAcceptsListeningTargetSentence(t *testing.T) {
+	t.Parallel()
+
+	word := testDynamicReviewWord("forecast")
+	issues := validateDynamicReviewPayload(domain.DynamicReviewPromptBatchPayload{
+		Items: []domain.DynamicReviewPromptBatchItem{{
+			WordID:     word.ID,
+			ReviewMode: domain.ReviewModeListening,
+			PromptText: "I can forecast sales.",
+		}},
+	}, []dynamicReviewCandidate{{
+		WordID:     word.ID,
+		ReviewMode: domain.ReviewModeListening,
+		Word:       word,
+	}})
+
+	if len(issues) != 0 {
+		t.Fatalf("expected listening sentence with target word to pass, got %v", issues)
+	}
+}
+
+func TestValidateDynamicReviewPayloadRejectsListeningWithoutTarget(t *testing.T) {
+	t.Parallel()
+
+	word := testDynamicReviewWord("forecast")
+	issues := validateDynamicReviewPayload(domain.DynamicReviewPromptBatchPayload{
+		Items: []domain.DynamicReviewPromptBatchItem{{
+			WordID:     word.ID,
+			ReviewMode: domain.ReviewModeListening,
+			PromptText: "I can plan sales.",
+		}},
+	}, []dynamicReviewCandidate{{
+		WordID:     word.ID,
+		ReviewMode: domain.ReviewModeListening,
+		Word:       word,
+	}})
+
+	if len(issues) == 0 {
+		t.Fatalf("expected validation issues for listening sentence missing target")
 	}
 }
 
@@ -316,6 +363,8 @@ func (g *dynamicReviewGeneratorStub) GenerateDynamicReviewPrompts(ctx context.Co
 		promptText := "Choose the best word for a business prediction."
 		if item.ReviewMode == domain.ReviewModeFillBlank {
 			promptText = "The company used _____ to guide a risky expansion."
+		} else if item.ReviewMode == domain.ReviewModeListening {
+			promptText = fmt.Sprintf("I can use %s today.", item.Word.Word)
 		}
 		items = append(items, domain.DynamicReviewPromptBatchItem{
 			WordID:     item.WordID,
@@ -436,7 +485,7 @@ func TestDynamicReviewOverlayReusesHistoricalPromptFallback(t *testing.T) {
 		t.Fatalf("expected item to fallback and reuse historical dynamic prompt metadata")
 	}
 
-	metadata, ok := items[0].Metadata[dynamicReviewMetadataKey].(map[string]any)
+	metadata, ok := items[0].Metadata[dynamicReviewMetadataKey].(domain.JSONMap)
 	if !ok {
 		t.Fatalf("unexpected metadata format")
 	}

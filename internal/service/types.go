@@ -46,21 +46,21 @@ type DailyPoolView struct {
 }
 
 type CardResponse struct {
-	CardType               domain.LearnCardType               `json:"card_type"`
-	LocalDate              string                             `json:"local_date"`
-	SessionID              string                             `json:"session_id"`
-	SessionComplete        bool                               `json:"session_complete"`
-	SessionCompleteReason  string                             `json:"session_complete_reason"`
-	ComebackMode           bool                               `json:"comeback_mode"`
-	SessionTotalCap        int                                `json:"session_total_cap"`
-	DailyReviewCompleted   int                                `json:"daily_review_completed"`
-	SessionTotalCompleted  int                                `json:"session_total_completed"`
-	SessionReviewCompleted int                                `json:"session_review_completed"`
-	SessionNewCompleted    int                                `json:"session_new_completed"`
-	PendingDueCount        int                                `json:"pending_due_count"`
-	PendingPracticeCount   int                                `json:"pending_practice_count"`
-	NextDueAt              *time.Time                         `json:"next_due_at,omitempty"`
-	PoolItem               *domain.DailyLearningPoolItem      `json:"pool_item,omitempty"`
+	CardType               domain.LearnCardType          `json:"card_type"`
+	LocalDate              string                        `json:"local_date"`
+	SessionID              string                        `json:"session_id"`
+	SessionComplete        bool                          `json:"session_complete"`
+	SessionCompleteReason  string                        `json:"session_complete_reason"`
+	ComebackMode           bool                          `json:"comeback_mode"`
+	SessionTotalCap        int                           `json:"session_total_cap"`
+	DailyReviewCompleted   int                           `json:"daily_review_completed"`
+	SessionTotalCompleted  int                           `json:"session_total_completed"`
+	SessionReviewCompleted int                           `json:"session_review_completed"`
+	SessionNewCompleted    int                           `json:"session_new_completed"`
+	PendingDueCount        int                           `json:"pending_due_count"`
+	PendingPracticeCount   int                           `json:"pending_practice_count"`
+	NextDueAt              *time.Time                    `json:"next_due_at,omitempty"`
+	PoolItem               *domain.DailyLearningPoolItem `json:"pool_item,omitempty"`
 }
 
 type FirstExposureRequest struct {
@@ -83,6 +83,8 @@ type ReviewRequest struct {
 	RevealedExampleBeforeAnswer      bool
 	UsedHint                         bool
 	HintCount                        int
+	HintLimit                        int
+	WrongAttemptCount                int
 	InputMethod                      domain.ReviewInputMethod
 	NormalizedTypedAnswer            string
 	SelectedChoiceWordID             *uuid.UUID
@@ -106,4 +108,3 @@ type PronunciationRequest struct {
 type UndoLastAnswerRequest struct {
 	PoolItemID uuid.UUID
 }
-

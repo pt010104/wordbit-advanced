@@ -286,6 +286,8 @@ func scanState(row pgx.Row) (domain.UserWordState, error) {
 		&state.ConfusableMixupCount,
 		&state.SlowRecallCount,
 		&state.GuessedCorrectCount,
+		&state.WordConstructionSuccessStreak,
+		&state.WordConstructionStruggleCount,
 		&state.KnownAt,
 		&state.CreatedAt,
 		&state.UpdatedAt,

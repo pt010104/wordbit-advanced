@@ -229,7 +229,7 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 		state = ApplyMemoryCause(state, inferredCause, req.ResponseTimeMs, answerCorrect)
 	}
 	if !item.BonusPractice {
-		state = ApplyWordConstructionStruggle(state, req.ModeUsed, answerCorrect, hintCount, req.ResponseTimeMs)
+		state = ApplyWordConstructionFeedback(state, req.ModeUsed, answerCorrect, hintCount, req.HintLimit, req.WrongAttemptCount, req.ResponseTimeMs, now)
 	}
 	payload["answer_correct"] = answerCorrect
 	payload["revealed_meaning_before_answer"] = req.RevealedMeaningBeforeAnswer
@@ -237,6 +237,12 @@ func (s *LearningService) SubmitReview(ctx context.Context, user domain.User, re
 	payload["used_hint"] = req.UsedHint
 	if hintCount > 0 {
 		payload["hint_count"] = hintCount
+	}
+	if req.HintLimit > 0 {
+		payload["hint_limit"] = req.HintLimit
+	}
+	if req.WrongAttemptCount > 0 {
+		payload["wrong_attempt_count"] = req.WrongAttemptCount
 	}
 	if req.InputMethod != "" {
 		payload["input_method"] = req.InputMethod

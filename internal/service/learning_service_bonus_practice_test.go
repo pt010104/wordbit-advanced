@@ -1500,7 +1500,7 @@ func TestSubmitReviewWordConstructionStruggleBoostsSpellingSignal(t *testing.T) 
 		ClientEventID:  "build-word-hinted",
 		AnswerCorrect:  &answerCorrect,
 		UsedHint:       true,
-		HintCount:      2,
+		HintCount:      3,
 	}); err != nil {
 		t.Fatalf("SubmitReview returned error: %v", err)
 	}

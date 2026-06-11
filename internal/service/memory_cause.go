@@ -125,7 +125,7 @@ func slowRecallThresholdForMode(mode domain.ReviewMode) int {
 	switch mode {
 	case domain.ReviewModeMultipleChoice:
 		return slowRecallMCQThresholdMs
-	case domain.ReviewModeBuildWord, domain.ReviewModeFillBlank:
+	case domain.ReviewModeBuildWord, domain.ReviewModeFillBlank, domain.ReviewModeListening:
 		return slowRecallFillThresholdMs
 	default:
 		return slowRecallRevealThresholdMs
@@ -133,7 +133,7 @@ func slowRecallThresholdForMode(mode domain.ReviewMode) int {
 }
 
 func isSpellingIssue(input MemoryCauseInput) bool {
-	if (input.ModeUsed == domain.ReviewModeBuildWord || input.ModeUsed == domain.ReviewModeFillBlank) &&
+	if (input.ModeUsed == domain.ReviewModeBuildWord || input.ModeUsed == domain.ReviewModeFillBlank || input.ModeUsed == domain.ReviewModeListening) &&
 		!input.AnswerCorrect &&
 		input.NormalizedTypedAnswer != "" {
 		targets := normalizedAcceptedAnswers(input.TargetWord)

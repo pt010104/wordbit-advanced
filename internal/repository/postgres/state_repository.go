@@ -22,6 +22,7 @@ func (r *WordStateRepository) Get(ctx context.Context, userID uuid.UUID, wordID 
 		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
 		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
 		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
+		       word_construction_success_streak, word_construction_struggle_count,
 		       known_at, created_at, updated_at
 		FROM user_word_states
 		WHERE user_id = $1 AND word_id = $2
@@ -38,6 +39,7 @@ func (r *WordStateRepository) ListDueWithinWindow(ctx context.Context, userID uu
 		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
 		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
 		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
+		       word_construction_success_streak, word_construction_struggle_count,
 		       known_at, created_at, updated_at
 		FROM user_word_states
 		WHERE user_id = $1
@@ -71,6 +73,7 @@ func (r *WordStateRepository) ListWeakCandidates(ctx context.Context, userID uui
 		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
 		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
 		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
+		       word_construction_success_streak, word_construction_struggle_count,
 		       known_at, created_at, updated_at
 		FROM user_word_states
 		WHERE user_id = $1
@@ -107,6 +110,7 @@ func (r *WordStateRepository) ListExistingWords(ctx context.Context, userID uuid
 		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
 		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
 		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
+		       word_construction_success_streak, word_construction_struggle_count,
 		       known_at, created_at, updated_at
 		FROM user_word_states
 		WHERE user_id = $1
@@ -212,13 +216,13 @@ func (r *WordStateRepository) Upsert(ctx context.Context, state domain.UserWordS
 			stability, difficulty, review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count,
 			reveal_meaning_count, reveal_example_count, avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause,
 			last_response_time_ms, last_answer_correct, meaning_forget_count, spelling_issue_count, confusable_mixup_count,
-			slow_recall_count, guessed_correct_count, known_at
+			slow_recall_count, guessed_correct_count, word_construction_success_streak, word_construction_struggle_count, known_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8,
 			$9, $10, $11, $12, $13, $14, $15, $16,
 			$17, $18, $19, $20, $21, $22, $23,
 			$24, $25, $26, $27, $28, $29,
-			$30, $31
+			$30, $31, $32, $33
 		)
 		ON CONFLICT (user_id, word_id) DO UPDATE SET
 			status = EXCLUDED.status,
@@ -249,11 +253,14 @@ func (r *WordStateRepository) Upsert(ctx context.Context, state domain.UserWordS
 			confusable_mixup_count = EXCLUDED.confusable_mixup_count,
 			slow_recall_count = EXCLUDED.slow_recall_count,
 			guessed_correct_count = EXCLUDED.guessed_correct_count,
+			word_construction_success_streak = EXCLUDED.word_construction_success_streak,
+			word_construction_struggle_count = EXCLUDED.word_construction_struggle_count,
 			known_at = EXCLUDED.known_at
 		RETURNING user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds, stability, difficulty,
 		          review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
 		          avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
 		          meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
+		          word_construction_success_streak, word_construction_struggle_count,
 		          known_at, created_at, updated_at
 	`
 	return scanState(r.pool.QueryRow(ctx, query,
@@ -287,6 +294,8 @@ func (r *WordStateRepository) Upsert(ctx context.Context, state domain.UserWordS
 		state.ConfusableMixupCount,
 		state.SlowRecallCount,
 		state.GuessedCorrectCount,
+		state.WordConstructionSuccessStreak,
+		state.WordConstructionStruggleCount,
 		state.KnownAt,
 	))
 }
@@ -366,6 +375,11 @@ func (r *WordStateRepository) RefreshWeaknessScores(ctx context.Context, userID 
 			(
 				(hard_count * 1.0) +
 				(medium_count * 0.35) +
+				(word_construction_struggle_count * 0.18) +
+				(CASE
+					WHEN hard_count >= 2 AND medium_count > 0 THEN LEAST(medium_count * 0.15, 0.6)
+					ELSE 0
+				END) +
 				(CASE
 					WHEN last_rating = 'hard' THEN 0.6
 					WHEN last_rating = 'medium' THEN 0.2
@@ -373,10 +387,16 @@ func (r *WordStateRepository) RefreshWeaknessScores(ctx context.Context, userID 
 				END)
 			) - LEAST(
 				(easy_count * 0.45) +
+				(word_construction_success_streak * 0.20) +
 				(CASE WHEN last_rating = 'easy' THEN 0.3 ELSE 0 END),
 				(
 					(hard_count * 1.0) +
 					(medium_count * 0.35) +
+					(word_construction_struggle_count * 0.18) +
+					(CASE
+						WHEN hard_count >= 2 AND medium_count > 0 THEN LEAST(medium_count * 0.15, 0.6)
+						ELSE 0
+					END) +
 					(CASE
 						WHEN last_rating = 'hard' THEN 0.6
 						WHEN last_rating = 'medium' THEN 0.2

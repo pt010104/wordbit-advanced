@@ -422,7 +422,7 @@ func (h *Handler) GenerateDynamicReviewPrompts(w nethttp.ResponseWriter, r *neth
 
 	switch {
 	case result.EligibleCount == 0:
-		result.Message = "No Mode 2/3 scheduled cards need dynamic prompts right now."
+		result.Message = "No scheduled Mode 2/4/5 cards need dynamic prompts right now."
 	case result.GeneratedCount == 0:
 		result.Message = "Today's dynamic review prompts are already ready."
 	default:
@@ -460,7 +460,7 @@ func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		} else {
 			card.PoolItem = &enriched
 		}
-		if !hasPrompt && (card.PoolItem.ReviewMode == domain.ReviewModeMultipleChoice || card.PoolItem.ReviewMode == domain.ReviewModeFillBlank) {
+		if !hasPrompt && (card.PoolItem.ReviewMode == domain.ReviewModeMultipleChoice || card.PoolItem.ReviewMode == domain.ReviewModeFillBlank || card.PoolItem.ReviewMode == domain.ReviewModeListening) {
 			if view, viewErr := h.pools.GetOrCreateDailyPool(r.Context(), user); viewErr != nil {
 				h.logger.Warn("load daily pool for dynamic review backfill", "user_id", user.ID, "local_date", card.LocalDate, "error", viewErr)
 			} else if backfillErr := h.dynamicReview.BackfillForCurrentCard(r.Context(), user.ID, view.Pool.LocalDate, view.Items, *card.PoolItem); backfillErr != nil {
@@ -531,6 +531,8 @@ func (h *Handler) SubmitReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		RevealedExampleBeforeAnswer      bool                     `json:"revealed_example_before_answer"`
 		UsedHint                         bool                     `json:"used_hint"`
 		HintCount                        int                      `json:"hint_count"`
+		HintLimit                        int                      `json:"hint_limit"`
+		WrongAttemptCount                int                      `json:"wrong_attempt_count"`
 		InputMethod                      domain.ReviewInputMethod `json:"input_method"`
 		NormalizedTypedAnswer            string                   `json:"normalized_typed_answer"`
 		SelectedChoiceWordID             string                   `json:"selected_choice_word_id"`
@@ -561,6 +563,8 @@ func (h *Handler) SubmitReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		RevealedExampleBeforeAnswer:      payload.RevealedExampleBeforeAnswer,
 		UsedHint:                         payload.UsedHint,
 		HintCount:                        payload.HintCount,
+		HintLimit:                        payload.HintLimit,
+		WrongAttemptCount:                payload.WrongAttemptCount,
 		InputMethod:                      payload.InputMethod,
 		NormalizedTypedAnswer:            payload.NormalizedTypedAnswer,
 		SelectedChoiceWordID:             selectedChoiceWordID,
