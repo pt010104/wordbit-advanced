@@ -240,6 +240,8 @@ Requirements:
 - Meanings must include both English and Vietnamese
 - Avoid duplicates, inflections, confusable collisions, and anything in the exclusion lists
 - Prefer practical academic or real-world vocabulary
+- word_family must be a short comma-separated string with up to 4 useful family items, formatted like "act (verb), action (noun), active (adj), actively (adv)"
+- Prefer derivational family members; avoid tense-only or plural-only variants unless no better option exists
 - Return strict JSON only
 
 	Output format:
@@ -249,7 +251,7 @@ Requirements:
       "word": "string",
       "canonical_form": "string",
       "lemma": "string",
-      "word_family": "string",
+      "word_family": "string like \"act (verb), action (noun), active (adj), actively (adv)\"",
       "confusable_group_key": "string",
       "part_of_speech": "string",
       "level": "B1|B2|C1|C2",

@@ -385,8 +385,8 @@ func (r *WordStateRepository) RefreshWeaknessScores(ctx context.Context, userID 
 					WHEN last_rating = 'medium' THEN 0.2
 					ELSE 0
 				END)
-			) - LEAST(
-				(easy_count * 0.45) +
+				) - LEAST(
+				(easy_count * 0.55) +
 				(word_construction_success_streak * 0.20) +
 				(CASE WHEN last_rating = 'easy' THEN 0.3 ELSE 0 END),
 				(

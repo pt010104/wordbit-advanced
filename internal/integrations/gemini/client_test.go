@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +183,23 @@ func TestClientSkipsModelWhenLocalRPMLimitReached(t *testing.T) {
 	}
 	if counts["model-a"] != 1 || counts["model-b"] != 1 {
 		t.Fatalf("expected local RPM limit to prevent a second model-a request, got counts=%v", counts)
+	}
+}
+
+func TestBuildPromptRequestsCompactTypedWordFamily(t *testing.T) {
+	t.Parallel()
+
+	prompt := buildPrompt(service.GenerationInput{
+		RequestedCount: 3,
+		CEFRLevel:      domain.CEFRB2,
+		Topic:          "Business",
+	})
+
+	if !strings.Contains(prompt, `act (verb), action (noun), active (adj), actively (adv)`) {
+		t.Fatalf("expected prompt to include compact typed word_family example, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "avoid tense-only or plural-only variants unless no better option exists") {
+		t.Fatalf("expected prompt to discourage weak family variants, got %q", prompt)
 	}
 }
 

@@ -31,6 +31,7 @@ const (
 	mediumReviewIntervalMultiplier      = 1.05
 	hardReviewIntervalMultiplier        = 0.30
 	minHardReviewInterval               = 4 * time.Hour
+	easyWeaknessRecoveryWeight          = 0.55
 )
 
 func ComputeWeakSlots(dailyLimit int) int {
@@ -272,7 +273,7 @@ func computeWeaknessSignal(state domain.UserWordState) float64 {
 }
 
 func computeWeaknessRecovery(state domain.UserWordState) float64 {
-	recovery := float64(state.EasyCount) * 0.45
+	recovery := float64(state.EasyCount) * easyWeaknessRecoveryWeight
 	recovery += float64(state.WordConstructionSuccessStreak) * 0.20
 	switch state.LastRating {
 	case domain.RatingEasy:

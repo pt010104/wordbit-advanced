@@ -1,6 +1,7 @@
 package service
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -165,6 +166,21 @@ func TestComputeWeaknessScoreIncludesConstructionStruggle(t *testing.T) {
 
 	if got, wantMinimum := computeWeaknessScoreFromRatings(struggled), computeWeaknessScoreFromRatings(base); got <= wantMinimum {
 		t.Fatalf("expected construction struggle to increase weakness, got %.2f from %.2f", got, wantMinimum)
+	}
+}
+
+func TestComputeWeaknessScoreEasyRecoverySoftensRepeatedEasyReviews(t *testing.T) {
+	t.Parallel()
+
+	state := domain.UserWordState{
+		LastRating:  domain.RatingMedium,
+		EasyCount:   7,
+		MediumCount: 7,
+		HardCount:   14,
+	}
+
+	if got := computeWeaknessScoreFromRatings(state); math.Abs(got-13.4) > 1e-9 {
+		t.Fatalf("expected repeated easy reviews to soften weakness to 13.40, got %.2f", got)
 	}
 }
 
