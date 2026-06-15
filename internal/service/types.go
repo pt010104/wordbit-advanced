@@ -17,6 +17,7 @@ type GenerationInput struct {
 	ExcludeWords      []string
 	ExcludeLemmas     []string
 	ExcludeGroupKeys  []string
+	MixHint           string
 }
 
 type DynamicReviewPromptRequestItem struct {

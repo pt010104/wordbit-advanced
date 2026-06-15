@@ -49,6 +49,14 @@ type newWordBufferState struct {
 	PendingNewItems   []domain.DailyLearningPoolItem
 }
 
+type generatedItemKind string
+
+const (
+	generatedItemKindSingleWord  generatedItemKind = "single_word"
+	generatedItemKindPhrasalVerb generatedItemKind = "phrasal_verb"
+	generatedItemKindCollocation generatedItemKind = "collocation"
+)
+
 func NewPoolService(
 	settingsRepo SettingsRepository,
 	wordRepo WordRepository,
@@ -1298,6 +1306,8 @@ func (s *PoolService) generateNewWords(
 	existingStateWordIDSet := uuidSet(extractStateWordIDs(existingStates))
 	seedPoolWordIDSet := uuidSet(extractPoolWordIDs(seedItems))
 	selectedWordIDSet := map[uuid.UUID]struct{}{}
+	selectedKindCounts := map[generatedItemKind]int{}
+	kindTargets := computeGeneratedItemKindTargets(newQuota)
 
 	selectedWords := []domain.Word{}
 	acceptedNames := []string{}
@@ -1311,7 +1321,8 @@ func (s *PoolService) generateNewWords(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	for _, word := range filterBankWords(bankWords, &exclusionWords, &exclusionLemmas, &exclusionGroups, seenNewIDs) {
+	filteredBankWords := orderWordsByGeneratedMix(filterBankWords(bankWords, &exclusionWords, &exclusionLemmas, &exclusionGroups, seenNewIDs), kindTargets)
+	for _, word := range filteredBankWords {
 		if len(selectedWords) >= newQuota {
 			break
 		}
@@ -1320,6 +1331,7 @@ func (s *PoolService) generateNewWords(
 		}
 		selectedWords = append(selectedWords, word)
 		selectedWordIDSet[word.ID] = struct{}{}
+		selectedKindCounts[classifyWordKind(word)]++
 		acceptedNames = append(acceptedNames, word.Word)
 		existingWords = append(existingWords, word)
 		addNonEmptySlice(&exclusionWords, word.Word)
@@ -1351,6 +1363,7 @@ func (s *PoolService) generateNewWords(
 			ExcludeWords:      append([]string{}, promptExclusionWords...),
 			ExcludeLemmas:     append([]string{}, promptExclusionLemmas...),
 			ExcludeGroupKeys:  append([]string{}, promptExclusionGroups...),
+			MixHint:           buildGeneratedItemMixHint(kindTargets, selectedKindCounts, remaining),
 		}
 
 		candidates, raw, genErr := s.generator.GenerateCandidates(ctx, input)
@@ -1409,6 +1422,7 @@ func (s *PoolService) generateNewWords(
 			"rejected_count", len(result.Rejected),
 		)
 
+		selectedBeforeAttempt := len(selectedWords)
 		for _, candidate := range result.Accepted {
 			word, upsertErr := s.wordRepo.UpsertWord(ctx, candidate)
 			if upsertErr != nil {
@@ -1436,6 +1450,7 @@ func (s *PoolService) generateNewWords(
 			}
 			selectedWords = append(selectedWords, word)
 			selectedWordIDSet[word.ID] = struct{}{}
+			selectedKindCounts[classifyWordKind(word)]++
 			acceptedNames = append(acceptedNames, word.Word)
 			existingWords = append(existingWords, word)
 			addNonEmptySlice(&exclusionWords, word.Word)
@@ -1447,6 +1462,22 @@ func (s *PoolService) generateNewWords(
 			addNonEmptySlice(&promptExclusionLemmas, word.Lemma)
 			addNonEmptySlice(&promptExclusionGroups, word.ConfusableGroupKey)
 		}
+		if len(selectedWords) == selectedBeforeAttempt {
+			break
+		}
+	}
+
+	for _, word := range filteredBankWords {
+		if len(selectedWords) >= newQuota {
+			break
+		}
+		if _, selected := selectedWordIDSet[word.ID]; selected {
+			continue
+		}
+		selectedWords = append(selectedWords, word)
+		selectedWordIDSet[word.ID] = struct{}{}
+		selectedKindCounts[classifyWordKind(word)]++
+		acceptedNames = append(acceptedNames, word.Word)
 	}
 
 	if newQuota > 0 && len(selectedWords) == 0 && len(seedItems) == 0 {
@@ -1459,18 +1490,100 @@ func (s *PoolService) generateNewWords(
 	return selectedWords, acceptedNames, rejections, nil
 }
 
+func computeGeneratedItemKindTargets(limit int) map[generatedItemKind]int {
+	targets := map[generatedItemKind]int{
+		generatedItemKindSingleWord:  limit,
+		generatedItemKindPhrasalVerb: 0,
+		generatedItemKindCollocation: 0,
+	}
+	if limit <= 0 {
+		return targets
+	}
+	if limit >= 6 {
+		targets[generatedItemKindPhrasalVerb] = 1
+		targets[generatedItemKindCollocation] = 1
+		targets[generatedItemKindSingleWord] = limit - 2
+	} else if limit >= 4 {
+		targets[generatedItemKindPhrasalVerb] = 1
+		targets[generatedItemKindSingleWord] = limit - 1
+	}
+	return targets
+}
+
+func buildGeneratedItemMixHint(targets map[generatedItemKind]int, selected map[generatedItemKind]int, remaining int) string {
+	if remaining <= 0 {
+		return "none"
+	}
+	parts := make([]string, 0, 3)
+	for _, kind := range []generatedItemKind{generatedItemKindSingleWord, generatedItemKindPhrasalVerb, generatedItemKindCollocation} {
+		needed := targets[kind] - selected[kind]
+		if needed > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", needed, kind))
+		}
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("%d practical single_word items", remaining)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func orderWordsByGeneratedMix(words []domain.Word, targets map[generatedItemKind]int) []domain.Word {
+	ordered := append([]domain.Word{}, words...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return generatedItemKindPriority(classifyWordKind(ordered[i]), targets) < generatedItemKindPriority(classifyWordKind(ordered[j]), targets)
+	})
+	return ordered
+}
+
+func generatedItemKindPriority(kind generatedItemKind, targets map[generatedItemKind]int) int {
+	if targets[kind] <= 0 {
+		return 10
+	}
+	switch kind {
+	case generatedItemKindPhrasalVerb:
+		return 0
+	case generatedItemKindCollocation:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func classifyWordKind(word domain.Word) generatedItemKind {
+	return classifyGeneratedItemKind(word.Word, word.PartOfSpeech)
+}
+
+func classifyGeneratedItemKind(value string, partOfSpeech string) generatedItemKind {
+	normalizedPOS := strings.ToLower(strings.TrimSpace(partOfSpeech))
+	switch normalizedPOS {
+	case "phrasal verb", "phrasal_verb":
+		return generatedItemKindPhrasalVerb
+	case "collocation":
+		return generatedItemKindCollocation
+	}
+	normalized := strings.TrimSpace(value)
+	if strings.Contains(normalized, " ") || strings.Contains(normalized, "-") {
+		if strings.Contains(normalizedPOS, "verb") {
+			return generatedItemKindPhrasalVerb
+		}
+		return generatedItemKindCollocation
+	}
+	return generatedItemKindSingleWord
+}
+
 func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, itemType domain.PoolItemType, memoryCauseInferenceEnabled bool) []domain.DailyLearningPoolItem {
 	items := make([]domain.DailyLearningPoolItem, 0, len(states))
 	for _, state := range states {
 		word := words[state.WordID]
 		wordCopy := word
+		reviewMode := sanitizeReviewModeForWord(SelectReviewMode(state, memoryCauseInferenceEnabled), word)
 		dueAt := state.NextReviewAt
 		items = append(items, domain.DailyLearningPoolItem{
 			PoolID:                poolID,
 			UserID:                userID,
 			WordID:                state.WordID,
 			ItemType:              itemType,
-			ReviewMode:            SelectReviewMode(state, memoryCauseInferenceEnabled),
+			ReviewMode:            reviewMode,
 			DueAt:                 dueAt,
 			Status:                domain.PoolItemStatusPending,
 			IsReview:              true,
@@ -1482,6 +1595,13 @@ func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWo
 		})
 	}
 	return items
+}
+
+func sanitizeReviewModeForWord(mode domain.ReviewMode, word domain.Word) domain.ReviewMode {
+	if mode == domain.ReviewModeBuildWord && classifyWordKind(word) != generatedItemKindSingleWord {
+		return domain.ReviewModeFillBlank
+	}
+	return mode
 }
 
 func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, memoryCauseInferenceEnabled bool) []domain.DailyLearningPoolItem {

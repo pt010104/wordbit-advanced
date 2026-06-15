@@ -240,6 +240,8 @@ Requirements:
 - Meanings must include both English and Vietnamese
 - Avoid duplicates, inflections, confusable collisions, and anything in the exclusion lists
 - Prefer practical academic or real-world vocabulary
+- Include the requested item mix when provided. "single_word" items are one lexical word; "phrasal_verb" items are verb particles like "check in"; "collocation" items are natural multi-word chunks like "heavy traffic".
+- For phrasal verbs, set part_of_speech to "phrasal verb". For collocations, set part_of_speech to "collocation".
 - word_family must be a short comma-separated string with up to 4 useful family items, formatted like "act (verb), action (noun), active (adj), actively (adv)"
 - Prefer derivational family members; avoid tense-only or plural-only variants unless no better option exists
 - Return strict JSON only
@@ -275,7 +277,8 @@ Requirements:
 	Highest-priority words to avoid reusing from today's pool and recent study history: %s
 	Highest-priority lemmas to avoid: %s
 Highest-priority confusable groups to avoid: %s
-`, input.RequestedCount, input.CEFRLevel, input.Topic, strings.Join(input.ExcludeWords, ", "), strings.Join(input.ExcludeLemmas, ", "), strings.Join(input.ExcludeGroupKeys, ", "))
+Requested item mix: %s
+`, input.RequestedCount, input.CEFRLevel, input.Topic, strings.Join(input.ExcludeWords, ", "), strings.Join(input.ExcludeLemmas, ", "), strings.Join(input.ExcludeGroupKeys, ", "), input.MixHint)
 }
 
 const systemInstruction = `

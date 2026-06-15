@@ -469,13 +469,17 @@ func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID
 	if err != nil {
 		return uuid.Nil, err
 	}
+	word := domain.Word{}
+	if item.Word != nil {
+		word = *item.Word
+	}
 	followUp := domain.DailyLearningPoolItem{
 		PoolID:                pool.ID,
 		UserID:                userID,
 		WordID:                item.WordID,
 		Ordinal:               lastOrdinal + 1,
 		ItemType:              domain.PoolItemTypeShortTerm,
-		ReviewMode:            SelectReviewMode(state, s.memoryCauseInferenceEnabled),
+		ReviewMode:            sanitizeReviewModeForWord(SelectReviewMode(state, s.memoryCauseInferenceEnabled), word),
 		DueAt:                 state.NextReviewAt,
 		Status:                domain.PoolItemStatusPending,
 		IsReview:              true,
