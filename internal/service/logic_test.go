@@ -390,7 +390,7 @@ func TestSelectReviewModePromotesStuckHiddenMeaningToMultipleChoice(t *testing.T
 	}
 }
 
-func TestSelectReviewModeRequiresTwoCleanBuildWordTurnsBeforeAdvancedConstruction(t *testing.T) {
+func TestSelectReviewModeKeepsBuildWordBeforeAnyCleanConstructionTurn(t *testing.T) {
 	t.Parallel()
 
 	state := domain.UserWordState{
@@ -400,15 +400,15 @@ func TestSelectReviewModeRequiresTwoCleanBuildWordTurnsBeforeAdvancedConstructio
 		WeaknessScore:                 0.20,
 		LastMode:                      domain.ReviewModeBuildWord,
 		LastRating:                    domain.RatingEasy,
-		WordConstructionSuccessStreak: 1,
+		WordConstructionSuccessStreak: 0,
 	}
 
 	if mode := SelectReviewMode(state, true); mode != domain.ReviewModeBuildWord {
-		t.Fatalf("expected one clean build_word turn to stay in build_word, got %s", mode)
+		t.Fatalf("expected no clean build_word turn yet to stay in build_word, got %s", mode)
 	}
 }
 
-func TestSelectReviewModePromotesTwoCleanBuildWordTurnsToAdvancedConstruction(t *testing.T) {
+func TestSelectReviewModePromotesCleanBuildWordTurnToAdvancedConstruction(t *testing.T) {
 	t.Parallel()
 
 	state := domain.UserWordState{
@@ -423,7 +423,7 @@ func TestSelectReviewModePromotesTwoCleanBuildWordTurnsToAdvancedConstruction(t 
 
 	mode := SelectReviewMode(state, true)
 	if mode != domain.ReviewModeFillBlank && mode != domain.ReviewModeListening {
-		t.Fatalf("expected two clean build_word turns to promote to mode 4/5, got %s", mode)
+		t.Fatalf("expected a clean build_word turn to promote to mode 4/5, got %s", mode)
 	}
 }
 

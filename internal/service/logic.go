@@ -14,9 +14,9 @@ const (
 	standardMode2WeaknessThreshold      = 1.75
 	standardMode2WrongCountThreshold    = 3
 	standardMode2MeaningRevealThreshold = 4
-	advancedConstructionSuccessStreak   = 2
-	advancedConstructionDifficultyMax   = 0.78
-	advancedConstructionWeaknessMax     = 1.75
+	advancedConstructionSuccessStreak   = 1
+	advancedConstructionDifficultyMax   = 0.90
+	advancedConstructionWeaknessMax     = 2.50
 	wordConstructionDefaultHintLimit    = 3
 	wordConstructionHintStruggleCount   = 2
 	wordConstructionWeaknessBoost       = 0.25
@@ -150,10 +150,13 @@ func selectAdvancedConstructionMode(state domain.UserWordState) domain.ReviewMod
 	if state.LastMode == domain.ReviewModeFillBlank {
 		seed++
 	}
-	if seed%2 == 0 {
-		return domain.ReviewModeFillBlank
+	// Listening (mode 5) is intentionally rarer than fill-in-blank (mode 4):
+	// pick it for roughly 1 in 4 advanced-construction selections. The per-day
+	// listening cap in the pool builder bounds the actual count to 1-2/day.
+	if seed%4 == 0 {
+		return domain.ReviewModeListening
 	}
-	return domain.ReviewModeListening
+	return domain.ReviewModeFillBlank
 }
 
 func SelectWordConstructionMode(state domain.UserWordState) domain.ReviewMode {

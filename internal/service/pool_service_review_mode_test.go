@@ -134,3 +134,45 @@ func TestSyncPendingPoolItemRefreshesStaleRevealMode(t *testing.T) {
 		t.Fatalf("expected dueAt to stay the same, got %#v", updated.DueAt)
 	}
 }
+
+func TestCapListeningReviewItemsDowngradesBeyondLimit(t *testing.T) {
+	t.Parallel()
+
+	listening := func() domain.DailyLearningPoolItem {
+		return domain.DailyLearningPoolItem{
+			WordID:     uuid.New(),
+			IsReview:   true,
+			ReviewMode: domain.ReviewModeListening,
+		}
+	}
+	items := []domain.DailyLearningPoolItem{
+		listening(),
+		{WordID: uuid.New(), IsReview: true, ReviewMode: domain.ReviewModeFillBlank},
+		listening(),
+		listening(),
+		// A non-review listening item must be ignored by the cap.
+		{WordID: uuid.New(), IsReview: false, ReviewMode: domain.ReviewModeListening},
+	}
+
+	capListeningReviewItems(items, dailyListeningItemLimit)
+
+	listeningReview := 0
+	for _, item := range items {
+		if item.IsReview && item.ReviewMode == domain.ReviewModeListening {
+			listeningReview++
+		}
+	}
+	if listeningReview != dailyListeningItemLimit {
+		t.Fatalf("expected %d listening review items after cap, got %d", dailyListeningItemLimit, listeningReview)
+	}
+	// The first two listening review items keep the mode; the third is downgraded.
+	if items[0].ReviewMode != domain.ReviewModeListening || items[2].ReviewMode != domain.ReviewModeListening {
+		t.Fatalf("expected earliest listening items to be preserved")
+	}
+	if items[3].ReviewMode != domain.ReviewModeFillBlank {
+		t.Fatalf("expected over-limit listening item to be downgraded to fill_in_blank, got %s", items[3].ReviewMode)
+	}
+	if items[4].ReviewMode != domain.ReviewModeListening {
+		t.Fatalf("expected non-review listening item to be untouched, got %s", items[4].ReviewMode)
+	}
+}

@@ -175,6 +175,7 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 	items = buildReviewItems(user.ID, uuid.Nil, shortTermStates, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled)
 	items = append(items, buildReviewItems(user.ID, uuid.Nil, reviewStates, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled)...)
 	items = append(items, buildReviewItems(user.ID, uuid.Nil, weakStates, wordMap, domain.PoolItemTypeWeak, s.memoryCauseInferenceEnabled)...)
+	capListeningReviewItems(items, dailyListeningItemLimit)
 
 	newWords, acceptedWords, rejectionSummary, err := s.generateNewWords(ctx, user.ID, settings, topic, newQuota, items, now)
 	if err != nil {
@@ -247,6 +248,16 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 }
 
 func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID, items []domain.DailyLearningPoolItem) error {
+	// Listening (mode 5) is capped per day. Non-pending review items already
+	// consumed part of that budget; the remainder is what pending items may use.
+	listeningBudget := dailyListeningItemLimit
+	for index := range items {
+		item := items[index]
+		if item.IsReview && item.Status != domain.PoolItemStatusPending && item.ReviewMode == domain.ReviewModeListening {
+			listeningBudget--
+		}
+	}
+
 	for index := range items {
 		item := items[index]
 		if item.Status != domain.PoolItemStatusPending || !item.IsReview || item.FirstExposureRequired {
@@ -261,7 +272,17 @@ func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID
 			return err
 		}
 
-		updated, changed := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled)
+		updated, _ := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled)
+		if updated.ReviewMode == domain.ReviewModeListening {
+			if listeningBudget > 0 {
+				listeningBudget--
+			} else {
+				updated.ReviewMode = domain.ReviewModeFillBlank
+			}
+		}
+		changed := updated.ReviewMode != item.ReviewMode ||
+			!sameOptionalTime(updated.DueAt, item.DueAt) ||
+			jsonMapFloat64(item.Metadata, "weakness_score") != state.WeaknessScore
 		if !changed {
 			continue
 		}
@@ -1602,6 +1623,28 @@ func sanitizeReviewModeForWord(mode domain.ReviewMode, word domain.Word) domain.
 		return domain.ReviewModeFillBlank
 	}
 	return mode
+}
+
+// dailyListeningItemLimit caps how many listening_sentence (mode 5) review items
+// a user can be served in a single day. Listening is the heaviest construction
+// mode, so we keep it scarce (1-2/day) while fill_in_blank (mode 4) stays common.
+const dailyListeningItemLimit = 2
+
+// capListeningReviewItems downgrades listening_sentence review items beyond
+// `limit` to fill_in_blank, mutating items in place. Items are processed in
+// slice order so the earliest listening items keep the mode deterministically.
+func capListeningReviewItems(items []domain.DailyLearningPoolItem, limit int) {
+	remaining := limit
+	for i := range items {
+		if !items[i].IsReview || items[i].ReviewMode != domain.ReviewModeListening {
+			continue
+		}
+		if remaining > 0 {
+			remaining--
+			continue
+		}
+		items[i].ReviewMode = domain.ReviewModeFillBlank
+	}
 }
 
 func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, memoryCauseInferenceEnabled bool) []domain.DailyLearningPoolItem {
