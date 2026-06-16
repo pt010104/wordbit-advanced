@@ -4,8 +4,8 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
-REMOTE_HOST="${REMOTE_HOST:-root@35.236.137.161}"
-REMOTE_DIR="${REMOTE_DIR:-/root/wordbit-advanced}"
+REMOTE_HOST="${REMOTE_HOST:-thinh@35.236.137.161}"
+REMOTE_DIR="${REMOTE_DIR:-/thinh/wordbit-advanced}"
 SERVICE_NAME="${SERVICE_NAME:-backend}"
 COMMIT_MESSAGE="${1:-chore: deploy backend updates}"
 
