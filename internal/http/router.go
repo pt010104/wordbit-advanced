@@ -56,6 +56,10 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	// Compress responses (e.g. the ~121KB daily-pool payload) so large bodies
+	// don't dominate request latency on slow/mobile networks. gzip typically
+	// shrinks this JSON ~5-10x; clients negotiate via Accept-Encoding.
+	r.Use(middleware.Compress(5))
 	r.Use(mw.RequestLogger)
 	r.Use(mw.Recoverer)
 	r.Use(middleware.Timeout(3 * time.Minute))
