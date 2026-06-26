@@ -122,6 +122,7 @@ const (
 	EventTypeHintUsage       EventType = "hint_usage"
 	EventTypePronunciation   EventType = "play_pronunciation"
 	EventTypePoolGenerated   EventType = "pool_generated"
+	EventTypeAppendMoreWords EventType = "append_more_words"
 	EventTypeWeaknessRefresh EventType = "weakness_refresh"
 	EventTypeBonusPractice   EventType = "bonus_practice_review"
 	EventTypeAnswerUndo      EventType = "answer_undo"

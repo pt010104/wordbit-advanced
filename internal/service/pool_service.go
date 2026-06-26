@@ -177,7 +177,7 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 	items = append(items, buildReviewItems(user.ID, uuid.Nil, weakStates, wordMap, domain.PoolItemTypeWeak, s.memoryCauseInferenceEnabled)...)
 	capListeningReviewItems(items, dailyListeningItemLimit)
 
-	newWords, acceptedWords, rejectionSummary, err := s.generateNewWords(ctx, user.ID, settings, topic, newQuota, items, now)
+	newWords, acceptedWords, rejectionSummary, err := s.generateNewWords(ctx, user.ID, settings, settings.CEFRLevel, topic, newQuota, items, now)
 	if err != nil {
 		return DailyPoolView{}, err
 	}
@@ -822,7 +822,7 @@ func (s *PoolService) replenishUnknownDailySlots(
 		"prefetch_batch_size", bufferState.PrefetchBatchSize,
 	)
 
-	newWords, _, _, err := s.generateNewWords(ctx, userID, settings, pool.Topic, bufferState.PrefetchBatchSize, items, now)
+	newWords, _, _, err := s.generateNewWords(ctx, userID, settings, settings.CEFRLevel, pool.Topic, bufferState.PrefetchBatchSize, items, now)
 	if err != nil {
 		return false, nil, err
 	}
@@ -1258,7 +1258,15 @@ func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User, 
 	if selectedTopic == "" {
 		selectedTopic = view.Pool.Topic
 	}
-	newWords, _, _, err := s.generateNewWords(ctx, user.ID, settings, selectedTopic, settings.DailyNewWordLimit, view.Items, now)
+	appendAttemptCount, err := s.countAppendMoreWordsAttemptsForLocalDate(ctx, user.ID, view.Pool.LocalDate, settings.Timezone, now)
+	if err != nil {
+		return DailyPoolView{}, err
+	}
+	generationLevel := settings.CEFRLevel
+	if appendAttemptCount >= 2 {
+		generationLevel = elevatedCEFRLevel(settings.CEFRLevel)
+	}
+	newWords, _, _, err := s.generateNewWords(ctx, user.ID, settings, generationLevel, selectedTopic, settings.DailyNewWordLimit, view.Items, now)
 	if err != nil {
 		return DailyPoolView{}, err
 	}
@@ -1280,12 +1288,29 @@ func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User, 
 	if err := s.poolRepo.IncrementNewCount(ctx, view.Pool.ID, len(newItems)); err != nil {
 		return DailyPoolView{}, err
 	}
+	if err := s.eventRepo.Insert(ctx, domain.LearningEvent{
+		UserID:    user.ID,
+		EventType: domain.EventTypeAppendMoreWords,
+		EventTime: now,
+		Payload: domain.JSONMap{
+			"local_date":          view.Pool.LocalDate,
+			"topic":               selectedTopic,
+			"attempt_number":      appendAttemptCount + 1,
+			"base_cefr_level":     settings.CEFRLevel,
+			"generation_cefr_level": generationLevel,
+			"appended_new_items":  len(newItems),
+		},
+	}); err != nil {
+		s.logger.Warn("record append more words event", "user_id", user.ID, "local_date", view.Pool.LocalDate, "error", err)
+	}
 
 	s.logger.Info("appended more new words",
 		"user_id", user.ID,
 		"pool_id", view.Pool.ID,
 		"local_date", view.Pool.LocalDate,
 		"topic", selectedTopic,
+		"append_attempt_count_before", appendAttemptCount,
+		"generation_cefr_level", generationLevel,
 		"requested_new_items", settings.DailyNewWordLimit,
 		"appended_new_items", len(newItems),
 	)
@@ -1301,6 +1326,7 @@ func (s *PoolService) generateNewWords(
 	ctx context.Context,
 	userID uuid.UUID,
 	settings domain.UserSettings,
+	level domain.CEFRLevel,
 	topic string,
 	newQuota int,
 	seedItems []domain.DailyLearningPoolItem,
@@ -1338,7 +1364,7 @@ func (s *PoolService) generateNewWords(
 	var lastGenerationErr error
 
 	bankExcludeWordIDs := append(extractStateWordIDs(existingStates), extractPoolWordIDs(seedItems)...)
-	bankWords, err := s.wordRepo.ListBankWords(ctx, userID, settings.CEFRLevel, topic, bankExcludeWordIDs, minInt(newQuota+5, 20))
+	bankWords, err := s.wordRepo.ListBankWords(ctx, userID, level, topic, bankExcludeWordIDs, minInt(newQuota+5, 20))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1377,7 +1403,7 @@ func (s *PoolService) generateNewWords(
 		)
 		input := GenerationInput{
 			UserID:            userID,
-			CEFRLevel:         settings.CEFRLevel,
+			CEFRLevel:         level,
 			Topic:             topic,
 			RequestedCount:    requested,
 			PreferredLanguage: settings.PreferredMeaningLanguage,
@@ -1509,6 +1535,47 @@ func (s *PoolService) generateNewWords(
 	}
 
 	return selectedWords, acceptedNames, rejections, nil
+}
+
+func (s *PoolService) countAppendMoreWordsAttemptsForLocalDate(
+	ctx context.Context,
+	userID uuid.UUID,
+	localDate string,
+	timezone string,
+	now time.Time,
+) (int, error) {
+	_, startUTC, endUTC, _, err := domain.BoundsForLocalDate(now, timezone)
+	if err != nil {
+		return 0, err
+	}
+	events, err := s.eventRepo.ListByUserTimeRange(ctx, userID, startUTC, endUTC)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, event := range events {
+		if event.EventType != domain.EventTypeAppendMoreWords {
+			continue
+		}
+		if eventLocalDate, _ := event.Payload["local_date"].(string); eventLocalDate != "" && eventLocalDate != localDate {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+func elevatedCEFRLevel(level domain.CEFRLevel) domain.CEFRLevel {
+	switch level {
+	case domain.CEFRB1:
+		return domain.CEFRB2
+	case domain.CEFRB2:
+		return domain.CEFRC1
+	case domain.CEFRC1:
+		return domain.CEFRC2
+	default:
+		return level
+	}
 }
 
 func computeGeneratedItemKindTargets(limit int) map[generatedItemKind]int {

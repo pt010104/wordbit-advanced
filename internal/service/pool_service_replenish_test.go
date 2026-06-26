@@ -567,7 +567,7 @@ func TestGenerateNewWordsStopsAfterRateLimitError(t *testing.T) {
 	settings := domain.DefaultUserSettings(userID)
 	settings.CEFRLevel = domain.CEFRB1
 
-	_, _, _, err := service.generateNewWords(context.Background(), userID, settings, "Environment", 1, nil, now)
+	_, _, _, err := service.generateNewWords(context.Background(), userID, settings, settings.CEFRLevel, "Environment", 1, nil, now)
 	if err == nil {
 		t.Fatal("expected rate-limited generation error, got nil")
 	}
@@ -601,7 +601,7 @@ func TestGenerateNewWordsKeepsRetryLoopForEmptyCandidates(t *testing.T) {
 	settings := domain.DefaultUserSettings(userID)
 	settings.CEFRLevel = domain.CEFRB1
 
-	_, _, _, err := service.generateNewWords(context.Background(), userID, settings, "Environment", 1, nil, now)
+	_, _, _, err := service.generateNewWords(context.Background(), userID, settings, settings.CEFRLevel, "Environment", 1, nil, now)
 	if err == nil {
 		t.Fatal("expected empty-generation error, got nil")
 	}
