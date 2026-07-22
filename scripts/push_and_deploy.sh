@@ -41,6 +41,6 @@ ssh -o StrictHostKeyChecking=accept-new "$REMOTE_HOST" \
    git fetch '$REMOTE_NAME' '$BRANCH_NAME'; \
    git checkout '$BRANCH_NAME'; \
    git pull --ff-only '$REMOTE_NAME' '$BRANCH_NAME'; \
-   docker compose up -d --build '$SERVICE_NAME'"
+   docker compose up -d --build '$SERVICE_NAME' caddy"
 
 echo "Push and deploy completed."

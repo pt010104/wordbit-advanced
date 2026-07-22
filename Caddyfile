@@ -1,0 +1,5 @@
+# sslip.io resolves this hostname directly to the Compute Engine VM public IP,
+# so no purchased domain or separate DNS configuration is needed.
+{$CADDY_DOMAIN:35.236.137.161.sslip.io} {
+	reverse_proxy backend:8080
+}
