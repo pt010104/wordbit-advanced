@@ -90,7 +90,57 @@ func (r *WordSetRepository) Update(ctx context.Context, set domain.WordSet) (dom
 }
 
 func (r *WordSetRepository) Delete(ctx context.Context, userID uuid.UUID, setID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return mapError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// A word belongs to a user through user_word_states.  Do not leave those
+	// states unowned when a custom set is removed: EnsureDefault deliberately
+	// assigns legacy unowned states to Default, which would otherwise make the
+	// deleted set's words appear in the Default dictionary and study pool.
+	// Keep the global words rows; they may be shared by another user or set.
+	_, err = tx.Exec(ctx, `
+		WITH deleted AS (
+			DELETE FROM daily_learning_pool_items item
+			USING user_word_states state
+			WHERE item.user_id = $1
+			  AND state.user_id = $1
+			  AND state.word_set_id = $2
+			  AND item.word_id = state.word_id
+			RETURNING item.pool_id, item.item_type
+		),
+		aggregated AS (
+			SELECT pool_id,
+			       COUNT(*) FILTER (WHERE item_type = 'review') AS review_count,
+			       COUNT(*) FILTER (WHERE item_type = 'short_term') AS short_term_count,
+			       COUNT(*) FILTER (WHERE item_type = 'weak') AS weak_count,
+			       COUNT(*) FILTER (WHERE item_type = 'new') AS new_count
+			FROM deleted
+			GROUP BY pool_id
+		)
+		UPDATE daily_learning_pools pool
+		SET due_review_count = GREATEST(0, pool.due_review_count - aggregated.review_count),
+		    short_term_count = GREATEST(0, pool.short_term_count - aggregated.short_term_count),
+		    weak_count = GREATEST(0, pool.weak_count - aggregated.weak_count),
+		    new_count = GREATEST(0, pool.new_count - aggregated.new_count)
+		FROM aggregated
+		WHERE pool.id = aggregated.pool_id
+	`, userID, setID)
+	if err != nil {
+		return mapError(err)
+	}
+
+	_, err = tx.Exec(ctx, `
+		DELETE FROM user_word_states
+		WHERE user_id = $1 AND word_set_id = $2
+	`, userID, setID)
+	if err != nil {
+		return mapError(err)
+	}
+
+	tag, err := tx.Exec(ctx, `
 		DELETE FROM word_sets
 		WHERE user_id = $1 AND id = $2 AND is_default = FALSE
 	`, userID, setID)
@@ -100,7 +150,7 @@ func (r *WordSetRepository) Delete(ctx context.Context, userID uuid.UUID, setID 
 	if tag.RowsAffected() == 0 {
 		return domain.ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (r *WordSetRepository) EnsureDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error) {
