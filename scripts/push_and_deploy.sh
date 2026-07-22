@@ -5,7 +5,10 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 REMOTE_HOST="${REMOTE_HOST:-thinh@35.236.137.161}"
-REMOTE_DIR="${REMOTE_DIR:-/root/wordbit-advanced}"
+# The SSH account is `thinh`, so deploy from its checked-out repository rather
+# than `/root`, which is not traversable by non-root users. Override with
+# REMOTE_DIR when deploying to a different server layout.
+REMOTE_DIR="${REMOTE_DIR:-/home/thinh/wordbit-advanced}"
 SERVICE_NAME="${SERVICE_NAME:-backend}"
 COMMIT_MESSAGE="${1:-chore: deploy backend updates}"
 
