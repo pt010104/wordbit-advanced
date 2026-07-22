@@ -231,12 +231,17 @@ func (c *Client) backoff(attempt int) {
 }
 
 func buildPrompt(input service.GenerationInput) string {
+	requiredWordLine := ""
+	if strings.TrimSpace(input.RequiredWord) != "" {
+		requiredWordLine = fmt.Sprintf("- Required item: return exactly \"%s\" as the candidate word, not a substitute\n", strings.TrimSpace(input.RequiredWord))
+	}
 	return fmt.Sprintf(`
 Generate %d English vocabulary candidates for a Vietnamese learner.
 
 Requirements:
 - CEFR level: %s
 - Topic: %s
+%s
 - Meanings must include both English and Vietnamese
 - Avoid duplicates, inflections, confusable collisions, and anything in the exclusion lists
 - Prefer practical academic or real-world vocabulary
@@ -278,7 +283,7 @@ Requirements:
 	Highest-priority lemmas to avoid: %s
 Highest-priority confusable groups to avoid: %s
 Requested item mix: %s
-`, input.RequestedCount, input.CEFRLevel, input.Topic, strings.Join(input.ExcludeWords, ", "), strings.Join(input.ExcludeLemmas, ", "), strings.Join(input.ExcludeGroupKeys, ", "), input.MixHint)
+`, input.RequestedCount, input.CEFRLevel, input.Topic, requiredWordLine, strings.Join(input.ExcludeWords, ", "), strings.Join(input.ExcludeLemmas, ", "), strings.Join(input.ExcludeGroupKeys, ", "), input.MixHint)
 }
 
 const systemInstruction = `

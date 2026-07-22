@@ -238,6 +238,41 @@ func (h *Handler) UpdateWordSet(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, nethttp.StatusOK, set)
 }
 
+func (h *Handler) UpdateWordSetPreferences(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	setID, err := parseUUID(chi.URLParam(r, "setID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	var payload struct {
+		AutoGenerateNewWords bool                `json:"auto_generate_new_words"`
+		EnabledReviewModes   []domain.ReviewMode `json:"enabled_review_modes"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	set, err := h.wordSets.UpdatePreferences(r.Context(), user.ID, setID, service.WordSetPreferencesInput{
+		AutoGenerateNewWords: payload.AutoGenerateNewWords,
+		EnabledReviewModes:   payload.EnabledReviewModes,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.pools != nil {
+		if err := h.pools.RemapPendingReviewModes(r.Context(), user.ID, set); err != nil {
+			h.logger.Warn("remap pending review modes", "user_id", user.ID, "set_id", set.ID, "error", err)
+		}
+	}
+	writeJSON(w, nethttp.StatusOK, set)
+}
+
 func (h *Handler) DeleteWordSet(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)
 	if err != nil {
@@ -342,6 +377,161 @@ func (h *Handler) DeleteDictionaryWord(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 	if err := h.dictionary.Delete(r.Context(), user.ID, wordID); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) ListImportBufferItems(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.importBuffer == nil {
+		writeError(w, errors.New("import buffer service unavailable"))
+		return
+	}
+	setID, err := parseOptionalUUID(r.URL.Query().Get("set_id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	items, err := h.importBuffer.List(r.Context(), user.ID, setID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) CreateImportBufferItem(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.importBuffer == nil {
+		writeError(w, errors.New("import buffer service unavailable"))
+		return
+	}
+	var payload struct {
+		Word      string `json:"word"`
+		WordSetID string `json:"word_set_id"`
+		SourceURL string `json:"source_url"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, fmt.Errorf("%w: invalid json body", domain.ErrValidation))
+		return
+	}
+	setID, err := parseUUID(payload.WordSetID)
+	if err != nil {
+		writeError(w, fmt.Errorf("%w: invalid word_set_id", domain.ErrValidation))
+		return
+	}
+	item, err := h.importBuffer.Add(r.Context(), user.ID, service.WordImportBufferAddInput{
+		Word:      payload.Word,
+		WordSetID: setID,
+		SourceURL: payload.SourceURL,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusCreated, item)
+}
+
+func (h *Handler) GenerateImportBufferItem(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.importBuffer == nil {
+		writeError(w, errors.New("import buffer service unavailable"))
+		return
+	}
+	itemID, err := parseUUID(chi.URLParam(r, "itemID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	item, err := h.importBuffer.Generate(r.Context(), user, itemID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, item)
+}
+
+func (h *Handler) UpdateImportBufferItemCandidate(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.importBuffer == nil {
+		writeError(w, errors.New("import buffer service unavailable"))
+		return
+	}
+	itemID, err := parseUUID(chi.URLParam(r, "itemID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	var candidate domain.CandidateWord
+	if err := decodeJSON(r, &candidate); err != nil {
+		writeError(w, fmt.Errorf("%w: invalid json body", domain.ErrValidation))
+		return
+	}
+	item, err := h.importBuffer.SaveCandidate(r.Context(), user.ID, itemID, candidate)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, item)
+}
+
+func (h *Handler) ConfirmImportBufferItem(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.importBuffer == nil {
+		writeError(w, errors.New("import buffer service unavailable"))
+		return
+	}
+	itemID, err := parseUUID(chi.URLParam(r, "itemID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	entry, err := h.importBuffer.Confirm(r.Context(), user, itemID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusCreated, entry)
+}
+
+func (h *Handler) DeleteImportBufferItem(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.importBuffer == nil {
+		writeError(w, errors.New("import buffer service unavailable"))
+		return
+	}
+	itemID, err := parseUUID(chi.URLParam(r, "itemID"))
+	if err != nil {
+		writeError(w, domain.ErrValidation)
+		return
+	}
+	if err := h.importBuffer.Delete(r.Context(), user.ID, itemID); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -727,6 +917,7 @@ func decodeDictionaryUpsertPayload(r *nethttp.Request) (service.DictionaryUpsert
 		EnglishMeaning     string                      `json:"english_meaning"`
 		ExampleSentence1   string                      `json:"example_sentence_1"`
 		ExampleSentence2   string                      `json:"example_sentence_2"`
+		CommonRate         string                      `json:"common_rate"`
 		ListStatus         domain.DictionaryListStatus `json:"list_status"`
 		WordSetID          string                      `json:"word_set_id"`
 	}
@@ -740,6 +931,14 @@ func decodeDictionaryUpsertPayload(r *nethttp.Request) (service.DictionaryUpsert
 			return service.DictionaryUpsertInput{}, fmt.Errorf("%w: invalid word_set_id", domain.ErrValidation)
 		}
 		setID = &parsed
+	}
+	var commonRate *domain.WordCommonRate
+	if trimmed := strings.TrimSpace(payload.CommonRate); trimmed != "" {
+		parsed, ok := domain.ParseWordCommonRate(trimmed)
+		if !ok {
+			return service.DictionaryUpsertInput{}, fmt.Errorf("%w: invalid common_rate", domain.ErrValidation)
+		}
+		commonRate = &parsed
 	}
 	return service.DictionaryUpsertInput{
 		Word:               payload.Word,
@@ -756,6 +955,7 @@ func decodeDictionaryUpsertPayload(r *nethttp.Request) (service.DictionaryUpsert
 		EnglishMeaning:     payload.EnglishMeaning,
 		ExampleSentence1:   payload.ExampleSentence1,
 		ExampleSentence2:   payload.ExampleSentence2,
+		CommonRate:         commonRate,
 		ListStatus:         payload.ListStatus,
 		WordSetID:          setID,
 	}, nil

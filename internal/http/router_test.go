@@ -477,7 +477,7 @@ func TestRouterWithDevAuthSettingsAndPool(t *testing.T) {
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, nil, statisticsService, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -587,7 +587,7 @@ func TestGenerateDynamicReviewPromptsEndpoint(t *testing.T) {
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, nil, statisticsService, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/settings", nil)
 	resp := httptest.NewRecorder()
@@ -653,7 +653,7 @@ func TestTestLLMEndpoint(t *testing.T) {
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, &staticPromptTester{}, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, nil, statisticsService, llmRepo, &staticPromptTester{}, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/me/llm/test", bytes.NewBufferString(`{"prompt":"hello llm"}`))
 	resp := httptest.NewRecorder()
@@ -726,7 +726,7 @@ func TestStatisticsEndpoint(t *testing.T) {
 	}
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, nil, statisticsService, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/statistics?range=7d", nil)
 	resp := httptest.NewRecorder()
@@ -773,7 +773,7 @@ func TestDailyPoolFailsWhenInitialGenerationProducesNoCards(t *testing.T) {
 	verifier := auth.NewVerifier(config.AuthConfig{DevBypass: true, DevSubject: "dev-user", DevEmail: "dev@example.com"}, logger)
 
 	statisticsService := service.NewStatisticsService(settingsRepo, wordRepo, stateRepo, eventRepo, clock)
-	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, statisticsService, llmRepo, nil, BuildInfo{})
+	router := NewRouter(config.Config{AdminToken: "secret"}, logger, nil, verifier, identity, settingsService, dictionaryService, poolService, learningService, dynamicReviewService, nil, nil, statisticsService, llmRepo, nil, BuildInfo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/daily-pool", nil)
 	resp := httptest.NewRecorder()

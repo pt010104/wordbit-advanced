@@ -32,12 +32,13 @@ type Handler struct {
 	learning      *service.LearningService
 	dynamicReview *service.DynamicReviewService
 	wordSets      *service.WordSetService
+	importBuffer  *service.WordImportBufferService
 	statistics    *service.StatisticsService
 	llmRuns       service.LLMRunRepository
 	promptTester  service.PromptTester
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, dynamicReview *service.DynamicReviewService, wordSets *service.WordSetService, statistics *service.StatisticsService, llmRuns service.LLMRunRepository, promptTester service.PromptTester, build BuildInfo) nethttp.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, dynamicReview *service.DynamicReviewService, wordSets *service.WordSetService, importBuffer *service.WordImportBufferService, statistics *service.StatisticsService, llmRuns service.LLMRunRepository, promptTester service.PromptTester, build BuildInfo) nethttp.Handler {
 	mw := NewMiddleware(logger, verifier, identity, cfg.AdminToken)
 	h := &Handler{
 		logger:        logger,
@@ -49,6 +50,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 		learning:      learning,
 		dynamicReview: dynamicReview,
 		wordSets:      wordSets,
+		importBuffer:  importBuffer,
 		statistics:    statistics,
 		llmRuns:       llmRuns,
 		promptTester:  promptTester,
@@ -75,6 +77,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Get("/me/word-sets", h.ListWordSets)
 			r.Post("/me/word-sets", h.CreateWordSet)
 			r.Put("/me/word-sets/{setID}", h.UpdateWordSet)
+			r.Put("/me/word-sets/{setID}/preferences", h.UpdateWordSetPreferences)
 			r.Delete("/me/word-sets/{setID}", h.DeleteWordSet)
 			r.Post("/me/word-sets/{setID}/activate", h.ActivateWordSet)
 			r.Get("/me/statistics", h.GetStatistics)
@@ -82,6 +85,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Post("/me/dictionary/words", h.CreateDictionaryWord)
 			r.Put("/me/dictionary/words/{wordID}", h.UpdateDictionaryWord)
 			r.Delete("/me/dictionary/words/{wordID}", h.DeleteDictionaryWord)
+			r.Get("/me/import-buffer", h.ListImportBufferItems)
+			r.Post("/me/import-buffer", h.CreateImportBufferItem)
+			r.Post("/me/import-buffer/{itemID}/generate", h.GenerateImportBufferItem)
+			r.Put("/me/import-buffer/{itemID}", h.UpdateImportBufferItemCandidate)
+			r.Post("/me/import-buffer/{itemID}/confirm", h.ConfirmImportBufferItem)
+			r.Delete("/me/import-buffer/{itemID}", h.DeleteImportBufferItem)
 			r.Get("/me/daily-pool", h.GetDailyPool)
 			r.Post("/me/daily-pool/more-words", h.AppendMoreWords)
 			r.Post("/me/daily-pool/dynamic-review/generate", h.GenerateDynamicReviewPrompts)

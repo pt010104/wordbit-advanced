@@ -33,6 +33,7 @@ type Repositories struct {
 	LLMRuns              *LLMRunRepository
 	DynamicReviewPrompts *DynamicReviewPromptRepository
 	WordSets             *WordSetRepository
+	ImportBuffer         *WordImportBufferRepository
 }
 
 func NewRepositories(pool *pgxpool.Pool) *Repositories {
@@ -46,6 +47,7 @@ func NewRepositories(pool *pgxpool.Pool) *Repositories {
 		LLMRuns:              &LLMRunRepository{pool: pool},
 		DynamicReviewPrompts: &DynamicReviewPromptRepository{pool: pool},
 		WordSets:             &WordSetRepository{pool: pool},
+		ImportBuffer:         &WordImportBufferRepository{pool: pool},
 	}
 }
 

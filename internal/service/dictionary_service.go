@@ -28,6 +28,9 @@ type DictionaryUpsertInput struct {
 	EnglishMeaning     string
 	ExampleSentence1   string
 	ExampleSentence2   string
+	CommonRate         *domain.WordCommonRate
+	SourceProvider     string
+	SourceMetadata     domain.JSONMap
 	ListStatus         domain.DictionaryListStatus
 	WordSetID          *uuid.UUID
 }
@@ -232,6 +235,17 @@ func sanitizeDictionaryCandidate(input DictionaryUpsertInput, defaultLevel domai
 		topic = manualDictionaryTopic
 	}
 
+	sourceProvider := strings.TrimSpace(input.SourceProvider)
+	if sourceProvider == "" {
+		sourceProvider = "manual"
+	}
+	sourceMetadata := input.SourceMetadata
+	if len(sourceMetadata) == 0 {
+		sourceMetadata = domain.JSONMap{
+			"source": "dictionary_manual",
+		}
+	}
+
 	candidate := domain.CandidateWord{
 		Word:               word,
 		CanonicalForm:      canonical,
@@ -247,10 +261,9 @@ func sanitizeDictionaryCandidate(input DictionaryUpsertInput, defaultLevel domai
 		EnglishMeaning:     strings.TrimSpace(input.EnglishMeaning),
 		ExampleSentence1:   strings.TrimSpace(input.ExampleSentence1),
 		ExampleSentence2:   strings.TrimSpace(input.ExampleSentence2),
-		SourceProvider:     "manual",
-		SourceMetadata: domain.JSONMap{
-			"source": "dictionary_manual",
-		},
+		CommonRate:         input.CommonRate,
+		SourceProvider:     sourceProvider,
+		SourceMetadata:     sourceMetadata,
 	}
 	candidate.NormalizedForm = NormalizeWord(candidate.Word)
 	if candidate.ConfusableGroupKey == "" {

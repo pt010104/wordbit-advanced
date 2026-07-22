@@ -473,13 +473,23 @@ func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID
 	if item.Word != nil {
 		word = *item.Word
 	}
+	enabledModes := allReviewModes()
+	if s.wordSets != nil {
+		modesByWord, modeErr := s.wordSets.EnabledReviewModesForWords(ctx, userID, []uuid.UUID{item.WordID})
+		if modeErr != nil {
+			return uuid.Nil, modeErr
+		}
+		if configured := modesByWord[item.WordID]; len(configured) > 0 {
+			enabledModes = configured
+		}
+	}
 	followUp := domain.DailyLearningPoolItem{
 		PoolID:                pool.ID,
 		UserID:                userID,
 		WordID:                item.WordID,
 		Ordinal:               lastOrdinal + 1,
 		ItemType:              domain.PoolItemTypeShortTerm,
-		ReviewMode:            sanitizeReviewModeForWord(SelectReviewMode(state, s.memoryCauseInferenceEnabled), word),
+		ReviewMode:            selectEnabledReviewMode(SelectReviewMode(state, s.memoryCauseInferenceEnabled), enabledModes, &word),
 		DueAt:                 state.NextReviewAt,
 		Status:                domain.PoolItemStatusPending,
 		IsReview:              true,

@@ -18,7 +18,7 @@ type WordSetRepository struct {
 
 func (r *WordSetRepository) List(ctx context.Context, userID uuid.UUID) ([]domain.WordSet, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, user_id, name, icon, mode, is_default, created_at, updated_at
+		SELECT id, user_id, name, icon, mode, is_default, auto_generate_new_words, enabled_review_modes, created_at, updated_at
 		FROM word_sets
 		WHERE user_id = $1
 		ORDER BY is_default DESC, lower(name) ASC
@@ -41,7 +41,7 @@ func (r *WordSetRepository) List(ctx context.Context, userID uuid.UUID) ([]domai
 
 func (r *WordSetRepository) Get(ctx context.Context, userID uuid.UUID, setID uuid.UUID) (domain.WordSet, error) {
 	return scanWordSet(r.pool.QueryRow(ctx, `
-		SELECT id, user_id, name, icon, mode, is_default, created_at, updated_at
+		SELECT id, user_id, name, icon, mode, is_default, auto_generate_new_words, enabled_review_modes, created_at, updated_at
 		FROM word_sets
 		WHERE user_id = $1 AND id = $2
 	`, userID, setID))
@@ -49,7 +49,7 @@ func (r *WordSetRepository) Get(ctx context.Context, userID uuid.UUID, setID uui
 
 func (r *WordSetRepository) GetDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error) {
 	return scanWordSet(r.pool.QueryRow(ctx, `
-		SELECT id, user_id, name, icon, mode, is_default, created_at, updated_at
+		SELECT id, user_id, name, icon, mode, is_default, auto_generate_new_words, enabled_review_modes, created_at, updated_at
 		FROM word_sets
 		WHERE user_id = $1 AND is_default = TRUE
 	`, userID))
@@ -65,10 +65,10 @@ func (r *WordSetRepository) Create(ctx context.Context, set domain.WordSet) (dom
 		return domain.WordSet{}, errors.New("word set name is required")
 	}
 	return scanWordSet(r.pool.QueryRow(ctx, `
-		INSERT INTO word_sets (user_id, name, icon, mode, is_default)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, user_id, name, icon, mode, is_default, created_at, updated_at
-	`, set.UserID, name, set.Icon, string(mode), set.IsDefault))
+		INSERT INTO word_sets (user_id, name, icon, mode, is_default, auto_generate_new_words, enabled_review_modes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, user_id, name, icon, mode, is_default, auto_generate_new_words, enabled_review_modes, created_at, updated_at
+	`, set.UserID, name, set.Icon, string(mode), set.IsDefault, set.AutoGenerateNewWords, reviewModeValues(set.EnabledReviewModes)))
 }
 
 func (r *WordSetRepository) Update(ctx context.Context, set domain.WordSet) (domain.WordSet, error) {
@@ -82,10 +82,11 @@ func (r *WordSetRepository) Update(ctx context.Context, set domain.WordSet) (dom
 	}
 	return scanWordSet(r.pool.QueryRow(ctx, `
 		UPDATE word_sets
-		SET name = $3, icon = $4, mode = $5
+		SET name = $3, icon = $4, mode = $5,
+		    auto_generate_new_words = $6, enabled_review_modes = $7
 		WHERE user_id = $1 AND id = $2
-		RETURNING id, user_id, name, icon, mode, is_default, created_at, updated_at
-	`, set.UserID, set.ID, name, set.Icon, string(mode)))
+		RETURNING id, user_id, name, icon, mode, is_default, auto_generate_new_words, enabled_review_modes, created_at, updated_at
+	`, set.UserID, set.ID, name, set.Icon, string(mode), set.AutoGenerateNewWords, reviewModeValues(set.EnabledReviewModes)))
 }
 
 func (r *WordSetRepository) Delete(ctx context.Context, userID uuid.UUID, setID uuid.UUID) error {
@@ -111,16 +112,17 @@ func (r *WordSetRepository) EnsureDefault(ctx context.Context, userID uuid.UUID)
 		return domain.WordSet{}, err
 	}
 	return scanWordSet(r.pool.QueryRow(ctx, `
-		INSERT INTO word_sets (user_id, name, icon, mode, is_default)
-		VALUES ($1, 'Default', 'default', 'new_words', TRUE)
+		INSERT INTO word_sets (user_id, name, icon, mode, is_default, auto_generate_new_words)
+		VALUES ($1, 'Default', 'default', 'new_words', TRUE, TRUE)
 		ON CONFLICT DO NOTHING
-		RETURNING id, user_id, name, icon, mode, is_default, created_at, updated_at
+		RETURNING id, user_id, name, icon, mode, is_default, auto_generate_new_words, enabled_review_modes, created_at, updated_at
 	`, userID))
 }
 
 func scanWordSet(row pgx.Row) (domain.WordSet, error) {
 	var set domain.WordSet
 	var mode string
+	var reviewModes []string
 	err := row.Scan(
 		&set.ID,
 		&set.UserID,
@@ -128,9 +130,23 @@ func scanWordSet(row pgx.Row) (domain.WordSet, error) {
 		&set.Icon,
 		&mode,
 		&set.IsDefault,
+		&set.AutoGenerateNewWords,
+		&reviewModes,
 		&set.CreatedAt,
 		&set.UpdatedAt,
 	)
 	set.Mode = domain.WordSetMode(mode)
+	set.EnabledReviewModes = make([]domain.ReviewMode, 0, len(reviewModes))
+	for _, reviewMode := range reviewModes {
+		set.EnabledReviewModes = append(set.EnabledReviewModes, domain.ReviewMode(reviewMode))
+	}
 	return set, mapError(err)
+}
+
+func reviewModeValues(modes []domain.ReviewMode) []string {
+	values := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		values = append(values, string(mode))
+	}
+	return values
 }

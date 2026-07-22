@@ -1,0 +1,3 @@
+CREATE TABLE word_import_buffer_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, word_set_id UUID NOT NULL REFERENCES word_sets(id) ON DELETE CASCADE, raw_word TEXT NOT NULL, source_url TEXT NOT NULL DEFAULT '', candidate JSONB, status TEXT NOT NULL DEFAULT 'pending', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE INDEX idx_word_import_buffer_user_set ON word_import_buffer_items(user_id, word_set_id, created_at DESC);
+CREATE TRIGGER trg_word_import_buffer_items_updated_at BEFORE UPDATE ON word_import_buffer_items FOR EACH ROW EXECUTE FUNCTION set_updated_at();

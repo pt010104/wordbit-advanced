@@ -152,15 +152,17 @@ const (
 )
 
 type WordSet struct {
-	ID        uuid.UUID   `json:"id"`
-	UserID    uuid.UUID   `json:"user_id"`
-	Name      string      `json:"name"`
-	Icon      string      `json:"icon,omitempty"`
-	Mode      WordSetMode `json:"mode"`
-	IsDefault bool        `json:"is_default"`
-	DueCount  int         `json:"due_count,omitempty"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	ID                   uuid.UUID    `json:"id"`
+	UserID               uuid.UUID    `json:"user_id"`
+	Name                 string       `json:"name"`
+	Icon                 string       `json:"icon,omitempty"`
+	Mode                 WordSetMode  `json:"mode"`
+	IsDefault            bool         `json:"is_default"`
+	AutoGenerateNewWords bool         `json:"auto_generate_new_words"`
+	EnabledReviewModes   []ReviewMode `json:"enabled_review_modes"`
+	DueCount             int          `json:"due_count,omitempty"`
+	CreatedAt            time.Time    `json:"created_at"`
+	UpdatedAt            time.Time    `json:"updated_at"`
 }
 
 type User struct {
@@ -344,6 +346,18 @@ type CandidateWord struct {
 	NormalizedForm     string          `json:"normalized_form"`
 	RankingScore       float64         `json:"ranking_score"`
 	ValidationIssues   []string        `json:"validation_issues,omitempty"`
+}
+
+type WordImportBufferItem struct {
+	ID        uuid.UUID      `json:"id"`
+	UserID    uuid.UUID      `json:"user_id"`
+	WordSetID uuid.UUID      `json:"word_set_id"`
+	RawWord   string         `json:"raw_word"`
+	SourceURL string         `json:"source_url,omitempty"`
+	Candidate *CandidateWord `json:"candidate,omitempty"`
+	Status    string         `json:"status"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 type DynamicReviewPromptPayload struct {

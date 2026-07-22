@@ -29,6 +29,11 @@ type WordSetUpsertInput struct {
 	Mode domain.WordSetMode
 }
 
+type WordSetPreferencesInput struct {
+	AutoGenerateNewWords bool
+	EnabledReviewModes   []domain.ReviewMode
+}
+
 func (s *WordSetService) List(ctx context.Context, userID uuid.UUID) ([]domain.WordSet, error) {
 	if _, err := s.EnsureDefault(ctx, userID); err != nil {
 		return nil, err
@@ -87,11 +92,29 @@ func (s *WordSetService) Create(ctx context.Context, userID uuid.UUID, input Wor
 		}
 	}
 	return s.wordSets.Create(ctx, domain.WordSet{
-		UserID: userID,
-		Name:   name,
-		Icon:   strings.TrimSpace(input.Icon),
-		Mode:   mode,
+		UserID:             userID,
+		Name:               name,
+		Icon:               strings.TrimSpace(input.Icon),
+		Mode:               mode,
+		EnabledReviewModes: allReviewModes(),
 	})
+}
+
+func (s *WordSetService) UpdatePreferences(ctx context.Context, userID uuid.UUID, setID uuid.UUID, input WordSetPreferencesInput) (domain.WordSet, error) {
+	set, err := s.wordSets.Get(ctx, userID, setID)
+	if err != nil {
+		return domain.WordSet{}, err
+	}
+	if input.AutoGenerateNewWords && !set.IsDefault {
+		return domain.WordSet{}, fmt.Errorf("%w: only the default set can auto-generate new words", domain.ErrValidation)
+	}
+	modes, err := normalizeEnabledReviewModes(input.EnabledReviewModes)
+	if err != nil {
+		return domain.WordSet{}, err
+	}
+	set.AutoGenerateNewWords = input.AutoGenerateNewWords
+	set.EnabledReviewModes = modes
+	return s.wordSets.Update(ctx, set)
 }
 
 func (s *WordSetService) Update(ctx context.Context, userID uuid.UUID, setID uuid.UUID, input WordSetUpsertInput) (domain.WordSet, error) {
@@ -168,6 +191,38 @@ func (s *WordSetService) ResolveActiveSet(ctx context.Context, userID uuid.UUID)
 	return s.EnsureDefault(ctx, userID)
 }
 
+// EnabledReviewModesForWords resolves the preference of the set that owns
+// each word. Legacy states without an owner keep the Default set's choices.
+func (s *WordSetService) EnabledReviewModesForWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) (map[uuid.UUID][]domain.ReviewMode, error) {
+	defaultSet, err := s.EnsureDefault(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	sets, err := s.wordSets.List(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[uuid.UUID][]domain.ReviewMode{defaultSet.ID: defaultSet.EnabledReviewModes}
+	for _, set := range sets {
+		byID[set.ID] = set.EnabledReviewModes
+	}
+	setIDs, err := s.states.GetWordSetIDsForWords(ctx, userID, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[uuid.UUID][]domain.ReviewMode, len(wordIDs))
+	for _, wordID := range wordIDs {
+		modes := byID[defaultSet.ID]
+		if setID, ok := setIDs[wordID]; ok {
+			if configured, found := byID[setID]; found {
+				modes = configured
+			}
+		}
+		result[wordID] = modes
+	}
+	return result, nil
+}
+
 func (s *WordSetService) ensureSoleNewWordsMode(ctx context.Context, userID uuid.UUID, excludeID uuid.UUID) error {
 	sets, err := s.wordSets.List(ctx, userID)
 	if err != nil {
@@ -192,6 +247,43 @@ func normalizeWordSetMode(value domain.WordSetMode) (domain.WordSetMode, error) 
 	default:
 		return "", errors.New("invalid word set mode")
 	}
+}
+
+func allReviewModes() []domain.ReviewMode {
+	return []domain.ReviewMode{
+		domain.ReviewModeReveal,
+		domain.ReviewModeMultipleChoice,
+		domain.ReviewModeBuildWord,
+		domain.ReviewModeFillBlank,
+		domain.ReviewModeListening,
+	}
+}
+
+func normalizeEnabledReviewModes(input []domain.ReviewMode) ([]domain.ReviewMode, error) {
+	if len(input) == 0 {
+		return nil, fmt.Errorf("%w: at least Mode 1 must be enabled", domain.ErrValidation)
+	}
+	allowed := map[domain.ReviewMode]bool{}
+	for _, mode := range allReviewModes() {
+		allowed[mode] = true
+	}
+	seen := map[domain.ReviewMode]bool{}
+	for _, mode := range input {
+		if !allowed[mode] {
+			return nil, fmt.Errorf("%w: invalid review mode", domain.ErrValidation)
+		}
+		seen[mode] = true
+	}
+	if !seen[domain.ReviewModeReveal] {
+		return nil, fmt.Errorf("%w: Mode 1 must remain enabled", domain.ErrValidation)
+	}
+	modes := make([]domain.ReviewMode, 0, len(seen))
+	for _, mode := range allReviewModes() {
+		if seen[mode] {
+			modes = append(modes, mode)
+		}
+	}
+	return modes, nil
 }
 
 func (s *WordSetService) computeDueCounts(ctx context.Context, userID uuid.UUID, defaultSetID uuid.UUID) (map[uuid.UUID]int, error) {

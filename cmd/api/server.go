@@ -52,9 +52,10 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	learningService := service.NewLearningService(repos.Settings, repos.States, repos.Pools, repos.Events, poolService, clock, logger, cfg.MemoryCauseInferenceEnabled)
 	learningService.SetWordSetService(wordSets)
 	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, repos.Words, deepseekClient, clock, logger)
+	importBufferService := service.NewWordImportBufferService(repos.ImportBuffer, repos.WordSets, repos.Settings, dictionary, deepseekClient, repos.Pools, clock)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
-	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, dynamicReviewService, wordSets, statistics, repos.LLMRuns, deepseekClient, apihttp.BuildInfo{
+	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, dynamicReviewService, wordSets, importBufferService, statistics, repos.LLMRuns, deepseekClient, apihttp.BuildInfo{
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,

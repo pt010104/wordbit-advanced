@@ -172,11 +172,24 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 		return DailyPoolView{}, err
 	}
 
-	items = buildReviewItems(user.ID, uuid.Nil, shortTermStates, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled)
-	items = append(items, buildReviewItems(user.ID, uuid.Nil, reviewStates, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled)...)
-	items = append(items, buildReviewItems(user.ID, uuid.Nil, weakStates, wordMap, domain.PoolItemTypeWeak, s.memoryCauseInferenceEnabled)...)
-	capListeningReviewItems(items, dailyListeningItemLimit)
+	reviewModesByWord, err := s.enabledReviewModesForStates(ctx, user.ID, shortTermStates, reviewStates, weakStates)
+	if err != nil {
+		return DailyPoolView{}, err
+	}
+	items = buildReviewItems(user.ID, uuid.Nil, shortTermStates, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled, reviewModesByWord)
+	items = append(items, buildReviewItems(user.ID, uuid.Nil, reviewStates, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled, reviewModesByWord)...)
+	items = append(items, buildReviewItems(user.ID, uuid.Nil, weakStates, wordMap, domain.PoolItemTypeWeak, s.memoryCauseInferenceEnabled, reviewModesByWord)...)
+	capListeningReviewItems(items, dailyListeningItemLimit, reviewModesByWord)
 
+	if s.wordSets != nil {
+		defaultSet, defaultErr := s.wordSets.EnsureDefault(ctx, user.ID)
+		if defaultErr != nil {
+			return DailyPoolView{}, defaultErr
+		}
+		if !defaultSet.AutoGenerateNewWords {
+			newQuota = 0
+		}
+	}
 	newWords, acceptedWords, rejectionSummary, err := s.generateNewWords(ctx, user.ID, settings, settings.CEFRLevel, topic, newQuota, items, now)
 	if err != nil {
 		return DailyPoolView{}, err
@@ -248,6 +261,28 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 }
 
 func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID, items []domain.DailyLearningPoolItem) error {
+	states := make(map[uuid.UUID]domain.UserWordState)
+	for _, item := range items {
+		if item.Status != domain.PoolItemStatusPending || !item.IsReview || item.FirstExposureRequired {
+			continue
+		}
+		state, err := s.stateRepo.Get(ctx, userID, item.WordID)
+		if err != nil {
+			if isNotFound(err) {
+				continue
+			}
+			return err
+		}
+		states[item.WordID] = state
+	}
+	stateValues := make([]domain.UserWordState, 0, len(states))
+	for _, state := range states {
+		stateValues = append(stateValues, state)
+	}
+	reviewModesByWord, err := s.enabledReviewModesForStates(ctx, userID, stateValues)
+	if err != nil {
+		return err
+	}
 	// Listening (mode 5) is capped per day. Non-pending review items already
 	// consumed part of that budget; the remainder is what pending items may use.
 	listeningBudget := dailyListeningItemLimit
@@ -264,20 +299,17 @@ func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID
 			continue
 		}
 
-		state, err := s.stateRepo.Get(ctx, userID, item.WordID)
-		if err != nil {
-			if isNotFound(err) {
-				continue
-			}
-			return err
+		state, ok := states[item.WordID]
+		if !ok {
+			continue
 		}
 
-		updated, _ := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled)
+		updated, _ := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled, reviewModesByWord[item.WordID])
 		if updated.ReviewMode == domain.ReviewModeListening {
 			if listeningBudget > 0 {
 				listeningBudget--
 			} else {
-				updated.ReviewMode = domain.ReviewModeFillBlank
+				updated.ReviewMode = selectEnabledReviewMode(domain.ReviewModeFillBlank, reviewModesByWord[item.WordID], item.Word)
 			}
 		}
 		changed := updated.ReviewMode != item.ReviewMode ||
@@ -294,9 +326,13 @@ func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID
 	return nil
 }
 
-func syncPendingPoolItem(item domain.DailyLearningPoolItem, state domain.UserWordState, memoryCauseInferenceEnabled bool) (domain.DailyLearningPoolItem, bool) {
+func syncPendingPoolItem(item domain.DailyLearningPoolItem, state domain.UserWordState, memoryCauseInferenceEnabled bool, configuredModes ...[]domain.ReviewMode) (domain.DailyLearningPoolItem, bool) {
+	enabledModes := allReviewModes()
+	if len(configuredModes) > 0 && len(configuredModes[0]) > 0 {
+		enabledModes = configuredModes[0]
+	}
 	updated := item
-	updated.ReviewMode = SelectReviewMode(state, memoryCauseInferenceEnabled)
+	updated.ReviewMode = selectEnabledReviewMode(SelectReviewMode(state, memoryCauseInferenceEnabled), enabledModes, item.Word)
 	if item.BonusPractice {
 		updated.DueAt = nil
 	} else {
@@ -561,8 +597,12 @@ func (s *PoolService) replenishBonusPracticeItems(
 		return false, err
 	}
 
+	reviewModesByWord, err := s.enabledReviewModesForStates(ctx, userID, weakStates)
+	if err != nil {
+		return false, err
+	}
 	appended := 0
-	for _, bonusItem := range buildBonusPracticeItems(userID, pool.ID, weakStates, wordMap, s.memoryCauseInferenceEnabled) {
+	for _, bonusItem := range buildBonusPracticeItems(userID, pool.ID, weakStates, wordMap, s.memoryCauseInferenceEnabled, reviewModesByWord) {
 		bonusItem.Ordinal = lastOrdinal + appended + 1
 		if _, err := s.poolRepo.AppendPoolItem(ctx, bonusItem); err != nil {
 			return false, err
@@ -802,6 +842,15 @@ func (s *PoolService) replenishUnknownDailySlots(
 	settings, err := s.settingsRepo.Get(ctx, userID)
 	if err != nil {
 		return false, nil, err
+	}
+	if s.wordSets != nil {
+		defaultSet, setErr := s.wordSets.EnsureDefault(ctx, userID)
+		if setErr != nil {
+			return false, nil, setErr
+		}
+		if !defaultSet.AutoGenerateNewWords {
+			return false, nil, nil
+		}
 	}
 	dailyLimit, prefetchBatchSize := effectiveNewWordBufferLimits(settings.DailyNewWordLimit, isComebackPool(pool, items))
 	bufferState, err := s.inspectNewWordBufferState(ctx, userID, dailyLimit, prefetchBatchSize, items)
@@ -1162,9 +1211,13 @@ func (s *PoolService) reconcileScheduledPoolItems(
 		return false, err
 	}
 
+	reviewModesByWord, err := s.enabledReviewModesForStates(ctx, userID, missingShort, missingReview)
+	if err != nil {
+		return false, err
+	}
 	appended := append(
-		buildReviewItems(userID, pool.ID, missingShort, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled),
-		buildReviewItems(userID, pool.ID, missingReview, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled)...,
+		buildReviewItems(userID, pool.ID, missingShort, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled, reviewModesByWord),
+		buildReviewItems(userID, pool.ID, missingReview, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled, reviewModesByWord)...,
 	)
 	for index := range appended {
 		appended[index].Ordinal = lastOrdinal + index + 1
@@ -1293,12 +1346,12 @@ func (s *PoolService) AppendMoreNewWords(ctx context.Context, user domain.User, 
 		EventType: domain.EventTypeAppendMoreWords,
 		EventTime: now,
 		Payload: domain.JSONMap{
-			"local_date":          view.Pool.LocalDate,
-			"topic":               selectedTopic,
-			"attempt_number":      appendAttemptCount + 1,
-			"base_cefr_level":     settings.CEFRLevel,
+			"local_date":            view.Pool.LocalDate,
+			"topic":                 selectedTopic,
+			"attempt_number":        appendAttemptCount + 1,
+			"base_cefr_level":       settings.CEFRLevel,
 			"generation_cefr_level": generationLevel,
-			"appended_new_items":  len(newItems),
+			"appended_new_items":    len(newItems),
 		},
 	}); err != nil {
 		s.logger.Warn("record append more words event", "user_id", user.ID, "local_date", view.Pool.LocalDate, "error", err)
@@ -1659,12 +1712,20 @@ func classifyGeneratedItemKind(value string, partOfSpeech string) generatedItemK
 	return generatedItemKindSingleWord
 }
 
-func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, itemType domain.PoolItemType, memoryCauseInferenceEnabled bool) []domain.DailyLearningPoolItem {
+func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, itemType domain.PoolItemType, memoryCauseInferenceEnabled bool, configuredReviewModes ...map[uuid.UUID][]domain.ReviewMode) []domain.DailyLearningPoolItem {
+	reviewModesByWord := map[uuid.UUID][]domain.ReviewMode{}
+	if len(configuredReviewModes) > 0 {
+		reviewModesByWord = configuredReviewModes[0]
+	}
 	items := make([]domain.DailyLearningPoolItem, 0, len(states))
 	for _, state := range states {
 		word := words[state.WordID]
 		wordCopy := word
-		reviewMode := sanitizeReviewModeForWord(SelectReviewMode(state, memoryCauseInferenceEnabled), word)
+		enabledModes := reviewModesByWord[state.WordID]
+		if len(enabledModes) == 0 {
+			enabledModes = allReviewModes()
+		}
+		reviewMode := selectEnabledReviewMode(SelectReviewMode(state, memoryCauseInferenceEnabled), enabledModes, &word)
 		dueAt := state.NextReviewAt
 		items = append(items, domain.DailyLearningPoolItem{
 			PoolID:                poolID,
@@ -1685,11 +1746,56 @@ func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWo
 	return items
 }
 
-func sanitizeReviewModeForWord(mode domain.ReviewMode, word domain.Word) domain.ReviewMode {
-	if mode == domain.ReviewModeBuildWord && classifyWordKind(word) != generatedItemKindSingleWord {
-		return domain.ReviewModeFillBlank
+func selectEnabledReviewMode(preferred domain.ReviewMode, enabled []domain.ReviewMode, word *domain.Word) domain.ReviewMode {
+	if len(enabled) == 0 {
+		return domain.ReviewModeReveal
 	}
-	return mode
+	compatible := func(mode domain.ReviewMode) bool {
+		return mode != domain.ReviewModeBuildWord || word == nil || classifyWordKind(*word) == generatedItemKindSingleWord
+	}
+	for _, mode := range enabled {
+		if mode == preferred && compatible(mode) {
+			return mode
+		}
+	}
+	order := []domain.ReviewMode{
+		domain.ReviewModeReveal,
+		domain.ReviewModeMultipleChoice,
+		domain.ReviewModeBuildWord,
+		domain.ReviewModeFillBlank,
+		domain.ReviewModeListening,
+	}
+	preferredRank := 0
+	for index, mode := range order {
+		if mode == preferred {
+			preferredRank = index
+			break
+		}
+	}
+	best := domain.ReviewModeReveal
+	bestDistance := len(order) + 1
+	for index, candidate := range order {
+		if !compatible(candidate) || !containsReviewMode(enabled, candidate) {
+			continue
+		}
+		distance := index - preferredRank
+		if distance < 0 {
+			distance = -distance
+		}
+		if distance < bestDistance {
+			best, bestDistance = candidate, distance
+		}
+	}
+	return best
+}
+
+func containsReviewMode(modes []domain.ReviewMode, target domain.ReviewMode) bool {
+	for _, mode := range modes {
+		if mode == target {
+			return true
+		}
+	}
+	return false
 }
 
 // dailyListeningItemLimit caps how many listening_sentence (mode 5) review items
@@ -1700,7 +1806,11 @@ const dailyListeningItemLimit = 2
 // capListeningReviewItems downgrades listening_sentence review items beyond
 // `limit` to fill_in_blank, mutating items in place. Items are processed in
 // slice order so the earliest listening items keep the mode deterministically.
-func capListeningReviewItems(items []domain.DailyLearningPoolItem, limit int) {
+func capListeningReviewItems(items []domain.DailyLearningPoolItem, limit int, configuredReviewModes ...map[uuid.UUID][]domain.ReviewMode) {
+	reviewModesByWord := map[uuid.UUID][]domain.ReviewMode{}
+	if len(configuredReviewModes) > 0 {
+		reviewModesByWord = configuredReviewModes[0]
+	}
 	remaining := limit
 	for i := range items {
 		if !items[i].IsReview || items[i].ReviewMode != domain.ReviewModeListening {
@@ -1710,12 +1820,16 @@ func capListeningReviewItems(items []domain.DailyLearningPoolItem, limit int) {
 			remaining--
 			continue
 		}
-		items[i].ReviewMode = domain.ReviewModeFillBlank
+		enabledModes := reviewModesByWord[items[i].WordID]
+		if len(enabledModes) == 0 {
+			enabledModes = allReviewModes()
+		}
+		items[i].ReviewMode = selectEnabledReviewMode(domain.ReviewModeFillBlank, enabledModes, items[i].Word)
 	}
 }
 
-func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, memoryCauseInferenceEnabled bool) []domain.DailyLearningPoolItem {
-	items := buildReviewItems(userID, poolID, states, words, domain.PoolItemTypeWeak, memoryCauseInferenceEnabled)
+func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, memoryCauseInferenceEnabled bool, reviewModesByWord map[uuid.UUID][]domain.ReviewMode) []domain.DailyLearningPoolItem {
+	items := buildReviewItems(userID, poolID, states, words, domain.PoolItemTypeWeak, memoryCauseInferenceEnabled, reviewModesByWord)
 	for i := range items {
 		items[i].BonusPractice = true
 		items[i].DueAt = nil
@@ -1951,6 +2065,81 @@ func minInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func (s *PoolService) enabledReviewModesForStates(ctx context.Context, userID uuid.UUID, groups ...[]domain.UserWordState) (map[uuid.UUID][]domain.ReviewMode, error) {
+	result := map[uuid.UUID][]domain.ReviewMode{}
+	wordIDs := []uuid.UUID{}
+	seen := map[uuid.UUID]struct{}{}
+	for _, states := range groups {
+		for _, state := range states {
+			if _, exists := seen[state.WordID]; exists {
+				continue
+			}
+			seen[state.WordID] = struct{}{}
+			wordIDs = append(wordIDs, state.WordID)
+		}
+	}
+	if len(wordIDs) == 0 {
+		return result, nil
+	}
+	if s.wordSets == nil {
+		for _, wordID := range wordIDs {
+			result[wordID] = allReviewModes()
+		}
+		return result, nil
+	}
+	return s.wordSets.EnabledReviewModesForWords(ctx, userID, wordIDs)
+}
+
+// RemapPendingReviewModes applies a saved set preference without altering
+// completed history. It is deliberately best-effort at the HTTP boundary: a
+// later pool sync will retry if today's pool cannot be read right now.
+func (s *PoolService) RemapPendingReviewModes(ctx context.Context, userID uuid.UUID, set domain.WordSet) error {
+	settings, err := s.settingsRepo.Get(ctx, userID)
+	if err != nil {
+		return err
+	}
+	localDate, _, _, _, err := domain.BoundsForLocalDate(s.clock.Now(), settings.Timezone)
+	if err != nil {
+		return err
+	}
+	_, items, err := s.poolRepo.GetByLocalDate(ctx, userID, localDate)
+	if err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	wordIDs := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		if item.Status == domain.PoolItemStatusPending && item.IsReview && !item.FirstExposureRequired {
+			wordIDs = append(wordIDs, item.WordID)
+		}
+	}
+	setIDs, err := s.stateRepo.GetWordSetIDsForWords(ctx, userID, wordIDs)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.Status != domain.PoolItemStatusPending || !item.IsReview || item.FirstExposureRequired || setIDs[item.WordID] != set.ID {
+			continue
+		}
+		state, stateErr := s.stateRepo.Get(ctx, userID, item.WordID)
+		if stateErr != nil {
+			if isNotFound(stateErr) {
+				continue
+			}
+			return stateErr
+		}
+		updated, changed := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled, set.EnabledReviewModes)
+		if changed {
+			if err := s.poolRepo.UpdatePendingPoolItem(ctx, updated); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // FilterDailyPoolByActiveSet returns a view restricted to pool items whose

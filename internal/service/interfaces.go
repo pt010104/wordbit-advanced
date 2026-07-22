@@ -54,6 +54,15 @@ type WordSetRepository interface {
 	EnsureDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error)
 }
 
+type WordImportBufferRepository interface {
+	List(ctx context.Context, userID uuid.UUID, setID *uuid.UUID) ([]domain.WordImportBufferItem, error)
+	Get(ctx context.Context, userID uuid.UUID, itemID uuid.UUID) (domain.WordImportBufferItem, error)
+	Create(ctx context.Context, item domain.WordImportBufferItem) (domain.WordImportBufferItem, error)
+	UpdateCandidate(ctx context.Context, userID uuid.UUID, itemID uuid.UUID, candidate domain.CandidateWord) (domain.WordImportBufferItem, error)
+	MarkImported(ctx context.Context, userID uuid.UUID, itemID uuid.UUID) (domain.WordImportBufferItem, error)
+	Delete(ctx context.Context, userID uuid.UUID, itemID uuid.UUID) error
+}
+
 type PoolRepository interface {
 	GetByLocalDate(ctx context.Context, userID uuid.UUID, localDate string) (domain.DailyLearningPool, []domain.DailyLearningPoolItem, error)
 	CreatePoolWithItems(ctx context.Context, pool domain.DailyLearningPool, items []domain.DailyLearningPoolItem) (domain.DailyLearningPool, []domain.DailyLearningPoolItem, error)
