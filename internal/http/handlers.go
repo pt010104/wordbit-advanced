@@ -650,16 +650,13 @@ func (h *Handler) GetNextCard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		} else {
 			card.PoolItem = &enriched
 		}
-		if !hasPrompt && (card.PoolItem.ReviewMode == domain.ReviewModeMultipleChoice || card.PoolItem.ReviewMode == domain.ReviewModeFillBlank || card.PoolItem.ReviewMode == domain.ReviewModeListening) {
-			if view, viewErr := h.pools.GetOrCreateDailyPool(r.Context(), user); viewErr != nil {
-				h.logger.Warn("load daily pool for dynamic review backfill", "user_id", user.ID, "local_date", card.LocalDate, "error", viewErr)
-			} else if backfillErr := h.dynamicReview.BackfillForCurrentCard(r.Context(), user.ID, view.Pool.LocalDate, view.Items, *card.PoolItem); backfillErr != nil {
-				h.logger.Warn("backfill dynamic review prompt for next card", "user_id", user.ID, "local_date", view.Pool.LocalDate, "word_id", card.PoolItem.WordID, "error", backfillErr)
-			} else if enriched, applied, overlayErr := h.dynamicReview.OverlayCardOnly(r.Context(), user.ID, card.LocalDate, *card.PoolItem); overlayErr != nil {
-				h.logger.Warn("overlay dynamic review prompt after backfill", "user_id", user.ID, "local_date", card.LocalDate, "word_id", card.PoolItem.WordID, "error", overlayErr)
-			} else if applied {
-				card.PoolItem = &enriched
-			}
+		if !hasPrompt && card.PoolItem.ReviewMode == domain.ReviewModeListening {
+			// A listening card cannot be rendered without its LLM-produced
+			// sentence. Fall back to the always-available reveal mode instead of
+			// blocking the study session on an LLM request.
+			fallback := *card.PoolItem
+			fallback.ReviewMode = domain.ReviewModeReveal
+			card.PoolItem = &fallback
 		}
 	}
 	writeJSON(w, nethttp.StatusOK, card)
