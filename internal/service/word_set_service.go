@@ -34,6 +34,14 @@ type WordSetPreferencesInput struct {
 	EnabledReviewModes   []domain.ReviewMode
 }
 
+// ReviewModePreferences contains both the enabled modes and the ownership
+// context needed by the scheduler. Custom sets intentionally use a different
+// progression from the Default/new-words set.
+type ReviewModePreferences struct {
+	EnabledModes []domain.ReviewMode
+	IsCustomSet  bool
+}
+
 func (s *WordSetService) List(ctx context.Context, userID uuid.UUID) ([]domain.WordSet, error) {
 	if _, err := s.EnsureDefault(ctx, userID); err != nil {
 		return nil, err
@@ -194,6 +202,20 @@ func (s *WordSetService) ResolveActiveSet(ctx context.Context, userID uuid.UUID)
 // EnabledReviewModesForWords resolves the preference of the set that owns
 // each word. Legacy states without an owner keep the Default set's choices.
 func (s *WordSetService) EnabledReviewModesForWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) (map[uuid.UUID][]domain.ReviewMode, error) {
+	preferences, err := s.ReviewModePreferencesForWords(ctx, userID, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[uuid.UUID][]domain.ReviewMode, len(preferences))
+	for wordID, preference := range preferences {
+		result[wordID] = preference.EnabledModes
+	}
+	return result, nil
+}
+
+// ReviewModePreferencesForWords resolves set ownership as well as the enabled
+// modes. States without an explicit owner retain Default-set behaviour.
+func (s *WordSetService) ReviewModePreferencesForWords(ctx context.Context, userID uuid.UUID, wordIDs []uuid.UUID) (map[uuid.UUID]ReviewModePreferences, error) {
 	defaultSet, err := s.EnsureDefault(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -202,23 +224,25 @@ func (s *WordSetService) EnabledReviewModesForWords(ctx context.Context, userID 
 	if err != nil {
 		return nil, err
 	}
-	byID := map[uuid.UUID][]domain.ReviewMode{defaultSet.ID: defaultSet.EnabledReviewModes}
+	byID := map[uuid.UUID]ReviewModePreferences{
+		defaultSet.ID: {EnabledModes: defaultSet.EnabledReviewModes, IsCustomSet: defaultSet.Mode == domain.WordSetModeCustom},
+	}
 	for _, set := range sets {
-		byID[set.ID] = set.EnabledReviewModes
+		byID[set.ID] = ReviewModePreferences{EnabledModes: set.EnabledReviewModes, IsCustomSet: set.Mode == domain.WordSetModeCustom}
 	}
 	setIDs, err := s.states.GetWordSetIDsForWords(ctx, userID, wordIDs)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[uuid.UUID][]domain.ReviewMode, len(wordIDs))
+	result := make(map[uuid.UUID]ReviewModePreferences, len(wordIDs))
 	for _, wordID := range wordIDs {
-		modes := byID[defaultSet.ID]
+		preference := byID[defaultSet.ID]
 		if setID, ok := setIDs[wordID]; ok {
 			if configured, found := byID[setID]; found {
-				modes = configured
+				preference = configured
 			}
 		}
-		result[wordID] = modes
+		result[wordID] = preference
 	}
 	return result, nil
 }

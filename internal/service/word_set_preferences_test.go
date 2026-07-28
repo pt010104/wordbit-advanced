@@ -36,7 +36,7 @@ func TestNormalizeEnabledReviewModesRequiresModeOne(t *testing.T) {
 	}
 }
 
-func TestSelectConfiguredReviewModeAlternatesDefinitionFirstWithHiddenMeaning(t *testing.T) {
+func TestSelectConfiguredReviewModeUsesNormalDefinitionFirstFallback(t *testing.T) {
 	word := domain.Word{Word: "negotiate", PartOfSpeech: "verb"}
 	enabled := []domain.ReviewMode{domain.ReviewModeReveal, domain.ReviewModeDefinitionFirst}
 
@@ -46,17 +46,56 @@ func TestSelectConfiguredReviewModeAlternatesDefinitionFirstWithHiddenMeaning(t 
 		enabled,
 		&word,
 	)
-	if first != domain.ReviewModeDefinitionFirst {
-		t.Fatalf("expected Mode 6 when Mode 1 is selected first, got %q", first)
+	if first != domain.ReviewModeReveal {
+		t.Fatalf("expected normal Mode 1 selection, got %q", first)
 	}
 
-	second := selectConfiguredReviewMode(
-		domain.UserWordState{LearningStage: 1, ReviewCount: 2, LastMode: domain.ReviewModeDefinitionFirst},
+}
+
+func TestCustomSetMovesAwayFromHardestModeAfterThreeConsecutiveCards(t *testing.T) {
+	word := domain.Word{Word: "resilient", PartOfSpeech: "adjective"}
+	got := selectConfiguredReviewModeForPreferences(
+		domain.UserWordState{
+			LearningStage:   3,
+			LastMode:        domain.ReviewModeDefinitionFirst,
+			ModeStreakCount: 3,
+		},
 		false,
-		enabled,
+		ReviewModePreferences{
+			EnabledModes: []domain.ReviewMode{
+				domain.ReviewModeReveal,
+				domain.ReviewModeMultipleChoice,
+				domain.ReviewModeDefinitionFirst,
+			},
+			IsCustomSet: true,
+		},
 		&word,
 	)
-	if second != domain.ReviewModeReveal {
-		t.Fatalf("expected Mode 1 after Mode 6, got %q", second)
+	if got != domain.ReviewModeMultipleChoice {
+		t.Fatalf("expected Mode 2 after three Mode 6 cards, got %q", got)
+	}
+}
+
+func TestCustomSetNeverRotatesHardestModeToModeOne(t *testing.T) {
+	word := domain.Word{Word: "resilient", PartOfSpeech: "adjective"}
+	got := selectConfiguredReviewModeForPreferences(
+		domain.UserWordState{
+			LearningStage:   3,
+			LastMode:        domain.ReviewModeBuildWord,
+			ModeStreakCount: 3,
+		},
+		false,
+		ReviewModePreferences{
+			EnabledModes: []domain.ReviewMode{
+				domain.ReviewModeReveal,
+				domain.ReviewModeMultipleChoice,
+				domain.ReviewModeBuildWord,
+			},
+			IsCustomSet: true,
+		},
+		&word,
+	)
+	if got != domain.ReviewModeMultipleChoice {
+		t.Fatalf("expected Mode 2 rather than Mode 1 after three Mode 3 cards, got %q", got)
 	}
 }

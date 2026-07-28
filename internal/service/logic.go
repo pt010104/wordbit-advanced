@@ -323,6 +323,11 @@ func ApplyReviewOutcome(state domain.UserWordState, rating domain.ReviewRating, 
 
 	state.LastSeenAt = &now
 	state.LastRating = rating
+	if mode != "" && mode == state.LastMode {
+		state.ModeStreakCount++
+	} else {
+		state.ModeStreakCount = 1
+	}
 	state.LastMode = mode
 	state.ReviewCount++
 	state.AvgResponseTimeMs = UpdateAvgResponseTime(state.AvgResponseTimeMs, state.ReviewCount, responseTimeMs)
@@ -415,6 +420,11 @@ func effectiveMediumReviewIntervalMultiplier(
 func ApplyBonusPracticeOutcome(state domain.UserWordState, rating domain.ReviewRating, mode domain.ReviewMode, now time.Time, responseTimeMs int) domain.UserWordState {
 	state.LastSeenAt = &now
 	state.LastRating = rating
+	if mode != "" && mode == state.LastMode {
+		state.ModeStreakCount++
+	} else {
+		state.ModeStreakCount = 1
+	}
 	state.LastMode = mode
 
 	baseline := state.WeaknessScore

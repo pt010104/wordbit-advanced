@@ -237,6 +237,7 @@ type UserWordState struct {
 	WeaknessScore                 float64      `json:"weakness_score"`
 	LearningStage                 int          `json:"learning_stage"`
 	LastMode                      ReviewMode   `json:"last_mode,omitempty"`
+	ModeStreakCount               int          `json:"mode_streak_count"`
 	LastMemoryCause               MemoryCause  `json:"last_memory_cause,omitempty"`
 	LastResponseTimeMs            int          `json:"last_response_time_ms"`
 	LastAnswerCorrect             *bool        `json:"last_answer_correct,omitempty"`

@@ -280,6 +280,7 @@ func scanState(row pgx.Row) (domain.UserWordState, error) {
 		&state.WeaknessScore,
 		&state.LearningStage,
 		&lastMode,
+		&state.ModeStreakCount,
 		&lastMemoryCause,
 		&state.LastResponseTimeMs,
 		&lastAnswerCorrect,

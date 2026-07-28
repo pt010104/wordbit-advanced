@@ -172,14 +172,14 @@ func (s *PoolService) GetOrCreateDailyPool(ctx context.Context, user domain.User
 		return DailyPoolView{}, err
 	}
 
-	reviewModesByWord, err := s.enabledReviewModesForStates(ctx, user.ID, shortTermStates, reviewStates, weakStates)
+	reviewPreferencesByWord, err := s.reviewModePreferencesForStates(ctx, user.ID, shortTermStates, reviewStates, weakStates)
 	if err != nil {
 		return DailyPoolView{}, err
 	}
-	items = buildReviewItems(user.ID, uuid.Nil, shortTermStates, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled, reviewModesByWord)
-	items = append(items, buildReviewItems(user.ID, uuid.Nil, reviewStates, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled, reviewModesByWord)...)
-	items = append(items, buildReviewItems(user.ID, uuid.Nil, weakStates, wordMap, domain.PoolItemTypeWeak, s.memoryCauseInferenceEnabled, reviewModesByWord)...)
-	capListeningReviewItems(items, dailyListeningItemLimit, reviewModesByWord)
+	items = buildReviewItems(user.ID, uuid.Nil, shortTermStates, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled, reviewPreferencesByWord)
+	items = append(items, buildReviewItems(user.ID, uuid.Nil, reviewStates, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled, reviewPreferencesByWord)...)
+	items = append(items, buildReviewItems(user.ID, uuid.Nil, weakStates, wordMap, domain.PoolItemTypeWeak, s.memoryCauseInferenceEnabled, reviewPreferencesByWord)...)
+	capListeningReviewItems(items, dailyListeningItemLimit, reviewPreferencesByWord)
 
 	if s.wordSets != nil {
 		defaultSet, defaultErr := s.wordSets.EnsureDefault(ctx, user.ID)
@@ -279,7 +279,7 @@ func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID
 	for _, state := range states {
 		stateValues = append(stateValues, state)
 	}
-	reviewModesByWord, err := s.enabledReviewModesForStates(ctx, userID, stateValues)
+	reviewPreferencesByWord, err := s.reviewModePreferencesForStates(ctx, userID, stateValues)
 	if err != nil {
 		return err
 	}
@@ -304,12 +304,12 @@ func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID
 			continue
 		}
 
-		updated, _ := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled, reviewModesByWord[item.WordID])
+		updated, _ := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled, reviewPreferencesByWord[item.WordID])
 		if updated.ReviewMode == domain.ReviewModeListening {
 			if listeningBudget > 0 {
 				listeningBudget--
 			} else {
-				updated.ReviewMode = selectEnabledReviewMode(domain.ReviewModeFillBlank, reviewModesByWord[item.WordID], item.Word)
+				updated.ReviewMode = selectEnabledReviewMode(domain.ReviewModeFillBlank, reviewPreferencesByWord[item.WordID].EnabledModes, item.Word)
 			}
 		}
 		changed := updated.ReviewMode != item.ReviewMode ||
@@ -326,13 +326,13 @@ func (s *PoolService) syncPendingPoolItems(ctx context.Context, userID uuid.UUID
 	return nil
 }
 
-func syncPendingPoolItem(item domain.DailyLearningPoolItem, state domain.UserWordState, memoryCauseInferenceEnabled bool, configuredModes ...[]domain.ReviewMode) (domain.DailyLearningPoolItem, bool) {
-	enabledModes := allReviewModes()
-	if len(configuredModes) > 0 && len(configuredModes[0]) > 0 {
-		enabledModes = configuredModes[0]
+func syncPendingPoolItem(item domain.DailyLearningPoolItem, state domain.UserWordState, memoryCauseInferenceEnabled bool, configuredPreferences ...ReviewModePreferences) (domain.DailyLearningPoolItem, bool) {
+	preferences := defaultReviewModePreferences()
+	if len(configuredPreferences) > 0 && len(configuredPreferences[0].EnabledModes) > 0 {
+		preferences = configuredPreferences[0]
 	}
 	updated := item
-	updated.ReviewMode = selectConfiguredReviewMode(state, memoryCauseInferenceEnabled, enabledModes, item.Word)
+	updated.ReviewMode = selectConfiguredReviewModeForPreferences(state, memoryCauseInferenceEnabled, preferences, item.Word)
 	if item.BonusPractice {
 		updated.DueAt = nil
 	} else {
@@ -597,12 +597,12 @@ func (s *PoolService) replenishBonusPracticeItems(
 		return false, err
 	}
 
-	reviewModesByWord, err := s.enabledReviewModesForStates(ctx, userID, weakStates)
+	reviewPreferencesByWord, err := s.reviewModePreferencesForStates(ctx, userID, weakStates)
 	if err != nil {
 		return false, err
 	}
 	appended := 0
-	for _, bonusItem := range buildBonusPracticeItems(userID, pool.ID, weakStates, wordMap, s.memoryCauseInferenceEnabled, reviewModesByWord) {
+	for _, bonusItem := range buildBonusPracticeItems(userID, pool.ID, weakStates, wordMap, s.memoryCauseInferenceEnabled, reviewPreferencesByWord) {
 		bonusItem.Ordinal = lastOrdinal + appended + 1
 		if _, err := s.poolRepo.AppendPoolItem(ctx, bonusItem); err != nil {
 			return false, err
@@ -1211,13 +1211,13 @@ func (s *PoolService) reconcileScheduledPoolItems(
 		return false, err
 	}
 
-	reviewModesByWord, err := s.enabledReviewModesForStates(ctx, userID, missingShort, missingReview)
+	reviewPreferencesByWord, err := s.reviewModePreferencesForStates(ctx, userID, missingShort, missingReview)
 	if err != nil {
 		return false, err
 	}
 	appended := append(
-		buildReviewItems(userID, pool.ID, missingShort, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled, reviewModesByWord),
-		buildReviewItems(userID, pool.ID, missingReview, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled, reviewModesByWord)...,
+		buildReviewItems(userID, pool.ID, missingShort, wordMap, domain.PoolItemTypeShortTerm, s.memoryCauseInferenceEnabled, reviewPreferencesByWord),
+		buildReviewItems(userID, pool.ID, missingReview, wordMap, domain.PoolItemTypeReview, s.memoryCauseInferenceEnabled, reviewPreferencesByWord)...,
 	)
 	for index := range appended {
 		appended[index].Ordinal = lastOrdinal + index + 1
@@ -1712,20 +1712,20 @@ func classifyGeneratedItemKind(value string, partOfSpeech string) generatedItemK
 	return generatedItemKindSingleWord
 }
 
-func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, itemType domain.PoolItemType, memoryCauseInferenceEnabled bool, configuredReviewModes ...map[uuid.UUID][]domain.ReviewMode) []domain.DailyLearningPoolItem {
-	reviewModesByWord := map[uuid.UUID][]domain.ReviewMode{}
-	if len(configuredReviewModes) > 0 {
-		reviewModesByWord = configuredReviewModes[0]
+func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, itemType domain.PoolItemType, memoryCauseInferenceEnabled bool, configuredPreferences ...map[uuid.UUID]ReviewModePreferences) []domain.DailyLearningPoolItem {
+	preferencesByWord := map[uuid.UUID]ReviewModePreferences{}
+	if len(configuredPreferences) > 0 {
+		preferencesByWord = configuredPreferences[0]
 	}
 	items := make([]domain.DailyLearningPoolItem, 0, len(states))
 	for _, state := range states {
 		word := words[state.WordID]
 		wordCopy := word
-		enabledModes := reviewModesByWord[state.WordID]
-		if len(enabledModes) == 0 {
-			enabledModes = allReviewModes()
+		preferences := preferencesByWord[state.WordID]
+		if len(preferences.EnabledModes) == 0 {
+			preferences = defaultReviewModePreferences()
 		}
-		reviewMode := selectConfiguredReviewMode(state, memoryCauseInferenceEnabled, enabledModes, &word)
+		reviewMode := selectConfiguredReviewModeForPreferences(state, memoryCauseInferenceEnabled, preferences, &word)
 		dueAt := state.NextReviewAt
 		items = append(items, domain.DailyLearningPoolItem{
 			PoolID:                poolID,
@@ -1760,11 +1760,11 @@ func selectEnabledReviewMode(preferred domain.ReviewMode, enabled []domain.Revie
 	}
 	order := []domain.ReviewMode{
 		domain.ReviewModeReveal,
-		domain.ReviewModeDefinitionFirst,
 		domain.ReviewModeMultipleChoice,
 		domain.ReviewModeBuildWord,
 		domain.ReviewModeFillBlank,
 		domain.ReviewModeListening,
+		domain.ReviewModeDefinitionFirst,
 	}
 	preferredRank := 0
 	for index, mode := range order {
@@ -1790,19 +1790,60 @@ func selectEnabledReviewMode(preferred domain.ReviewMode, enabled []domain.Revie
 	return best
 }
 
-// selectConfiguredReviewMode lets Mode 6 alternate with Mode 1 whenever the
-// SRS chooses a meaning-recall card.  It remains a normal fallback: if Mode 6
-// is disabled, or if the SRS selected another exercise, existing behaviour is
-// unchanged.  LastMode makes repeat reviews alternate rather than assigning a
-// word permanently to one side of the pair.
+func defaultReviewModePreferences() ReviewModePreferences {
+	return ReviewModePreferences{EnabledModes: allReviewModes()}
+}
+
+// selectConfiguredReviewMode is the Default-set selection rule. Mode 6 has no
+// special shortcut: it is simply the hardest configured mode in the normal SRS
+// progression.
 func selectConfiguredReviewMode(state domain.UserWordState, memoryCauseInferenceEnabled bool, enabled []domain.ReviewMode, word *domain.Word) domain.ReviewMode {
-	preferred := SelectReviewMode(state, memoryCauseInferenceEnabled)
-	if preferred == domain.ReviewModeReveal &&
-		containsReviewMode(enabled, domain.ReviewModeDefinitionFirst) &&
-		state.LastMode != domain.ReviewModeDefinitionFirst {
-		preferred = domain.ReviewModeDefinitionFirst
+	return selectConfiguredReviewModeForPreferences(state, memoryCauseInferenceEnabled, ReviewModePreferences{EnabledModes: enabled}, word)
+}
+
+func selectConfiguredReviewModeForPreferences(state domain.UserWordState, memoryCauseInferenceEnabled bool, preferences ReviewModePreferences, word *domain.Word) domain.ReviewMode {
+	enabled := preferences.EnabledModes
+	if len(enabled) == 0 {
+		enabled = allReviewModes()
 	}
-	return selectEnabledReviewMode(preferred, enabled, word)
+	hardest := hardestEnabledNonRevealMode(enabled, word)
+	if preferences.IsCustomSet && hardest != "" && state.LastMode == hardest && state.ModeStreakCount >= 3 {
+		// A custom set has just shown its hardest exercise three times in a row.
+		// Give the learner one enabled non-Mode-1 alternative; the ordinary SRS
+		// chooser resumes on the following card.
+		if alternative := hardestAlternativeMode(enabled, hardest, word); alternative != "" {
+			return alternative
+		}
+	}
+	return selectEnabledReviewMode(SelectReviewMode(state, memoryCauseInferenceEnabled), enabled, word)
+}
+
+func hardestEnabledNonRevealMode(enabled []domain.ReviewMode, word *domain.Word) domain.ReviewMode {
+	for index := len(allReviewModes()) - 1; index >= 0; index-- {
+		candidate := allReviewModes()[index]
+		if candidate == domain.ReviewModeReveal || !containsReviewMode(enabled, candidate) {
+			continue
+		}
+		if candidate == domain.ReviewModeBuildWord && word != nil && classifyWordKind(*word) != generatedItemKindSingleWord {
+			continue
+		}
+		return candidate
+	}
+	return ""
+}
+
+func hardestAlternativeMode(enabled []domain.ReviewMode, hardest domain.ReviewMode, word *domain.Word) domain.ReviewMode {
+	for index := len(allReviewModes()) - 1; index >= 0; index-- {
+		candidate := allReviewModes()[index]
+		if candidate == domain.ReviewModeReveal || candidate == hardest || !containsReviewMode(enabled, candidate) {
+			continue
+		}
+		if candidate == domain.ReviewModeBuildWord && word != nil && classifyWordKind(*word) != generatedItemKindSingleWord {
+			continue
+		}
+		return candidate
+	}
+	return ""
 }
 
 func containsReviewMode(modes []domain.ReviewMode, target domain.ReviewMode) bool {
@@ -1822,10 +1863,10 @@ const dailyListeningItemLimit = 2
 // capListeningReviewItems downgrades listening_sentence review items beyond
 // `limit` to fill_in_blank, mutating items in place. Items are processed in
 // slice order so the earliest listening items keep the mode deterministically.
-func capListeningReviewItems(items []domain.DailyLearningPoolItem, limit int, configuredReviewModes ...map[uuid.UUID][]domain.ReviewMode) {
-	reviewModesByWord := map[uuid.UUID][]domain.ReviewMode{}
-	if len(configuredReviewModes) > 0 {
-		reviewModesByWord = configuredReviewModes[0]
+func capListeningReviewItems(items []domain.DailyLearningPoolItem, limit int, configuredPreferences ...map[uuid.UUID]ReviewModePreferences) {
+	preferencesByWord := map[uuid.UUID]ReviewModePreferences{}
+	if len(configuredPreferences) > 0 {
+		preferencesByWord = configuredPreferences[0]
 	}
 	remaining := limit
 	for i := range items {
@@ -1836,16 +1877,16 @@ func capListeningReviewItems(items []domain.DailyLearningPoolItem, limit int, co
 			remaining--
 			continue
 		}
-		enabledModes := reviewModesByWord[items[i].WordID]
+		enabledModes := preferencesByWord[items[i].WordID].EnabledModes
 		if len(enabledModes) == 0 {
-			enabledModes = allReviewModes()
+			enabledModes = defaultReviewModePreferences().EnabledModes
 		}
 		items[i].ReviewMode = selectEnabledReviewMode(domain.ReviewModeFillBlank, enabledModes, items[i].Word)
 	}
 }
 
-func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, memoryCauseInferenceEnabled bool, reviewModesByWord map[uuid.UUID][]domain.ReviewMode) []domain.DailyLearningPoolItem {
-	items := buildReviewItems(userID, poolID, states, words, domain.PoolItemTypeWeak, memoryCauseInferenceEnabled, reviewModesByWord)
+func buildBonusPracticeItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWordState, words map[uuid.UUID]domain.Word, memoryCauseInferenceEnabled bool, preferencesByWord map[uuid.UUID]ReviewModePreferences) []domain.DailyLearningPoolItem {
+	items := buildReviewItems(userID, poolID, states, words, domain.PoolItemTypeWeak, memoryCauseInferenceEnabled, preferencesByWord)
 	for i := range items {
 		items[i].BonusPractice = true
 		items[i].DueAt = nil
@@ -2083,8 +2124,8 @@ func minInt(a int, b int) int {
 	return b
 }
 
-func (s *PoolService) enabledReviewModesForStates(ctx context.Context, userID uuid.UUID, groups ...[]domain.UserWordState) (map[uuid.UUID][]domain.ReviewMode, error) {
-	result := map[uuid.UUID][]domain.ReviewMode{}
+func (s *PoolService) reviewModePreferencesForStates(ctx context.Context, userID uuid.UUID, groups ...[]domain.UserWordState) (map[uuid.UUID]ReviewModePreferences, error) {
+	result := map[uuid.UUID]ReviewModePreferences{}
 	wordIDs := []uuid.UUID{}
 	seen := map[uuid.UUID]struct{}{}
 	for _, states := range groups {
@@ -2101,11 +2142,11 @@ func (s *PoolService) enabledReviewModesForStates(ctx context.Context, userID uu
 	}
 	if s.wordSets == nil {
 		for _, wordID := range wordIDs {
-			result[wordID] = allReviewModes()
+			result[wordID] = defaultReviewModePreferences()
 		}
 		return result, nil
 	}
-	return s.wordSets.EnabledReviewModesForWords(ctx, userID, wordIDs)
+	return s.wordSets.ReviewModePreferencesForWords(ctx, userID, wordIDs)
 }
 
 // RemapPendingReviewModes applies a saved set preference without altering
@@ -2148,7 +2189,10 @@ func (s *PoolService) RemapPendingReviewModes(ctx context.Context, userID uuid.U
 			}
 			return stateErr
 		}
-		updated, changed := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled, set.EnabledReviewModes)
+		updated, changed := syncPendingPoolItem(item, state, s.memoryCauseInferenceEnabled, ReviewModePreferences{
+			EnabledModes: set.EnabledReviewModes,
+			IsCustomSet:  set.Mode == domain.WordSetModeCustom,
+		})
 		if changed {
 			if err := s.poolRepo.UpdatePendingPoolItem(ctx, updated); err != nil {
 				return err

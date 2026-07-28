@@ -20,7 +20,7 @@ func (r *WordStateRepository) Get(ctx context.Context, userID uuid.UUID, wordID 
 	return scanState(r.pool.QueryRow(ctx, `
 		SELECT user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds, stability, difficulty,
 		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
-		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
+		       avg_response_time_ms, weakness_score, learning_stage, last_mode, mode_streak_count, last_memory_cause, last_response_time_ms, last_answer_correct,
 		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
 		       word_construction_success_streak, word_construction_struggle_count,
 		       known_at, created_at, updated_at
@@ -37,7 +37,7 @@ func (r *WordStateRepository) ListDueWithinWindow(ctx context.Context, userID uu
 	rows, err := r.pool.Query(ctx, fmt.Sprintf(`
 		SELECT user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds, stability, difficulty,
 		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
-		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
+		       avg_response_time_ms, weakness_score, learning_stage, last_mode, mode_streak_count, last_memory_cause, last_response_time_ms, last_answer_correct,
 		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
 		       word_construction_success_streak, word_construction_struggle_count,
 		       known_at, created_at, updated_at
@@ -71,7 +71,7 @@ func (r *WordStateRepository) ListWeakCandidates(ctx context.Context, userID uui
 	query := `
 		SELECT user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds, stability, difficulty,
 		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
-		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
+		       avg_response_time_ms, weakness_score, learning_stage, last_mode, mode_streak_count, last_memory_cause, last_response_time_ms, last_answer_correct,
 		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
 		       word_construction_success_streak, word_construction_struggle_count,
 		       known_at, created_at, updated_at
@@ -108,7 +108,7 @@ func (r *WordStateRepository) ListExistingWords(ctx context.Context, userID uuid
 	rows, err := r.pool.Query(ctx, `
 		SELECT user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds, stability, difficulty,
 		       review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
-		       avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
+		       avg_response_time_ms, weakness_score, learning_stage, last_mode, mode_streak_count, last_memory_cause, last_response_time_ms, last_answer_correct,
 		       meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
 		       word_construction_success_streak, word_construction_struggle_count,
 		       known_at, created_at, updated_at
@@ -214,15 +214,15 @@ func (r *WordStateRepository) Upsert(ctx context.Context, state domain.UserWordS
 		INSERT INTO user_word_states (
 			user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds,
 			stability, difficulty, review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count,
-			reveal_meaning_count, reveal_example_count, avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause,
+			reveal_meaning_count, reveal_example_count, avg_response_time_ms, weakness_score, learning_stage, last_mode, mode_streak_count, last_memory_cause,
 			last_response_time_ms, last_answer_correct, meaning_forget_count, spelling_issue_count, confusable_mixup_count,
 			slow_recall_count, guessed_correct_count, word_construction_success_streak, word_construction_struggle_count, known_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8,
 			$9, $10, $11, $12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21, $22, $23,
-			$24, $25, $26, $27, $28, $29,
-			$30, $31, $32, $33
+			$17, $18, $19, $20, $21, $22, $23, $24,
+			$25, $26, $27, $28, $29, $30,
+			$31, $32, $33, $34
 		)
 		ON CONFLICT (user_id, word_id) DO UPDATE SET
 			status = EXCLUDED.status,
@@ -245,6 +245,7 @@ func (r *WordStateRepository) Upsert(ctx context.Context, state domain.UserWordS
 			weakness_score = EXCLUDED.weakness_score,
 			learning_stage = EXCLUDED.learning_stage,
 			last_mode = EXCLUDED.last_mode,
+			mode_streak_count = EXCLUDED.mode_streak_count,
 			last_memory_cause = EXCLUDED.last_memory_cause,
 			last_response_time_ms = EXCLUDED.last_response_time_ms,
 			last_answer_correct = EXCLUDED.last_answer_correct,
@@ -258,7 +259,7 @@ func (r *WordStateRepository) Upsert(ctx context.Context, state domain.UserWordS
 			known_at = EXCLUDED.known_at
 		RETURNING user_id, word_id, status, first_seen_at, last_seen_at, last_rating, next_review_at, interval_seconds, stability, difficulty,
 		          review_count, wrong_count, easy_count, medium_count, hard_count, hint_used_count, reveal_meaning_count, reveal_example_count,
-		          avg_response_time_ms, weakness_score, learning_stage, last_mode, last_memory_cause, last_response_time_ms, last_answer_correct,
+		          avg_response_time_ms, weakness_score, learning_stage, last_mode, mode_streak_count, last_memory_cause, last_response_time_ms, last_answer_correct,
 		          meaning_forget_count, spelling_issue_count, confusable_mixup_count, slow_recall_count, guessed_correct_count,
 		          word_construction_success_streak, word_construction_struggle_count,
 		          known_at, created_at, updated_at
@@ -286,6 +287,7 @@ func (r *WordStateRepository) Upsert(ctx context.Context, state domain.UserWordS
 		state.WeaknessScore,
 		state.LearningStage,
 		string(state.LastMode),
+		state.ModeStreakCount,
 		nullableMemoryCauseValue(state.LastMemoryCause),
 		state.LastResponseTimeMs,
 		nullableBoolValue(state.LastAnswerCorrect),
