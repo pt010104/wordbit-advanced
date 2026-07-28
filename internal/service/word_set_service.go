@@ -256,6 +256,7 @@ func allReviewModes() []domain.ReviewMode {
 		domain.ReviewModeBuildWord,
 		domain.ReviewModeFillBlank,
 		domain.ReviewModeListening,
+		domain.ReviewModeDefinitionFirst,
 	}
 }
 

@@ -57,11 +57,12 @@ const (
 type ReviewMode string
 
 const (
-	ReviewModeReveal         ReviewMode = "hidden_meaning"
-	ReviewModeMultipleChoice ReviewMode = "multiple_choice"
-	ReviewModeBuildWord      ReviewMode = "build_word"
-	ReviewModeFillBlank      ReviewMode = "fill_in_blank"
-	ReviewModeListening      ReviewMode = "listening_sentence"
+	ReviewModeReveal          ReviewMode = "hidden_meaning"
+	ReviewModeMultipleChoice  ReviewMode = "multiple_choice"
+	ReviewModeBuildWord       ReviewMode = "build_word"
+	ReviewModeFillBlank       ReviewMode = "fill_in_blank"
+	ReviewModeListening       ReviewMode = "listening_sentence"
+	ReviewModeDefinitionFirst ReviewMode = "definition_first"
 )
 
 type ReviewInputMethod string

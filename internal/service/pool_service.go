@@ -332,7 +332,7 @@ func syncPendingPoolItem(item domain.DailyLearningPoolItem, state domain.UserWor
 		enabledModes = configuredModes[0]
 	}
 	updated := item
-	updated.ReviewMode = selectEnabledReviewMode(SelectReviewMode(state, memoryCauseInferenceEnabled), enabledModes, item.Word)
+	updated.ReviewMode = selectConfiguredReviewMode(state, memoryCauseInferenceEnabled, enabledModes, item.Word)
 	if item.BonusPractice {
 		updated.DueAt = nil
 	} else {
@@ -1725,7 +1725,7 @@ func buildReviewItems(userID uuid.UUID, poolID uuid.UUID, states []domain.UserWo
 		if len(enabledModes) == 0 {
 			enabledModes = allReviewModes()
 		}
-		reviewMode := selectEnabledReviewMode(SelectReviewMode(state, memoryCauseInferenceEnabled), enabledModes, &word)
+		reviewMode := selectConfiguredReviewMode(state, memoryCauseInferenceEnabled, enabledModes, &word)
 		dueAt := state.NextReviewAt
 		items = append(items, domain.DailyLearningPoolItem{
 			PoolID:                poolID,
@@ -1760,6 +1760,7 @@ func selectEnabledReviewMode(preferred domain.ReviewMode, enabled []domain.Revie
 	}
 	order := []domain.ReviewMode{
 		domain.ReviewModeReveal,
+		domain.ReviewModeDefinitionFirst,
 		domain.ReviewModeMultipleChoice,
 		domain.ReviewModeBuildWord,
 		domain.ReviewModeFillBlank,
@@ -1787,6 +1788,21 @@ func selectEnabledReviewMode(preferred domain.ReviewMode, enabled []domain.Revie
 		}
 	}
 	return best
+}
+
+// selectConfiguredReviewMode lets Mode 6 alternate with Mode 1 whenever the
+// SRS chooses a meaning-recall card.  It remains a normal fallback: if Mode 6
+// is disabled, or if the SRS selected another exercise, existing behaviour is
+// unchanged.  LastMode makes repeat reviews alternate rather than assigning a
+// word permanently to one side of the pair.
+func selectConfiguredReviewMode(state domain.UserWordState, memoryCauseInferenceEnabled bool, enabled []domain.ReviewMode, word *domain.Word) domain.ReviewMode {
+	preferred := SelectReviewMode(state, memoryCauseInferenceEnabled)
+	if preferred == domain.ReviewModeReveal &&
+		containsReviewMode(enabled, domain.ReviewModeDefinitionFirst) &&
+		state.LastMode != domain.ReviewModeDefinitionFirst {
+		preferred = domain.ReviewModeDefinitionFirst
+	}
+	return selectEnabledReviewMode(preferred, enabled, word)
 }
 
 func containsReviewMode(modes []domain.ReviewMode, target domain.ReviewMode) bool {

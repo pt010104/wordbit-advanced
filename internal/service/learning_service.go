@@ -489,7 +489,7 @@ func (s *LearningService) maybeAppendSameDayFollowUp(ctx context.Context, userID
 		WordID:                item.WordID,
 		Ordinal:               lastOrdinal + 1,
 		ItemType:              domain.PoolItemTypeShortTerm,
-		ReviewMode:            selectEnabledReviewMode(SelectReviewMode(state, s.memoryCauseInferenceEnabled), enabledModes, &word),
+		ReviewMode:            selectConfiguredReviewMode(state, s.memoryCauseInferenceEnabled, enabledModes, &word),
 		DueAt:                 state.NextReviewAt,
 		Status:                domain.PoolItemStatusPending,
 		IsReview:              true,
