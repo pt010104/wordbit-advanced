@@ -34,6 +34,7 @@ type Repositories struct {
 	DynamicReviewPrompts *DynamicReviewPromptRepository
 	WordSets             *WordSetRepository
 	ImportBuffer         *WordImportBufferRepository
+	Recordings           *RecordingRepository
 }
 
 func NewRepositories(pool *pgxpool.Pool) *Repositories {
@@ -48,6 +49,7 @@ func NewRepositories(pool *pgxpool.Pool) *Repositories {
 		DynamicReviewPrompts: &DynamicReviewPromptRepository{pool: pool},
 		WordSets:             &WordSetRepository{pool: pool},
 		ImportBuffer:         &WordImportBufferRepository{pool: pool},
+		Recordings:           &RecordingRepository{pool: pool},
 	}
 }
 

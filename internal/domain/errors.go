@@ -10,4 +10,5 @@ var (
 	ErrRateLimited          = errors.New("rate limited")
 	ErrNoActionableCard     = errors.New("no actionable card")
 	ErrDuplicateClientEvent = errors.New("duplicate client event")
+	ErrServiceUnavailable   = errors.New("service unavailable")
 )

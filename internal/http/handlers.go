@@ -15,6 +15,70 @@ import (
 	"wordbit-advanced-app/backend/internal/service"
 )
 
+const maxRecordingUploadBytes int64 = 10 << 20
+
+func (h *Handler) UploadRecording(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.recordings == nil {
+		writeError(w, fmt.Errorf("%w: voice recording is unavailable", domain.ErrServiceUnavailable))
+		return
+	}
+	r.Body = nethttp.MaxBytesReader(w, r.Body, maxRecordingUploadBytes)
+	if err := r.ParseMultipartForm(maxRecordingUploadBytes); err != nil {
+		writeError(w, fmt.Errorf("%w: recording must be an audio file smaller than 10 MB", domain.ErrValidation))
+		return
+	}
+	poolItemID, err := parseUUID(strings.TrimSpace(r.FormValue("pool_item_id")))
+	if err != nil {
+		writeError(w, fmt.Errorf("%w: valid pool_item_id is required", domain.ErrValidation))
+		return
+	}
+	file, header, err := r.FormFile("audio")
+	if err != nil {
+		writeError(w, fmt.Errorf("%w: audio file is required", domain.ErrValidation))
+		return
+	}
+	defer file.Close()
+	audio, err := io.ReadAll(io.LimitReader(file, maxRecordingUploadBytes+1))
+	if err != nil || int64(len(audio)) > maxRecordingUploadBytes {
+		writeError(w, fmt.Errorf("%w: recording must be smaller than 10 MB", domain.ErrValidation))
+		return
+	}
+	playback, err := h.recordings.Save(r.Context(), user.ID, poolItemID, audio, header.Header.Get("Content-Type"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusCreated, playback)
+}
+
+func (h *Handler) GetRecording(w nethttp.ResponseWriter, r *nethttp.Request) {
+	user, err := currentUser(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if h.recordings == nil {
+		writeError(w, fmt.Errorf("%w: voice recording is unavailable", domain.ErrServiceUnavailable))
+		return
+	}
+	wordID, err := parseUUID(chi.URLParam(r, "wordID"))
+	if err != nil {
+		writeError(w, fmt.Errorf("%w: valid word id is required", domain.ErrValidation))
+		return
+	}
+	playback, err := h.recordings.GetPlayback(r.Context(), user.ID, wordID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, playback)
+}
+
 func (h *Handler) GetSettings(w nethttp.ResponseWriter, r *nethttp.Request) {
 	user, err := currentUser(r)
 	if err != nil {
@@ -251,6 +315,7 @@ func (h *Handler) UpdateWordSetPreferences(w nethttp.ResponseWriter, r *nethttp.
 	}
 	var payload struct {
 		AutoGenerateNewWords bool                `json:"auto_generate_new_words"`
+		RecordingEnabled     bool                `json:"recording_enabled"`
 		EnabledReviewModes   []domain.ReviewMode `json:"enabled_review_modes"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
@@ -259,6 +324,7 @@ func (h *Handler) UpdateWordSetPreferences(w nethttp.ResponseWriter, r *nethttp.
 	}
 	set, err := h.wordSets.UpdatePreferences(r.Context(), user.ID, setID, service.WordSetPreferencesInput{
 		AutoGenerateNewWords: payload.AutoGenerateNewWords,
+		RecordingEnabled:     payload.RecordingEnabled,
 		EnabledReviewModes:   payload.EnabledReviewModes,
 	})
 	if err != nil {

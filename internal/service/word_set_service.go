@@ -31,6 +31,7 @@ type WordSetUpsertInput struct {
 
 type WordSetPreferencesInput struct {
 	AutoGenerateNewWords bool
+	RecordingEnabled     bool
 	EnabledReviewModes   []domain.ReviewMode
 }
 
@@ -121,6 +122,7 @@ func (s *WordSetService) UpdatePreferences(ctx context.Context, userID uuid.UUID
 		return domain.WordSet{}, err
 	}
 	set.AutoGenerateNewWords = input.AutoGenerateNewWords
+	set.RecordingEnabled = input.RecordingEnabled
 	set.EnabledReviewModes = modes
 	return s.wordSets.Update(ctx, set)
 }

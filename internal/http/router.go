@@ -34,11 +34,12 @@ type Handler struct {
 	wordSets      *service.WordSetService
 	importBuffer  *service.WordImportBufferService
 	statistics    *service.StatisticsService
+	recordings    *service.RecordingService
 	llmRuns       service.LLMRunRepository
 	promptTester  service.PromptTester
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, dynamicReview *service.DynamicReviewService, wordSets *service.WordSetService, importBuffer *service.WordImportBufferService, statistics *service.StatisticsService, llmRuns service.LLMRunRepository, promptTester service.PromptTester, build BuildInfo) nethttp.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifier *auth.Verifier, identity *service.IdentityService, settings *service.SettingsService, dictionary *service.DictionaryService, pools *service.PoolService, learning *service.LearningService, dynamicReview *service.DynamicReviewService, wordSets *service.WordSetService, importBuffer *service.WordImportBufferService, statistics *service.StatisticsService, recordings *service.RecordingService, llmRuns service.LLMRunRepository, promptTester service.PromptTester, build BuildInfo) nethttp.Handler {
 	mw := NewMiddleware(logger, verifier, identity, cfg.AdminToken)
 	h := &Handler{
 		logger:        logger,
@@ -52,6 +53,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 		wordSets:      wordSets,
 		importBuffer:  importBuffer,
 		statistics:    statistics,
+		recordings:    recordings,
 		llmRuns:       llmRuns,
 		promptTester:  promptTester,
 	}
@@ -100,6 +102,8 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, verifie
 			r.Post("/me/cards/{poolItemID}/undo-last-answer", h.UndoLastAnswer)
 			r.Post("/me/cards/{poolItemID}/events/reveal", h.SubmitReveal)
 			r.Post("/me/cards/{poolItemID}/events/pronunciation", h.SubmitPronunciation)
+			r.Post("/me/recordings", h.UploadRecording)
+			r.Get("/me/recordings/{wordID}", h.GetRecording)
 		})
 
 		r.Group(func(r chi.Router) {

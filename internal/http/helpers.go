@@ -38,6 +38,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, domain.ErrDuplicateClientEvent):
 		status = http.StatusConflict
+	case errors.Is(err, domain.ErrServiceUnavailable):
+		status = http.StatusServiceUnavailable
 	}
 	writeJSON(w, status, map[string]any{
 		"error": err.Error(),

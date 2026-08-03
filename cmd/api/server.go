@@ -18,6 +18,7 @@ import (
 	"wordbit-advanced-app/backend/internal/repository/postgres"
 	"wordbit-advanced-app/backend/internal/scheduler"
 	"wordbit-advanced-app/backend/internal/service"
+	"wordbit-advanced-app/backend/internal/storage"
 )
 
 var (
@@ -53,9 +54,14 @@ func runServer(ctx context.Context, cfg config.Config) error {
 	learningService.SetWordSetService(wordSets)
 	dynamicReviewService := service.NewDynamicReviewService(repos.DynamicReviewPrompts, repos.LLMRuns, repos.Words, deepseekClient, clock, logger)
 	importBufferService := service.NewWordImportBufferService(repos.ImportBuffer, repos.WordSets, repos.Settings, dictionary, deepseekClient, repos.Pools, clock)
+	r2Storage, err := storage.NewR2Storage(ctx, cfg.R2)
+	if err != nil {
+		return err
+	}
+	recordingService := service.NewRecordingService(repos.Recordings, repos.Pools, wordSets, r2Storage, clock)
 	verifier := auth.NewVerifier(cfg.Auth, logger)
 
-	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, dynamicReviewService, wordSets, importBufferService, statistics, repos.LLMRuns, deepseekClient, apihttp.BuildInfo{
+	router := apihttp.NewRouter(cfg, logger, db, verifier, identity, settings, dictionary, poolService, learningService, dynamicReviewService, wordSets, importBufferService, statistics, recordingService, repos.LLMRuns, deepseekClient, apihttp.BuildInfo{
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,

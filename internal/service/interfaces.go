@@ -54,6 +54,16 @@ type WordSetRepository interface {
 	EnsureDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error)
 }
 
+type RecordingRepository interface {
+	Upsert(ctx context.Context, recording domain.UserWordRecording) (domain.UserWordRecording, error)
+	Get(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) (domain.UserWordRecording, error)
+}
+
+type ObjectStorage interface {
+	Put(ctx context.Context, objectKey string, contentType string, data []byte) error
+	PresignDownload(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error)
+}
+
 type WordImportBufferRepository interface {
 	List(ctx context.Context, userID uuid.UUID, setID *uuid.UUID) ([]domain.WordImportBufferItem, error)
 	Get(ctx context.Context, userID uuid.UUID, itemID uuid.UUID) (domain.WordImportBufferItem, error)

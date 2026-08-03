@@ -3,6 +3,7 @@
 -- non-empty list of review modes with hidden_meaning (Mode 1) always present.
 ALTER TABLE word_sets
     ADD COLUMN auto_generate_new_words BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN recording_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN enabled_review_modes TEXT[] NOT NULL DEFAULT ARRAY[
         'hidden_meaning', 'multiple_choice', 'build_word', 'fill_in_blank', 'listening_sentence'
     ]::TEXT[];

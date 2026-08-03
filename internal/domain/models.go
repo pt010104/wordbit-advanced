@@ -160,10 +160,24 @@ type WordSet struct {
 	Mode                 WordSetMode  `json:"mode"`
 	IsDefault            bool         `json:"is_default"`
 	AutoGenerateNewWords bool         `json:"auto_generate_new_words"`
+	RecordingEnabled     bool         `json:"recording_enabled"`
 	EnabledReviewModes   []ReviewMode `json:"enabled_review_modes"`
 	DueCount             int          `json:"due_count,omitempty"`
 	CreatedAt            time.Time    `json:"created_at"`
 	UpdatedAt            time.Time    `json:"updated_at"`
+}
+
+// UserWordRecording represents the latest reading recorded by a user for a
+// word. The object itself lives in private R2 storage; only a short-lived URL
+// is returned to the mobile app.
+type UserWordRecording struct {
+	UserID      uuid.UUID `json:"user_id"`
+	WordID      uuid.UUID `json:"word_id"`
+	ObjectKey   string    `json:"-"`
+	ContentType string    `json:"content_type"`
+	SizeBytes   int64     `json:"size_bytes"`
+	RecordedAt  time.Time `json:"recorded_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type User struct {

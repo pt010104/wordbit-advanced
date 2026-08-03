@@ -26,8 +26,23 @@ type Config struct {
 	HTTPWriteTimeout            time.Duration
 	HTTPIdleTimeout             time.Duration
 	DeepSeek                    DeepSeekConfig
+	R2                          R2Config
 	Auth                        AuthConfig
 	Scheduler                   SchedulerConfig
+}
+
+// R2Config intentionally uses the S3-compatible Cloudflare R2 endpoint.
+// Keeping it optional lets existing development environments start normally;
+// recording endpoints report unavailable until all four R2 variables exist.
+type R2Config struct {
+	Endpoint        string
+	Bucket          string
+	AccessKeyID     string
+	SecretAccessKey string
+}
+
+func (c R2Config) Enabled() bool {
+	return c.Endpoint != "" && c.Bucket != "" && c.AccessKeyID != "" && c.SecretAccessKey != ""
 }
 
 type DeepSeekConfig struct {
@@ -63,13 +78,13 @@ func Load() (Config, error) {
 	_ = godotenv.Load(".env", "backend/.env")
 
 	cfg := Config{
-		AppEnv:          envString("APP_ENV", "development"),
-		Port:            envString("PORT", "8080"),
-		LogLevel:        envString("LOG_LEVEL", "info"),
-		DatabaseURL:     envString("DATABASE_URL", ""),
-		DefaultTimezone: envString("DEFAULT_TIMEZONE", domain.DefaultTimezone),
-		AdminToken:      envString("ADMIN_TOKEN", ""),
-		AutoMigrate:     envBool("AUTO_MIGRATE", true),
+		AppEnv:                      envString("APP_ENV", "development"),
+		Port:                        envString("PORT", "8080"),
+		LogLevel:                    envString("LOG_LEVEL", "info"),
+		DatabaseURL:                 envString("DATABASE_URL", ""),
+		DefaultTimezone:             envString("DEFAULT_TIMEZONE", domain.DefaultTimezone),
+		AdminToken:                  envString("ADMIN_TOKEN", ""),
+		AutoMigrate:                 envBool("AUTO_MIGRATE", true),
 		MemoryCauseInferenceEnabled: envBool("MEMORY_CAUSE_INFERENCE_ENABLED", true),
 		HTTPReadTimeout:             envDuration("HTTP_READ_TIMEOUT", 10*time.Second),
 		HTTPWriteTimeout:            envDuration("HTTP_WRITE_TIMEOUT", 45*time.Second),
@@ -84,6 +99,12 @@ func Load() (Config, error) {
 			MaxOutputTokens: envInt("DS_MAX_OUTPUT_TOKENS", 4096),
 			RPMLimit:        envInt("DS_RPM_LIMIT", 0),
 			RPDLimit:        envInt("DS_RPD_LIMIT", 0),
+		},
+		R2: R2Config{
+			Endpoint:        envString("R2_ENDPOINT", ""),
+			Bucket:          envString("R2_BUCKET", ""),
+			AccessKeyID:     envString("R2_ACCESS_KEY_ID", ""),
+			SecretAccessKey: envString("R2_SECRET_ACCESS_KEY", ""),
 		},
 		Auth: AuthConfig{
 			DevBypass:  envBool("DEV_AUTH_BYPASS", false),
