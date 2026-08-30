@@ -27,6 +27,8 @@ var requiredColumns = []string{"word", "cefr_level", "topic", "vietnamese_meanin
 func main() {
 	filePath := flag.String("file", "", "path to a developer word-list CSV or XLSX export")
 	csvPath := flag.String("csv", "", "deprecated alias for --file")
+	listName := flag.String("list-name", "developer_list", "stable name recorded for this imported list")
+	priority := flag.Int("priority", 0, "selection priority for this list; higher values are offered first")
 	validateOnly := flag.Bool("validate-only", false, "validate the file without writing to the database")
 	flag.Parse()
 	inputPath := strings.TrimSpace(*filePath)
@@ -36,6 +38,13 @@ func main() {
 	if inputPath == "" {
 		log.Fatal("--file is required")
 	}
+	list := strings.TrimSpace(*listName)
+	if list == "" {
+		log.Fatal("--list-name must not be blank")
+	}
+	if *priority < 0 {
+		log.Fatal("--priority must be a non-negative whole number")
+	}
 
 	rows, err := readRows(inputPath)
 	if err != nil {
@@ -43,14 +52,14 @@ func main() {
 	}
 	candidates := make([]domain.CandidateWord, 0, len(rows))
 	for index, row := range rows {
-		candidate, err := candidateFromRow(row, index+2)
+		candidate, err := candidateFromRow(row, index+2, list, *priority)
 		if err != nil {
 			log.Fatal(err)
 		}
 		candidates = append(candidates, candidate)
 	}
 	if *validateOnly {
-		fmt.Printf("Validated %d developer-list words.\n", len(candidates))
+		fmt.Printf("Validated %d developer-list words for %q (priority %d).\n", len(candidates), list, *priority)
 		return
 	}
 	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
@@ -68,7 +77,7 @@ func main() {
 			log.Fatalf("row %d: upsert word: %v", index+2, err)
 		}
 	}
-	fmt.Printf("Imported %d developer-list words.\n", len(rows))
+	fmt.Printf("Imported %d developer-list words for %q (priority %d).\n", len(rows), list, *priority)
 }
 
 func readRows(inputPath string) ([]map[string]string, error) {
@@ -324,7 +333,7 @@ func xlsxColumnIndex(reference string) (int, error) {
 	return index - 1, nil
 }
 
-func candidateFromRow(row map[string]string, rowNumber int) (domain.CandidateWord, error) {
+func candidateFromRow(row map[string]string, rowNumber int, listName string, listPriority int) (domain.CandidateWord, error) {
 	for _, name := range requiredColumns {
 		if row[name] == "" {
 			return domain.CandidateWord{}, fmt.Errorf("row %d: %s is required", rowNumber, name)
@@ -375,8 +384,10 @@ func candidateFromRow(row map[string]string, rowNumber int) (domain.CandidateWor
 		CommonRate:         commonRate,
 		SourceProvider:     "developer_list",
 		SourceMetadata: domain.JSONMap{
-			"source":     "developer_list",
-			"sort_order": sortOrder,
+			"source":        "developer_list",
+			"list_name":     listName,
+			"list_priority": listPriority,
+			"sort_order":    sortOrder,
 		},
 		NormalizedForm: service.NormalizeWord(row["word"]),
 	}

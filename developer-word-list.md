@@ -36,11 +36,17 @@ Import from the repository root (with `DATABASE_URL` set):
 cd backend
 go run ./cmd/import-developer-word-list --file /path/to/export.xlsx
 
+# Give an entire list precedence over the existing curated lists. Higher wins.
+go run ./cmd/import-developer-word-list --file /path/to/ielts_reading_1000_single_words.xlsx \
+  --list-name ielts_reading_1000_single_words --priority 100
+
 # Optional: validate the file without changing the database.
 go run ./cmd/import-developer-word-list --file /path/to/export.xlsx --validate-only
 ```
 
 The importer stops before writing if any row is invalid. It upserts by
 `word + part_of_speech`, records `source_provider=developer_list`, and is safe
-to rerun after editing a row. Keep a sufficiently deep list for every
-topic/level combination that users may select.
+to rerun after editing a row. `--list-name` and `--priority` are stored with
+each card; higher priority lists are selected before lower priority lists.
+Keep a sufficiently deep list for every topic/level combination that users may
+select.

@@ -293,7 +293,7 @@ func (r *WordRepository) ListDeveloperListWords(ctx context.Context, userID uuid
 		query += fmt.Sprintf(" AND w.id NOT IN (%s)", joinPlaceholders(4, len(excludeWordIDs)))
 		args = append(args, inClauseUUIDs(excludeWordIDs)...)
 	}
-	query += fmt.Sprintf(" ORDER BY CASE w.source_provider WHEN 'developer_list' THEN 0 ELSE 1 END, COALESCE((w.source_metadata ->> 'sort_order')::integer, 2147483647), w.created_at ASC LIMIT $%d", len(args)+1)
+	query += fmt.Sprintf(" ORDER BY COALESCE((w.source_metadata ->> 'list_priority')::integer, 0) DESC, CASE w.source_provider WHEN 'developer_list' THEN 0 ELSE 1 END, COALESCE((w.source_metadata ->> 'sort_order')::integer, 2147483647), w.created_at ASC LIMIT $%d", len(args)+1)
 	args = append(args, limit)
 
 	rows, err := r.pool.Query(ctx, query, args...)
