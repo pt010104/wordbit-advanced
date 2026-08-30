@@ -475,7 +475,7 @@ func TestSubmitFirstExposureKnownAppendsReplacementNewCards(t *testing.T) {
 	}
 }
 
-func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingStateAndRefillsBuffer(t *testing.T) {
+func TestSubmitFirstExposureDontLearnKeepsKnownStateAndRefillsBuffer(t *testing.T) {
 	t.Parallel()
 
 	userID := uuid.New()
@@ -580,11 +580,12 @@ func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingStateAndRefillsBuff
 	if eventRepo.events[0].EventType != domain.EventTypeFirstExposure {
 		t.Fatalf("expected first exposure event for dont_learn, got %s", eventRepo.events[0].EventType)
 	}
-	if _, ok := stateRepo.states[wordID]; ok {
-		t.Fatalf("expected no persisted state for discarded word")
+	state, ok := stateRepo.states[wordID]
+	if !ok || state.Status != domain.WordStatusKnown {
+		t.Fatalf("expected discarded word to remain known and excluded, got %#v", state)
 	}
-	if len(poolRepo.items) != 3 {
-		t.Fatalf("expected discarded card to be replaced with new pending cards, got %d items", len(poolRepo.items))
+	if len(poolRepo.items) != 2 {
+		t.Fatalf("expected discarded card to be replaced with an available pending card, got %d items", len(poolRepo.items))
 	}
 	if poolRepo.items[0].WordID != wordID || poolRepo.items[0].Status != domain.PoolItemStatusCompleted {
 		t.Fatalf("expected original discarded card to stay completed for undo, got %#v", poolRepo.items[0])
@@ -595,8 +596,8 @@ func TestSubmitFirstExposureDontLearnRemovesWordWithoutSavingStateAndRefillsBuff
 			pendingNew++
 		}
 	}
-	if pendingNew != 2 {
-		t.Fatalf("expected 2 replacement pending new cards after dont_learn, got %d", pendingNew)
+	if pendingNew != 1 {
+		t.Fatalf("expected one replacement pending new card after dont_learn, got %d", pendingNew)
 	}
 }
 

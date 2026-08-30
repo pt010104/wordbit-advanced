@@ -314,9 +314,10 @@ func (h *Handler) UpdateWordSetPreferences(w nethttp.ResponseWriter, r *nethttp.
 		return
 	}
 	var payload struct {
-		AutoGenerateNewWords bool                `json:"auto_generate_new_words"`
-		RecordingEnabled     bool                `json:"recording_enabled"`
-		EnabledReviewModes   []domain.ReviewMode `json:"enabled_review_modes"`
+		AutoGenerateNewWords bool                 `json:"auto_generate_new_words"`
+		NewWordSource        domain.NewWordSource `json:"new_word_source"`
+		RecordingEnabled     bool                 `json:"recording_enabled"`
+		EnabledReviewModes   []domain.ReviewMode  `json:"enabled_review_modes"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, domain.ErrValidation)
@@ -324,6 +325,7 @@ func (h *Handler) UpdateWordSetPreferences(w nethttp.ResponseWriter, r *nethttp.
 	}
 	set, err := h.wordSets.UpdatePreferences(r.Context(), user.ID, setID, service.WordSetPreferencesInput{
 		AutoGenerateNewWords: payload.AutoGenerateNewWords,
+		NewWordSource:        payload.NewWordSource,
 		RecordingEnabled:     payload.RecordingEnabled,
 		EnabledReviewModes:   payload.EnabledReviewModes,
 	})

@@ -31,6 +31,7 @@ type WordSetUpsertInput struct {
 
 type WordSetPreferencesInput struct {
 	AutoGenerateNewWords bool
+	NewWordSource        domain.NewWordSource
 	RecordingEnabled     bool
 	EnabledReviewModes   []domain.ReviewMode
 }
@@ -117,14 +118,33 @@ func (s *WordSetService) UpdatePreferences(ctx context.Context, userID uuid.UUID
 	if input.AutoGenerateNewWords && !set.IsDefault {
 		return domain.WordSet{}, fmt.Errorf("%w: only the default set can auto-generate new words", domain.ErrValidation)
 	}
+	if !set.IsDefault && input.NewWordSource != "" && input.NewWordSource != domain.NewWordSourceLLM {
+		return domain.WordSet{}, fmt.Errorf("%w: only the default set can select a new-word source", domain.ErrValidation)
+	}
+	newWordSource, err := normalizeNewWordSource(input.NewWordSource)
+	if err != nil {
+		return domain.WordSet{}, err
+	}
 	modes, err := normalizeEnabledReviewModes(input.EnabledReviewModes)
 	if err != nil {
 		return domain.WordSet{}, err
 	}
 	set.AutoGenerateNewWords = input.AutoGenerateNewWords
+	set.NewWordSource = newWordSource
 	set.RecordingEnabled = input.RecordingEnabled
 	set.EnabledReviewModes = modes
 	return s.wordSets.Update(ctx, set)
+}
+
+func normalizeNewWordSource(source domain.NewWordSource) (domain.NewWordSource, error) {
+	switch source {
+	case "", domain.NewWordSourceLLM:
+		return domain.NewWordSourceLLM, nil
+	case domain.NewWordSourceDeveloperList:
+		return domain.NewWordSourceDeveloperList, nil
+	default:
+		return "", fmt.Errorf("%w: invalid new-word source", domain.ErrValidation)
+	}
 }
 
 func (s *WordSetService) Update(ctx context.Context, userID uuid.UUID, setID uuid.UUID, input WordSetUpsertInput) (domain.WordSet, error) {

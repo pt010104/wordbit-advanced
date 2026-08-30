@@ -234,6 +234,7 @@ func (r *WordRepository) ListBankWords(ctx context.Context, userID uuid.UUID, le
 			FROM words w
 			WHERE w.level = $2
 		  AND w.topic = $3
+		  AND COALESCE(w.source_provider, '') NOT IN ('developer_list', 'developer_list_llm_fallback')
 		  AND NOT EXISTS (
 			SELECT 1
 			FROM user_word_states s
@@ -256,6 +257,52 @@ func (r *WordRepository) ListBankWords(ctx context.Context, userID uuid.UUID, le
 	defer rows.Close()
 
 	var words []domain.Word
+	for rows.Next() {
+		word, scanErr := scanWord(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		words = append(words, word)
+	}
+	return words, rows.Err()
+}
+
+// ListDeveloperListWords returns only developer-curated entries. Keeping this
+// source separate from the reusable LLM bank ensures developer-list mode can
+// never silently fall back to generated words.
+func (r *WordRepository) ListDeveloperListWords(ctx context.Context, userID uuid.UUID, level domain.CEFRLevel, topic string, excludeWordIDs []uuid.UUID, limit int) ([]domain.Word, error) {
+	if limit <= 0 {
+		return []domain.Word{}, nil
+	}
+	query := `
+		SELECT id, word, normalized_form, canonical_form, lemma, word_family, confusable_group_key, part_of_speech, level, topic, ipa,
+		       pronunciation_hint, vietnamese_meaning, english_meaning, example_sentence_1, example_sentence_2, generated_examples, common_rate, source_provider, source_metadata, created_at, updated_at
+		FROM words w
+		WHERE w.source_provider IN ('developer_list', 'developer_list_llm_fallback')
+		  AND w.level = $2
+		  AND w.topic = $3
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM user_word_states s
+			WHERE s.user_id = $1
+			  AND s.word_id = w.id
+		  )
+	`
+	args := []any{userID, level, topic}
+	if len(excludeWordIDs) > 0 {
+		query += fmt.Sprintf(" AND w.id NOT IN (%s)", joinPlaceholders(4, len(excludeWordIDs)))
+		args = append(args, inClauseUUIDs(excludeWordIDs)...)
+	}
+	query += fmt.Sprintf(" ORDER BY CASE w.source_provider WHEN 'developer_list' THEN 0 ELSE 1 END, COALESCE((w.source_metadata ->> 'sort_order')::integer, 2147483647), w.created_at ASC LIMIT $%d", len(args)+1)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+
+	words := make([]domain.Word, 0, limit)
 	for rows.Next() {
 		word, scanErr := scanWord(rows)
 		if scanErr != nil {

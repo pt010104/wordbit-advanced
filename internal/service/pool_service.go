@@ -1385,8 +1385,54 @@ func (s *PoolService) generateNewWords(
 	seedItems []domain.DailyLearningPoolItem,
 	now time.Time,
 ) ([]domain.Word, []string, map[string][]string, error) {
+	return s.generateNewWordsWithSource(ctx, userID, settings, level, topic, newQuota, seedItems, now, true, false)
+}
+
+// generateNewWordsWithSource keeps the normal daily-pool quota and dedup
+// pipeline intact. In developer-list mode it first consumes the curated list,
+// then generates only the shortfall. Accepted extra LLM candidates are tagged
+// as a reusable developer-list buffer for a later day.
+func (s *PoolService) generateNewWordsWithSource(
+	ctx context.Context,
+	userID uuid.UUID,
+	settings domain.UserSettings,
+	level domain.CEFRLevel,
+	topic string,
+	newQuota int,
+	seedItems []domain.DailyLearningPoolItem,
+	now time.Time,
+	allowDeveloperList bool,
+	storeGeneratedForDeveloperList bool,
+) ([]domain.Word, []string, map[string][]string, error) {
 	if newQuota <= 0 {
 		return nil, nil, map[string][]string{}, nil
+	}
+	if allowDeveloperList && s.usesDeveloperWordList(ctx, userID) {
+		listWords, listAccepted, listRejections, err := s.selectDeveloperListWords(ctx, userID, level, topic, newQuota, seedItems, now)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if len(listWords) >= newQuota {
+			return listWords, listAccepted, listRejections, nil
+		}
+
+		fallbackSeedItems := appendPoolSeedWords(seedItems, listWords)
+		fallbackWords, fallbackAccepted, fallbackRejections, err := s.generateNewWordsWithSource(
+			ctx,
+			userID,
+			settings,
+			level,
+			topic,
+			newQuota-len(listWords),
+			fallbackSeedItems,
+			now,
+			false,
+			true,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return append(listWords, fallbackWords...), append(listAccepted, fallbackAccepted...), mergeGenerationRejections(listRejections, fallbackRejections), nil
 	}
 
 	existingStates, err := s.stateRepo.ListExistingWords(ctx, userID)
@@ -1524,6 +1570,9 @@ func (s *PoolService) generateNewWords(
 
 		selectedBeforeAttempt := len(selectedWords)
 		for _, candidate := range result.Accepted {
+			if storeGeneratedForDeveloperList {
+				candidate = markDeveloperListFallbackCandidate(candidate)
+			}
 			word, upsertErr := s.wordRepo.UpsertWord(ctx, candidate)
 			if upsertErr != nil {
 				rejections[candidate.Word] = []string{upsertErr.Error()}
@@ -1588,6 +1637,92 @@ func (s *PoolService) generateNewWords(
 	}
 
 	return selectedWords, acceptedNames, rejections, nil
+}
+
+func (s *PoolService) usesDeveloperWordList(ctx context.Context, userID uuid.UUID) bool {
+	if s.wordSets == nil {
+		return false
+	}
+	set, err := s.wordSets.EnsureDefault(ctx, userID)
+	if err != nil {
+		s.logger.Warn("resolve new-word source", "user_id", userID, "error", err)
+		return false
+	}
+	return set.AutoGenerateNewWords && set.NewWordSource == domain.NewWordSourceDeveloperList
+}
+
+func (s *PoolService) selectDeveloperListWords(
+	ctx context.Context,
+	userID uuid.UUID,
+	level domain.CEFRLevel,
+	topic string,
+	newQuota int,
+	seedItems []domain.DailyLearningPoolItem,
+	now time.Time,
+) ([]domain.Word, []string, map[string][]string, error) {
+	listRepo, ok := s.wordRepo.(DeveloperWordListRepository)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("developer word list is not configured")
+	}
+	existingStates, err := s.stateRepo.ListExistingWords(ctx, userID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	existingWordMap, err := s.loadWordMap(ctx, extractStateWordIDs(existingStates))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	existingWords := mapValues(existingWordMap)
+	seenNewIDs, err := s.wordRepo.ListWordIDsSeenAsNew(ctx, userID, SeenNewWordLookback(now))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	exclusionWords, exclusionLemmas, exclusionGroups := BuildGenerationExclusions(existingWords, existingStates, seedItems)
+	words, err := listRepo.ListDeveloperListWords(ctx, userID, level, topic, append(extractStateWordIDs(existingStates), extractPoolWordIDs(seedItems)...), newQuota+20)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	filtered := orderWordsByGeneratedMix(filterBankWords(words, &exclusionWords, &exclusionLemmas, &exclusionGroups, seenNewIDs), computeGeneratedItemKindTargets(newQuota))
+	if len(filtered) > newQuota {
+		filtered = filtered[:newQuota]
+	}
+	accepted := make([]string, 0, len(filtered))
+	for _, word := range filtered {
+		accepted = append(accepted, word.Word)
+	}
+	return filtered, accepted, map[string][]string{}, nil
+}
+
+func appendPoolSeedWords(existing []domain.DailyLearningPoolItem, words []domain.Word) []domain.DailyLearningPoolItem {
+	items := append([]domain.DailyLearningPoolItem(nil), existing...)
+	for index := range words {
+		word := words[index]
+		items = append(items, domain.DailyLearningPoolItem{
+			WordID: word.ID,
+			Word:   &word,
+		})
+	}
+	return items
+}
+
+func markDeveloperListFallbackCandidate(candidate domain.CandidateWord) domain.CandidateWord {
+	candidate.SourceProvider = "developer_list_llm_fallback"
+	if candidate.SourceMetadata == nil {
+		candidate.SourceMetadata = domain.JSONMap{}
+	}
+	candidate.SourceMetadata["source"] = "developer_list_llm_fallback"
+	return candidate
+}
+
+func mergeGenerationRejections(left map[string][]string, right map[string][]string) map[string][]string {
+	merged := make(map[string][]string, len(left)+len(right))
+	for word, reasons := range left {
+		merged[word] = append([]string(nil), reasons...)
+	}
+	for word, reasons := range right {
+		merged[word] = append(merged[word], reasons...)
+	}
+	return merged
 }
 
 func (s *PoolService) countAppendMoreWordsAttemptsForLocalDate(

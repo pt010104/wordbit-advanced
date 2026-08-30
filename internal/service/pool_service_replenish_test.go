@@ -56,6 +56,8 @@ func (r *replenishWordRepo) UpsertWord(ctx context.Context, candidate domain.Can
 		EnglishMeaning:    candidate.EnglishMeaning,
 		VietnameseMeaning: candidate.VietnameseMeaning,
 		CommonRate:        candidate.CommonRate,
+		SourceProvider:    candidate.SourceProvider,
+		SourceMetadata:    candidate.SourceMetadata,
 	}
 	r.words[word.ID] = word
 	r.bankWordIDs = append(r.bankWordIDs, word.ID)
@@ -76,6 +78,8 @@ func (r *replenishWordRepo) UpdateWord(ctx context.Context, wordID uuid.UUID, ca
 	word.EnglishMeaning = candidate.EnglishMeaning
 	word.VietnameseMeaning = candidate.VietnameseMeaning
 	word.CommonRate = candidate.CommonRate
+	word.SourceProvider = candidate.SourceProvider
+	word.SourceMetadata = candidate.SourceMetadata
 	r.words[wordID] = word
 	return word, nil
 }
@@ -539,11 +543,164 @@ func (g *emptyGenerator) GenerateCandidates(ctx context.Context, input Generatio
 	return nil, "{}", nil
 }
 
+type developerListWordRepo struct {
+	*replenishWordRepo
+	developerWords []domain.Word
+}
+
+type developerListWordSetRepo struct {
+	defaultSet domain.WordSet
+}
+
+func (r *developerListWordSetRepo) List(ctx context.Context, userID uuid.UUID) ([]domain.WordSet, error) {
+	return []domain.WordSet{r.defaultSet}, nil
+}
+func (r *developerListWordSetRepo) Get(ctx context.Context, userID uuid.UUID, setID uuid.UUID) (domain.WordSet, error) {
+	return r.defaultSet, nil
+}
+func (r *developerListWordSetRepo) GetDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error) {
+	return r.defaultSet, nil
+}
+func (r *developerListWordSetRepo) Create(ctx context.Context, set domain.WordSet) (domain.WordSet, error) {
+	return set, nil
+}
+func (r *developerListWordSetRepo) Update(ctx context.Context, set domain.WordSet) (domain.WordSet, error) {
+	r.defaultSet = set
+	return set, nil
+}
+func (r *developerListWordSetRepo) Delete(ctx context.Context, userID uuid.UUID, setID uuid.UUID) error {
+	return nil
+}
+func (r *developerListWordSetRepo) EnsureDefault(ctx context.Context, userID uuid.UUID) (domain.WordSet, error) {
+	return r.defaultSet, nil
+}
+
+func (r *developerListWordRepo) ListDeveloperListWords(ctx context.Context, userID uuid.UUID, level domain.CEFRLevel, topic string, excludeWordIDs []uuid.UUID, limit int) ([]domain.Word, error) {
+	// Return the raw curated rows deliberately. selectDeveloperListWords must
+	// still defend against dictionary and same-day duplicates even if a backing
+	// implementation returns overlapping rows.
+	return append([]domain.Word(nil), r.developerWords...), nil
+}
+
 type replenishClock struct {
 	now time.Time
 }
 
 func (c replenishClock) Now() time.Time { return c.now }
+
+func TestDeveloperListExcludesUnknownDictionaryAndSameDayWordsAndKeepsQuota(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	now := time.Date(2026, 8, 30, 1, 0, 0, 0, time.UTC)
+	unknownID := uuid.New()
+	sameDayID := uuid.New()
+	eligibleID1 := uuid.New()
+	eligibleID2 := uuid.New()
+	unknown := domain.Word{
+		ID: unknownID, Word: "allocate", NormalizedForm: "allocate", CanonicalForm: "allocate", Lemma: "allocate",
+		Level: domain.CEFRB2, Topic: "Business", EnglishMeaning: "to distribute", VietnameseMeaning: "phan bo",
+	}
+	repo := &developerListWordRepo{
+		replenishWordRepo: &replenishWordRepo{words: map[uuid.UUID]domain.Word{unknownID: unknown}},
+		developerWords: []domain.Word{
+			unknown,
+			{ID: uuid.New(), Word: "Allocate", NormalizedForm: "allocate", CanonicalForm: "allocate", Lemma: "allocate", Level: domain.CEFRB2, Topic: "Business"},
+			{ID: sameDayID, Word: "revenue", NormalizedForm: "revenue", CanonicalForm: "revenue", Lemma: "revenue", Level: domain.CEFRB2, Topic: "Business"},
+			{ID: eligibleID1, Word: "overhead", NormalizedForm: "overhead", CanonicalForm: "overhead", Lemma: "overhead", Level: domain.CEFRB2, Topic: "Business"},
+			{ID: eligibleID2, Word: "turnover", NormalizedForm: "turnover", CanonicalForm: "turnover", Lemma: "turnover", Level: domain.CEFRB2, Topic: "Business"},
+		},
+	}
+	stateRepo := &replenishStateRepo{states: map[uuid.UUID]domain.UserWordState{
+		unknownID: {UserID: userID, WordID: unknownID, Status: domain.WordStatusLearning},
+	}}
+	service := NewPoolService(
+		&replenishSettingsRepo{settings: domain.DefaultUserSettings(userID)},
+		repo,
+		stateRepo,
+		&replenishPoolRepo{},
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		&emptyGenerator{},
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+		true,
+	)
+	seedItems := []domain.DailyLearningPoolItem{{
+		WordID: sameDayID,
+		Word:   &repo.developerWords[2],
+	}}
+
+	words, accepted, _, err := service.selectDeveloperListWords(context.Background(), userID, domain.CEFRB2, "Business", 1, seedItems, now)
+	if err != nil {
+		t.Fatalf("select developer-list words: %v", err)
+	}
+	if len(words) != 1 || len(accepted) != 1 {
+		t.Fatalf("expected daily quota of one word, got words=%d accepted=%d", len(words), len(accepted))
+	}
+	if words[0].ID != eligibleID1 {
+		t.Fatalf("expected first eligible curated word, got %q", words[0].Word)
+	}
+}
+
+func TestDeveloperListFallsBackToLLMAndBuffersAcceptedSurplus(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	now := time.Date(2026, 8, 30, 1, 0, 0, 0, time.UTC)
+	curated := domain.Word{
+		ID: uuid.New(), Word: "budget", NormalizedForm: "budget", CanonicalForm: "budget", Lemma: "budget",
+		Level: domain.CEFRB2, Topic: "Business", EnglishMeaning: "financial plan", VietnameseMeaning: "ngan sach",
+	}
+	repo := &developerListWordRepo{
+		replenishWordRepo: &replenishWordRepo{words: map[uuid.UUID]domain.Word{}},
+		developerWords:    []domain.Word{curated},
+	}
+	settings := domain.DefaultUserSettings(userID)
+	settings.CEFRLevel = domain.CEFRB2
+	stateRepo := &replenishStateRepo{states: map[uuid.UUID]domain.UserWordState{}}
+	generator := &trackingGenerator{candidates: []domain.CandidateWord{
+		{Word: "margin", CanonicalForm: "margin", Lemma: "margin", Level: domain.CEFRB2, Topic: "Business", EnglishMeaning: "profit difference", VietnameseMeaning: "bien loi nhuan"},
+		{Word: "liquidity", CanonicalForm: "liquidity", Lemma: "liquidity", Level: domain.CEFRB2, Topic: "Business", EnglishMeaning: "available cash", VietnameseMeaning: "tinh thanh khoan"},
+	}}
+	service := NewPoolService(
+		&replenishSettingsRepo{settings: settings},
+		repo,
+		stateRepo,
+		&replenishPoolRepo{},
+		&replenishEventRepo{},
+		&replenishLLMRepo{},
+		generator,
+		replenishClock{now: now},
+		slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+		true,
+	)
+	defaultSet := domain.WordSet{
+		ID: uuid.New(), UserID: userID, IsDefault: true, AutoGenerateNewWords: true,
+		NewWordSource: domain.NewWordSourceDeveloperList,
+	}
+	service.SetWordSetService(NewWordSetService(&developerListWordSetRepo{defaultSet: defaultSet}, &replenishSettingsRepo{settings: settings}, stateRepo, replenishClock{now: now}))
+
+	words, _, _, err := service.generateNewWords(context.Background(), userID, settings, domain.CEFRB2, "Business", 2, nil, now)
+	if err != nil {
+		t.Fatalf("generate developer-list fallback words: %v", err)
+	}
+	if len(words) != 2 || words[0].Word != "budget" {
+		t.Fatalf("expected one curated and one fallback word, got %#v", words)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("expected one LLM fallback call, got %d", generator.calls)
+	}
+	buffered := 0
+	for _, word := range repo.words {
+		if word.SourceProvider == "developer_list_llm_fallback" {
+			buffered++
+		}
+	}
+	if buffered != 2 {
+		t.Fatalf("expected selected and surplus LLM words buffered for the developer list, got %d", buffered)
+	}
+}
 
 func TestGenerateNewWordsStopsAfterRateLimitError(t *testing.T) {
 	t.Parallel()

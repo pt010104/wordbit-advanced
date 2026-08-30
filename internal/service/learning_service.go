@@ -77,7 +77,11 @@ func (s *LearningService) SubmitFirstExposure(ctx context.Context, user domain.U
 
 	switch req.Action {
 	case domain.ExposureActionDontLearn:
-		if err := s.markFirstExposureDontLearn(ctx, item, hadPreviousState, now); err != nil {
+		// Keep a non-reviewable known state rather than deleting the word. This
+		// prevents a dismissed developer-list/LLM word from being offered again.
+		state := s.initStateFromSnapshot(user.ID, item.WordID, previousState, hadPreviousState, wordSetID, now)
+		state = ApplyFirstExposureKnown(state, now, req.ResponseTimeMs)
+		if err := s.markFirstExposureDontLearn(ctx, item, state, now); err != nil {
 			return err
 		}
 	case domain.ExposureActionKnown:
@@ -157,16 +161,14 @@ func (s *LearningService) resolveWordSetIDForFirstExposure(
 func (s *LearningService) markFirstExposureDontLearn(
 	ctx context.Context,
 	item domain.DailyLearningPoolItem,
-	hadPreviousState bool,
+	state domain.UserWordState,
 	now time.Time,
 ) error {
-	if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
+	if _, err := s.stateRepo.Upsert(ctx, state); err != nil {
 		return err
 	}
-	if hadPreviousState {
-		if err := s.stateRepo.Delete(ctx, item.UserID, item.WordID); err != nil && !errors.Is(err, domain.ErrNotFound) {
-			return err
-		}
+	if err := s.poolRepo.MarkPoolItemCompleted(ctx, item.ID, now); err != nil {
+		return err
 	}
 	return nil
 }

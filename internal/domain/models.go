@@ -152,19 +152,30 @@ const (
 	WordSetModeCustom   WordSetMode = "custom"
 )
 
+// NewWordSource controls where the Default word set obtains scheduled new
+// words. DeveloperList is curated by the application team; it is never a
+// user-editable word set and never calls the LLM as a fallback.
+type NewWordSource string
+
+const (
+	NewWordSourceLLM           NewWordSource = "llm"
+	NewWordSourceDeveloperList NewWordSource = "developer_list"
+)
+
 type WordSet struct {
-	ID                   uuid.UUID    `json:"id"`
-	UserID               uuid.UUID    `json:"user_id"`
-	Name                 string       `json:"name"`
-	Icon                 string       `json:"icon,omitempty"`
-	Mode                 WordSetMode  `json:"mode"`
-	IsDefault            bool         `json:"is_default"`
-	AutoGenerateNewWords bool         `json:"auto_generate_new_words"`
-	RecordingEnabled     bool         `json:"recording_enabled"`
-	EnabledReviewModes   []ReviewMode `json:"enabled_review_modes"`
-	DueCount             int          `json:"due_count,omitempty"`
-	CreatedAt            time.Time    `json:"created_at"`
-	UpdatedAt            time.Time    `json:"updated_at"`
+	ID                   uuid.UUID     `json:"id"`
+	UserID               uuid.UUID     `json:"user_id"`
+	Name                 string        `json:"name"`
+	Icon                 string        `json:"icon,omitempty"`
+	Mode                 WordSetMode   `json:"mode"`
+	IsDefault            bool          `json:"is_default"`
+	AutoGenerateNewWords bool          `json:"auto_generate_new_words"`
+	NewWordSource        NewWordSource `json:"new_word_source"`
+	RecordingEnabled     bool          `json:"recording_enabled"`
+	EnabledReviewModes   []ReviewMode  `json:"enabled_review_modes"`
+	DueCount             int           `json:"due_count,omitempty"`
+	CreatedAt            time.Time     `json:"created_at"`
+	UpdatedAt            time.Time     `json:"updated_at"`
 }
 
 // UserWordRecording represents the latest reading recorded by a user for a

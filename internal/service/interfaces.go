@@ -30,6 +30,13 @@ type WordRepository interface {
 	AppendGeneratedExamples(ctx context.Context, wordID uuid.UUID, examples []string, maxGeneratedExamples int) ([]string, error)
 }
 
+// DeveloperWordListRepository is deliberately separate from WordRepository so
+// existing word-storage implementations do not accidentally expose curated
+// list data. The list itself is global and maintained by developers.
+type DeveloperWordListRepository interface {
+	ListDeveloperListWords(ctx context.Context, userID uuid.UUID, level domain.CEFRLevel, topic string, excludeWordIDs []uuid.UUID, limit int) ([]domain.Word, error)
+}
+
 type WordStateRepository interface {
 	Get(ctx context.Context, userID uuid.UUID, wordID uuid.UUID) (domain.UserWordState, error)
 	ListDueWithinWindow(ctx context.Context, userID uuid.UUID, start time.Time, end time.Time, learningOnly bool) ([]domain.UserWordState, error)

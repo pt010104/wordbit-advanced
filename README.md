@@ -2,6 +2,12 @@
 
 Production-minded Go backend for a vocabulary learning system. It owns daily pool generation, SRS scheduling, DeepSeek-driven candidate generation, deduplication, weak-word resurfacing, and learning-event persistence.
 
+## Developer-curated daily words
+
+The Default set can use a developer-curated list instead of LLM generation.
+See [`developer-word-list.md`](developer-word-list.md) for the Sheet/CSV fields,
+template, and import command.
+
 ## Stack
 
 - Go `chi` HTTP API
