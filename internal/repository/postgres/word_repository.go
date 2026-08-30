@@ -81,6 +81,26 @@ func (r *WordRepository) UpsertWord(ctx context.Context, candidate domain.Candid
 	))
 }
 
+// UpdateDeveloperWordImportantScore applies one global learning-priority score
+// to every curated card with the same normalized spelling, regardless of POS.
+func (r *WordRepository) UpdateDeveloperWordImportantScore(ctx context.Context, normalizedForm string, score float64) (int64, error) {
+	result, err := r.pool.Exec(ctx, `
+		UPDATE words
+		SET source_metadata = jsonb_set(
+			COALESCE(source_metadata, '{}'::jsonb),
+			'{important_score}',
+			to_jsonb($2::numeric),
+			true
+		), updated_at = NOW()
+		WHERE source_provider = 'developer_list'
+		  AND normalized_form = $1
+	`, normalizedForm, score)
+	if err != nil {
+		return 0, mapError(err)
+	}
+	return result.RowsAffected(), nil
+}
+
 func (r *WordRepository) UpdateWord(ctx context.Context, wordID uuid.UUID, candidate domain.CandidateWord) (domain.Word, error) {
 	if candidate.NormalizedForm == "" {
 		candidate.NormalizedForm = candidate.Word
@@ -293,7 +313,7 @@ func (r *WordRepository) ListDeveloperListWords(ctx context.Context, userID uuid
 		query += fmt.Sprintf(" AND w.id NOT IN (%s)", joinPlaceholders(4, len(excludeWordIDs)))
 		args = append(args, inClauseUUIDs(excludeWordIDs)...)
 	}
-	query += fmt.Sprintf(" ORDER BY COALESCE((w.source_metadata ->> 'list_priority')::integer, 0) DESC, CASE w.source_provider WHEN 'developer_list' THEN 0 ELSE 1 END, COALESCE((w.source_metadata ->> 'sort_order')::integer, 2147483647), w.created_at ASC LIMIT $%d", len(args)+1)
+	query += fmt.Sprintf(" ORDER BY COALESCE((w.source_metadata ->> 'important_score')::numeric, 0) DESC, CASE w.source_provider WHEN 'developer_list' THEN 0 ELSE 1 END, COALESCE((w.source_metadata ->> 'sort_order')::integer, 2147483647), w.created_at ASC LIMIT $%d", len(args)+1)
 	args = append(args, limit)
 
 	rows, err := r.pool.Query(ctx, query, args...)

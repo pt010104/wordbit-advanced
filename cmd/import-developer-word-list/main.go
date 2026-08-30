@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,20 +24,30 @@ import (
 )
 
 var requiredColumns = []string{"word", "cefr_level", "topic", "vietnamese_meaning", "english_meaning"}
+var scoreRequiredColumns = []string{"word", "important_score"}
 
 func main() {
 	filePath := flag.String("file", "", "path to a developer word-list CSV or XLSX export")
 	csvPath := flag.String("csv", "", "deprecated alias for --file")
+	scoreFile := flag.String("score-file", "", "path to a word/important_score CSV or XLSX file")
 	listName := flag.String("list-name", "developer_list", "stable name recorded for this imported list")
-	priority := flag.Int("priority", 0, "selection priority for this list; higher values are offered first")
+	priority := flag.Int("priority", 0, "deprecated list metadata; selection uses per-word important_score")
 	validateOnly := flag.Bool("validate-only", false, "validate the file without writing to the database")
 	flag.Parse()
 	inputPath := strings.TrimSpace(*filePath)
 	if inputPath == "" {
 		inputPath = strings.TrimSpace(*csvPath)
 	}
-	if inputPath == "" {
+	scorePath := strings.TrimSpace(*scoreFile)
+	if inputPath != "" && scorePath != "" {
+		log.Fatal("use either --file or --score-file, not both")
+	}
+	if inputPath == "" && scorePath == "" {
 		log.Fatal("--file is required")
+	}
+	if scorePath != "" {
+		importPriorityScores(scorePath, *validateOnly)
+		return
 	}
 	list := strings.TrimSpace(*listName)
 	if list == "" {
@@ -46,7 +57,7 @@ func main() {
 		log.Fatal("--priority must be a non-negative whole number")
 	}
 
-	rows, err := readRows(inputPath)
+	rows, err := readRows(inputPath, requiredColumns)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -80,18 +91,72 @@ func main() {
 	fmt.Printf("Imported %d developer-list words for %q (priority %d).\n", len(rows), list, *priority)
 }
 
-func readRows(inputPath string) ([]map[string]string, error) {
+func importPriorityScores(inputPath string, validateOnly bool) {
+	rows, err := readRows(inputPath, scoreRequiredColumns)
+	if err != nil {
+		log.Fatal(err)
+	}
+	scores := make(map[string]float64, len(rows))
+	mergedDuplicates := 0
+	for index, row := range rows {
+		word := strings.TrimSpace(row["word"])
+		if word == "" {
+			log.Fatalf("row %d: word is required", index+2)
+		}
+		score, err := strconv.ParseFloat(strings.TrimSpace(row["important_score"]), 64)
+		if err != nil || math.IsNaN(score) || math.IsInf(score, 0) || score < 0 {
+			log.Fatalf("row %d: important_score must be a non-negative number", index+2)
+		}
+		normalized := service.NormalizeWord(word)
+		if previous, exists := scores[normalized]; exists {
+			mergedDuplicates++
+			if previous > score {
+				score = previous
+			}
+		}
+		scores[normalized] = score
+	}
+	if validateOnly {
+		fmt.Printf("Validated %d score rows for %d unique words; merged %d duplicate rows using the higher score.\n", len(rows), len(scores), mergedDuplicates)
+		return
+	}
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
+	pool, err := database.OpenPool(context.Background(), databaseURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer pool.Close()
+	words := postgres.NewRepositories(pool).Words
+	updatedRecords := int64(0)
+	unmatched := 0
+	for normalized, score := range scores {
+		count, err := words.UpdateDeveloperWordImportantScore(context.Background(), normalized, score)
+		if err != nil {
+			log.Fatalf("update score for %q: %v", normalized, err)
+		}
+		updatedRecords += count
+		if count == 0 {
+			unmatched++
+		}
+	}
+	fmt.Printf("Imported scores for %d unique words; updated %d developer-list records; merged %d duplicate rows; %d words unmatched.\n", len(scores), updatedRecords, mergedDuplicates, unmatched)
+}
+
+func readRows(inputPath string, required []string) ([]map[string]string, error) {
 	switch strings.ToLower(filepath.Ext(inputPath)) {
 	case ".csv":
-		return readCSVRows(inputPath)
+		return readCSVRows(inputPath, required)
 	case ".xlsx":
-		return readXLSXRows(inputPath)
+		return readXLSXRows(inputPath, required)
 	default:
 		return nil, fmt.Errorf("unsupported word-list format %q; use CSV or XLSX", filepath.Ext(inputPath))
 	}
 }
 
-func readCSVRows(csvPath string) ([]map[string]string, error) {
+func readCSVRows(csvPath string, required []string) ([]map[string]string, error) {
 	file, err := os.Open(csvPath)
 	if err != nil {
 		return nil, fmt.Errorf("open CSV: %w", err)
@@ -115,7 +180,7 @@ func readCSVRows(csvPath string) ([]map[string]string, error) {
 		}
 		seen[columns[i]] = struct{}{}
 	}
-	for _, name := range requiredColumns {
+	for _, name := range required {
 		if _, exists := seen[name]; !exists {
 			return nil, fmt.Errorf("CSV is missing required column %q", name)
 		}
@@ -177,7 +242,7 @@ type xlsxSharedString struct {
 	} `xml:"r"`
 }
 
-func readXLSXRows(xlsxPath string) ([]map[string]string, error) {
+func readXLSXRows(xlsxPath string, required []string) ([]map[string]string, error) {
 	archive, err := zip.OpenReader(xlsxPath)
 	if err != nil {
 		return nil, fmt.Errorf("open XLSX: %w", err)
@@ -231,7 +296,7 @@ func readXLSXRows(xlsxPath string) ([]map[string]string, error) {
 		seen[name] = struct{}{}
 		_ = index
 	}
-	for _, name := range requiredColumns {
+	for _, name := range required {
 		if _, exists := seen[name]; !exists {
 			return nil, fmt.Errorf("XLSX is missing required column %q", name)
 		}
